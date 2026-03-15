@@ -1,0 +1,424 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// CORE: Store & Multi-tenancy
+// ============================================
+
+model Store {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  currency  String   @default("USD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users            User[]
+  skus             SKU[]
+  locations        Location[]
+  inventoryLots    InventoryLot[]
+  itemUnits        ItemUnit[]
+  stockLedgers     StockLedger[]
+  purchaseOrders   PurchaseOrder[]
+  customerOrders   CustomerOrder[]
+  inventorySplits  InventorySplit[]
+  platforms        Platform[]
+  listings         Listing[]
+
+  @@map("stores")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      String   @default("USER")
+  storeId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@map("users")
+}
+
+// ============================================
+// PRODUCT: SKU
+// ============================================
+
+model SKU {
+  id          String   @id @default(cuid())
+  storeId     String
+  code        String
+  name        String
+  category    String?
+  brand       String?
+  attributes  Json?
+  description String?
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  inventoryLots InventoryLot[]
+  itemUnits     ItemUnit[]
+  purchaseLines PurchaseLine[]
+  orderLines    OrderLine[]
+  listings      Listing[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+  @@map("skus")
+}
+
+// ============================================
+// INVENTORY: Location, Lot, ItemUnit, Ledger
+// ============================================
+
+model Location {
+  id                String   @id @default(cuid())
+  storeId           String
+  code              String
+  name              String
+  type              String // WAREHOUSE, FORWARDER, PERSON, TRANSIT
+  isSellableDefault Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  store        Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  inventoryLots InventoryLot[]
+  itemUnits    ItemUnit[]
+  stockLedgers StockLedger[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+  @@map("locations")
+}
+
+model InventoryLot {
+  id           String   @id @default(cuid())
+  storeId      String
+  skuId        String
+  locationId   String
+  unitCost     Decimal  @db.Decimal(19, 4)
+  costCurrency String
+  fxRateId     String?
+  sourceType   String // PURCHASE, SPLIT
+  sourceId     String
+  receivedAt   DateTime
+  status       String   @default("ACTIVE") // ACTIVE, CONSUMED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  store       Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sku         SKU               @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  location    Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  allocations OrderAllocation[]
+
+  @@index([storeId])
+  @@index([skuId])
+  @@index([locationId])
+  @@index([status])
+  @@map("inventory_lots")
+}
+
+model ItemUnit {
+  id             String   @id @default(cuid())
+  storeId        String
+  skuId          String
+  locationId     String
+  unitCost       Decimal  @db.Decimal(19, 4)
+  costCurrency   String
+  fxRateId       String?
+  conditionGrade String?
+  photos         Json?
+  ownerId        String?
+  holderId       String?
+  notes          String?  @db.Text
+  sourceType     String // PURCHASE, SPLIT
+  sourceId       String
+  status         String   @default("AVAILABLE") // AVAILABLE, ALLOCATED, CONSUMED, RETURN_CHECK
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  store       Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sku         SKU               @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  location    Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  allocations OrderAllocation[]
+  listings    Listing[]
+
+  @@index([storeId])
+  @@index([skuId])
+  @@index([locationId])
+  @@index([status])
+  @@map("item_units")
+}
+
+model StockLedger {
+  id         String   @id @default(cuid())
+  storeId    String
+  occurredAt DateTime @default(now())
+  entityType String // LOT, ITEM_UNIT
+  entityId   String
+  locationId String
+  deltaQty   Decimal  @db.Decimal(19, 4)
+  reason     String // INBOUND_PURCHASE, OUTBOUND_SALE, ALLOCATE, DEALLOCATE, ADJUST, TRANSFER_OUT, TRANSFER_IN, SPLIT_OUT, SPLIT_IN
+  refType    String?
+  refId      String?
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([entityType, entityId])
+  @@index([locationId])
+  @@index([occurredAt])
+  @@map("stock_ledgers")
+}
+
+// ============================================
+// INVENTORY: Split
+// ============================================
+
+model InventorySplit {
+  id              String   @id @default(cuid())
+  storeId         String
+  splitType       String // UNBOX, DISASSEMBLE, CUSTOM
+  sourceType      String // LOT, ITEM_UNIT
+  sourceId        String
+  occurredAt      DateTime @default(now())
+  totalSourceCost Decimal  @db.Decimal(19, 4)
+  allocationMethod String  @default("PROPORTIONAL_BY_QTY")
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  store Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  lines InventorySplitLine[]
+
+  @@index([storeId])
+  @@index([sourceType, sourceId])
+  @@map("inventory_splits")
+}
+
+model InventorySplitLine {
+  id            String  @id @default(cuid())
+  splitId       String
+  targetType    String // LOT, ITEM_UNIT
+  targetId      String
+  quantity      Decimal @db.Decimal(19, 4)
+  allocatedCost Decimal @db.Decimal(19, 4)
+
+  split InventorySplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
+
+  @@index([splitId])
+  @@map("inventory_split_lines")
+}
+
+// ============================================
+// PROCUREMENT: Purchase Orders
+// ============================================
+
+model PurchaseOrder {
+  id              String   @id @default(cuid())
+  storeId         String
+  orderNo         String
+  supplierId      String?
+  supplierName    String?
+  currency        String
+  fxRate          Decimal? @db.Decimal(19, 8)
+  subtotal        Decimal  @db.Decimal(19, 4)
+  totalAmount     Decimal  @db.Decimal(19, 4)
+  status          String   @default("DRAFT") // DRAFT, ORDERED, RECEIVED, CANCELLED
+  orderedAt       DateTime?
+  receivedAt      DateTime?
+  destinationLocationId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  store Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  lines PurchaseLine[]
+
+  @@unique([storeId, orderNo])
+  @@index([storeId])
+  @@index([status])
+  @@map("purchase_orders")
+}
+
+model PurchaseLine {
+  id                String   @id @default(cuid())
+  purchaseOrderId   String
+  skuId             String
+  quantity          Decimal  @db.Decimal(19, 4)
+  unitPrice         Decimal  @db.Decimal(19, 4)
+  lineAmount        Decimal  @db.Decimal(19, 4)
+  allocatedFee      Decimal  @default(0) @db.Decimal(19, 4)
+  allocatedDiscount Decimal  @default(0) @db.Decimal(19, 4)
+  forOrderLineId    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  sku           SKU           @relation(fields: [skuId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@index([skuId])
+  @@map("purchase_lines")
+}
+
+// ============================================
+// SALES: Customer Orders
+// ============================================
+
+model CustomerOrder {
+  id              String   @id @default(cuid())
+  storeId         String
+  orderNumber     String   @unique
+  platformId      String?
+  externalOrderNo String?
+  customerName    String
+  customerEmail   String?
+  customerPhone   String?
+  shippingAddress String?  @db.Text
+  orderDate       DateTime
+  currency        String
+  subtotal        Decimal  @db.Decimal(19, 4)
+  discountTotal   Decimal  @default(0) @db.Decimal(19, 4)
+  shippingCharged Decimal  @default(0) @db.Decimal(19, 4)
+  totalPaid       Decimal  @db.Decimal(19, 4)
+  orderStatus     String   @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
+  createdAt       DateTime @default(now())
+  confirmedAt     DateTime?
+  updatedAt       DateTime @updatedAt
+
+  store Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  lines OrderLine[]
+
+  @@index([storeId])
+  @@index([orderStatus])
+  @@map("customer_orders")
+}
+
+model OrderLine {
+  id                String   @id @default(cuid())
+  orderId           String
+  skuId             String
+  quantity          Decimal  @db.Decimal(19, 4)
+  unitPrice         Decimal? @db.Decimal(19, 4)
+  lineAmount        Decimal  @db.Decimal(19, 4)
+  allocatedDiscount Decimal  @default(0) @db.Decimal(19, 4)
+  allocatedFee      Decimal  @default(0) @db.Decimal(19, 4)
+  supplyType        String   @default("FROM_STOCK") // FROM_STOCK, PURCHASE_FOR_ORDER
+  supplyStatus      String   @default("UNFULFILLED") // UNFULFILLED, ALLOCATED_FROM_STOCK, PURCHASE_REQUESTED, PURCHASED_INBOUND, READY_TO_SHIP, CONSUMED
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  order       CustomerOrder     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sku         SKU               @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  allocations OrderAllocation[]
+
+  @@index([orderId])
+  @@index([skuId])
+  @@map("order_lines")
+}
+
+model OrderAllocation {
+  id             String   @id @default(cuid())
+  orderLineId    String
+  allocationType String // LOT, ITEM_UNIT
+  lotId          String?
+  itemUnitId     String?
+  quantity       Decimal  @db.Decimal(19, 4)
+  unitCost       Decimal  @db.Decimal(19, 4)
+  costAmount     Decimal  @db.Decimal(19, 4)
+  status         String   @default("PENDING") // PENDING, ALLOCATED, SHIPPED, DELIVERED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orderLine    OrderLine     @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  inventoryLot InventoryLot? @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  itemUnit     ItemUnit?     @relation(fields: [itemUnitId], references: [id], onDelete: Cascade)
+
+  @@index([orderLineId])
+  @@index([lotId])
+  @@index([itemUnitId])
+  @@map("order_allocations")
+}
+
+// ============================================
+// SHARED: Fee
+// ============================================
+
+model Fee {
+  id               String  @id @default(cuid())
+  refType          String // PURCHASE_ORDER, CUSTOMER_ORDER, ORDER_LINE
+  refId            String
+  feeType          String // DISCOUNT, PLATFORM_FEE, SHIPPING_COST, PACKING_FEE, TAX
+  amount           Decimal @db.Decimal(19, 4)
+  currency         String
+  allocationMethod String  @default("PROPORTIONAL_BY_AMOUNT")
+  allocationBasis  String? // AMOUNT, QTY, WEIGHT
+
+  @@index([refType, refId])
+  @@map("fees")
+}
+
+// ============================================
+// LISTING: Platforms & Listings
+// ============================================
+
+model Platform {
+  id        String   @id @default(cuid())
+  storeId   String
+  code      String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  listings Listing[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+  @@map("platforms")
+}
+
+model Listing {
+  id          String    @id @default(cuid())
+  storeId     String
+  platformId  String
+  skuId       String?
+  itemUnitId  String?
+  listingType String // SKU, ITEM_UNIT
+  listedPrice Decimal?  @db.Decimal(19, 4)
+  currency    String?
+  status      String    @default("ACTIVE") // ACTIVE, DELISTED
+  listedAt    DateTime  @default(now())
+  delistedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  platform Platform  @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  sku      SKU?      @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  itemUnit ItemUnit? @relation(fields: [itemUnitId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([platformId])
+  @@index([skuId])
+  @@index([itemUnitId])
+  @@index([status])
+  @@map("listings")
+}

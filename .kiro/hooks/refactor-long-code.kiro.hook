@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "name": "Code Refactoring Reminder",
+  "description": "Reminds to check if page code is too long or contains reusable components that should be extracted to keep code clean and concise",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.tsx",
+      "*.ts",
+      "*.jsx",
+      "*.js"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the edited file for code length and reusability. If the file is too long (>200 lines) or contains reusable components/logic, suggest extracting them into separate components or utility functions. Focus on keeping page components clean and maintaining the project's component hierarchy (Page → Feature → UI). Provide specific refactoring suggestions if needed."
+  }
+}
