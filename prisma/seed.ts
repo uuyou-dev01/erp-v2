@@ -1,132 +1,115 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting database seed...');
+  console.log("开始初始化数据...");
 
-  // Create a default store
+  // Create default store
   const store = await prisma.store.upsert({
-    where: { id: 'store_1' },
+    where: { code: "STORE_1" },
     update: {},
     create: {
-      id: 'store_1',
-      name: 'Default Store',
-      code: 'STORE_001',
+      id: "store_1",
+      name: "默认店铺",
+      code: "STORE_1",
+      currency: "CNY",
     },
   });
 
-  console.log('✅ Created store:', store.name);
+  // Create default user
+  await prisma.user.upsert({
+    where: { email: "admin@example.com" },
+    update: {},
+    create: {
+      email: "admin@example.com",
+      name: "管理员",
+      password: "hashed_password_placeholder",
+      role: "ADMIN",
+      storeId: store.id,
+    },
+  });
 
-  // Create sample locations
-  const locations = await Promise.all([
-    prisma.location.upsert({
-      where: { id: 'loc_warehouse_1' },
-      update: {},
-      create: {
-        id: 'loc_warehouse_1',
-        storeId: store.id,
-        code: 'WH_MAIN',
-        name: 'Main Warehouse',
-        type: 'WAREHOUSE',
-        isSellableDefault: true,
-      },
-    }),
-    prisma.location.upsert({
-      where: { id: 'loc_forwarder_1' },
-      update: {},
-      create: {
-        id: 'loc_forwarder_1',
-        storeId: store.id,
-        code: 'FWD_CN',
-        name: 'China Forwarder',
-        type: 'FORWARDER',
-        isSellableDefault: false,
-      },
-    }),
-    prisma.location.upsert({
-      where: { id: 'loc_warehouse_2' },
-      update: {},
-      create: {
-        id: 'loc_warehouse_2',
-        storeId: store.id,
-        code: 'WH_JP',
-        name: 'Japan Warehouse',
-        type: 'WAREHOUSE',
-        isSellableDefault: true,
-      },
-    }),
-  ]);
+  // Create default platforms (Japan marketplaces)
+  const platforms = [
+    { code: "MERCARI", name: "Mercari（メルカリ）", country: "JP", defaultFeeRate: 0.1, defaultCurrency: "JPY" },
+    { code: "YAHOO_AUCTION", name: "Yahoo拍卖（ヤフオク）", country: "JP", defaultFeeRate: 0.088, defaultCurrency: "JPY" },
+    { code: "RAKUTEN", name: "乐天（楽天）", country: "JP", defaultFeeRate: 0.065, defaultCurrency: "JPY" },
+    { code: "AMAZON_JP", name: "亚马逊日本（Amazon.co.jp）", country: "JP", defaultFeeRate: 0.15, defaultCurrency: "JPY" },
+  ];
 
-  console.log(`✅ Created ${locations.length} locations`);
-
-  // Create sample SKUs
-  const skus = await Promise.all([
-    prisma.sKU.upsert({
-      where: { id: 'sku_1' },
-      update: {},
-      create: {
-        id: 'sku_1',
-        storeId: store.id,
-        code: 'SHOE-001',
-        name: 'Nike Air Max 90',
-        category: 'Footwear',
-        brand: 'Nike',
-        attributes: {
-          size: 'US 10',
-          color: 'White/Black',
-          condition: 'New',
-        },
+  for (const p of platforms) {
+    await prisma.platform.upsert({
+      where: { storeId_code: { storeId: store.id, code: p.code } },
+      update: {
+        name: p.name,
+        country: p.country,
+        defaultFeeRate: p.defaultFeeRate,
+        defaultCurrency: p.defaultCurrency,
       },
-    }),
-    prisma.sKU.upsert({
-      where: { id: 'sku_2' },
-      update: {},
       create: {
-        id: 'sku_2',
         storeId: store.id,
-        code: 'ELEC-001',
-        name: 'iPhone 15 Pro',
-        category: 'Electronics',
-        brand: 'Apple',
-        attributes: {
-          storage: '256GB',
-          color: 'Titanium Blue',
-        },
+        code: p.code,
+        name: p.name,
+        country: p.country,
+        defaultFeeRate: p.defaultFeeRate,
+        defaultCurrency: p.defaultCurrency,
       },
-    }),
-    prisma.sKU.upsert({
-      where: { id: 'sku_3' },
-      update: {},
+    });
+  }
+
+  // Create default locations
+  const locations = [
+    { code: "WH-CN-01", name: "中国主仓", type: "WAREHOUSE" },
+    { code: "WH-JP-01", name: "日本仓库", type: "WAREHOUSE" },
+    { code: "FWD-01", name: "集运仓", type: "FORWARDER" },
+  ];
+
+  for (const loc of locations) {
+    await prisma.location.upsert({
+      where: { storeId_code: { storeId: store.id, code: loc.code } },
+      update: { name: loc.name, type: loc.type },
       create: {
-        id: 'sku_3',
         storeId: store.id,
-        code: 'TOY-001',
-        name: 'Pokemon Booster Box',
-        category: 'Collectibles',
-        brand: 'Pokemon',
-        attributes: {
-          set: 'Scarlet & Violet',
-          language: 'Japanese',
-        },
+        code: loc.code,
+        name: loc.name,
+        type: loc.type,
       },
-    }),
-  ]);
+    });
+  }
 
-  console.log(`✅ Created ${skus.length} SKUs`);
+  // Create default FX rates
+  const fxRates = [
+    { fromCurrency: "CNY", toCurrency: "JPY", rate: 20.5 },
+    { fromCurrency: "JPY", toCurrency: "CNY", rate: 0.0488 },
+    { fromCurrency: "USD", toCurrency: "CNY", rate: 7.25 },
+    { fromCurrency: "USD", toCurrency: "JPY", rate: 148.5 },
+  ];
 
-  console.log('🎉 Database seed completed successfully!');
-  console.log('\nYou can now:');
-  console.log('1. Run: npm run dev');
-  console.log('2. Visit: http://localhost:3000');
-  console.log('3. Or view data: npx prisma studio');
+  for (const fx of fxRates) {
+    await prisma.fxRate.create({
+      data: {
+        fromCurrency: fx.fromCurrency,
+        toCurrency: fx.toCurrency,
+        rate: fx.rate,
+        effectiveDate: new Date(),
+      },
+    });
+  }
+
+  console.log("数据初始化完成！");
+  console.log(`  店铺: ${store.name}`);
+  console.log(`  平台: ${platforms.length} 个`);
+  console.log(`  仓库: ${locations.length} 个`);
+  console.log(`  汇率: ${fxRates.length} 条`);
 }
 
 main()
-  .catch((e) => {
-    console.error('❌ Error seeding database:', e);
-    process.exit(1);
-  })
-  .finally(async () => {
+  .then(async () => {
     await prisma.$disconnect();
+  })
+  .catch(async (e) => {
+    console.error(e);
+    await prisma.$disconnect();
+    process.exit(1);
   });

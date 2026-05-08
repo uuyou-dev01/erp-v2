@@ -2,7 +2,7 @@
 
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 
-const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"];
+const BRAND_COLORS = ["#3B82F6", "#EC4899", "#60A5FA", "#F472B6", "#2563EB", "#DB2777"];
 
 interface InventoryChartProps {
   data: Array<{ name: string; value: number }>;
@@ -27,11 +27,11 @@ export function InventoryChart({ data }: InventoryChartProps) {
           labelLine={false}
           label={({ name, percent }) => `${name} ${percent ? (percent * 100).toFixed(0) : 0}%`}
           outerRadius={80}
-          fill="#8884d8"
+          fill="#3B82F6"
           dataKey="value"
         >
-          {data.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+          {data.map((_entry, index) => (
+            <Cell key={`cell-${index}`} fill={BRAND_COLORS[index % BRAND_COLORS.length]} />
           ))}
         </Pie>
         <Tooltip formatter={(value) => `¥${Number(value).toFixed(2)}`} />

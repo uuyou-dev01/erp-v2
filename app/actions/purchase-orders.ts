@@ -3,6 +3,45 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { createInboundInventoryLot } from "@/lib/application/inventory";
+
+type DecimalLike = { toString: () => string };
+
+function serializePurchaseLine<
+  T extends {
+    quantity: DecimalLike;
+    unitPrice: DecimalLike;
+    lineAmount: DecimalLike;
+    allocatedFee: DecimalLike;
+    allocatedDiscount: DecimalLike;
+  },
+>(line: T) {
+  return {
+    ...line,
+    quantity: line.quantity.toString(),
+    unitPrice: line.unitPrice.toString(),
+    lineAmount: line.lineAmount.toString(),
+    allocatedFee: line.allocatedFee.toString(),
+    allocatedDiscount: line.allocatedDiscount.toString(),
+  };
+}
+
+function serializePurchaseOrder<
+  T extends {
+    fxRate: DecimalLike | null;
+    subtotal: DecimalLike;
+    totalAmount: DecimalLike;
+    lines?: Array<Parameters<typeof serializePurchaseLine>[0]>;
+  },
+>(order: T) {
+  return {
+    ...order,
+    fxRate: order.fxRate?.toString() ?? null,
+    subtotal: order.subtotal.toString(),
+    totalAmount: order.totalAmount.toString(),
+    lines: order.lines?.map(serializePurchaseLine) ?? [],
+  };
+}
 
 export type PurchaseOrderStatus =
   | "DRAFT"
@@ -36,7 +75,7 @@ export interface ReceivePurchaseOrderInput {
 }
 
 export async function getPurchaseOrders(storeId: string) {
-  return await prisma.purchaseOrder.findMany({
+  const orders = await prisma.purchaseOrder.findMany({
     where: { storeId },
     include: {
       lines: {
@@ -47,10 +86,12 @@ export async function getPurchaseOrders(storeId: string) {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  return orders.map(serializePurchaseOrder);
 }
 
 export async function getPurchaseOrderById(id: string) {
-  return await prisma.purchaseOrder.findUnique({
+  const order = await prisma.purchaseOrder.findUnique({
     where: { id },
     include: {
       lines: {
@@ -60,6 +101,8 @@ export async function getPurchaseOrderById(id: string) {
       },
     },
   });
+
+  return order ? serializePurchaseOrder(order) : null;
 }
 
 export async function createPurchaseOrder(data: CreatePurchaseOrderInput) {
@@ -80,7 +123,7 @@ export async function createPurchaseOrder(data: CreatePurchaseOrderInput) {
   });
 
   revalidatePath("/procurement");
-  return order;
+  return { id: order.id };
 }
 
 export async function addPurchaseLine(data: CreatePurchaseLineInput) {
@@ -104,7 +147,7 @@ export async function addPurchaseLine(data: CreatePurchaseLineInput) {
 
   revalidatePath("/procurement");
   revalidatePath(`/procurement/${data.purchaseOrderId}`);
-  return line;
+  return { id: line.id };
 }
 
 export async function deletePurchaseLine(lineId: string, orderId: string) {
@@ -133,7 +176,7 @@ export async function updatePurchaseOrderStatus(
 
   revalidatePath("/procurement");
   revalidatePath(`/procurement/${id}`);
-  return order;
+  return { id: order.id, status: order.status };
 }
 
 export async function receivePurchaseOrder(data: ReceivePurchaseOrderInput) {
@@ -167,41 +210,25 @@ export async function receivePurchaseOrder(data: ReceivePurchaseOrderInput) {
       },
     });
 
-    // 2. Create inventory lot for each line
+    // 2. Create inventory lot for each line through the inventory use case
     for (const line of order.lines) {
-      const lot = await tx.inventoryLot.create({
-        data: {
-          storeId: order.storeId,
-          skuId: line.skuId,
-          locationId: data.locationId,
-          unitCost: line.unitPrice,
-          costCurrency: order.currency,
-          fxRateId: order.fxRate ? "FX_RATE_ID" : null,
-          sourceType: "PURCHASE",
-          sourceId: line.id,
-          receivedAt: data.receivedAt,
-          status: "ACTIVE",
-        },
-      });
-
-      // 3. Write to stock ledger
-      await tx.stockLedger.create({
-        data: {
-          storeId: order.storeId,
-          occurredAt: data.receivedAt,
-          entityType: "LOT",
-          entityId: lot.id,
-          locationId: data.locationId,
-          deltaQty: line.quantity,
-          reason: "INBOUND_PURCHASE",
-          refType: "PURCHASE_LINE",
-          refId: line.id,
-          meta: {
-            purchaseOrderId: order.id,
-            orderNo: order.orderNo,
-            unitCost: line.unitPrice.toString(),
-            currency: order.currency,
-          },
+      await createInboundInventoryLot(tx, {
+        storeId: order.storeId,
+        skuId: line.skuId,
+        locationId: data.locationId,
+        quantity: line.quantity.toString(),
+        unitCost: line.unitPrice.toString(),
+        costCurrency: order.currency,
+        sourceType: "PURCHASE",
+        sourceId: line.id,
+        receivedAt: data.receivedAt,
+        refType: "PURCHASE_LINE",
+        refId: line.id,
+        meta: {
+          purchaseOrderId: order.id,
+          orderNo: order.orderNo,
+          unitCost: line.unitPrice.toString(),
+          currency: order.currency,
         },
       });
     }

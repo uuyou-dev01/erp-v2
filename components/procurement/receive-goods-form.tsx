@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { receivePurchaseOrder } from "@/app/actions/purchase-orders";
 import { AlertCircle, Package } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 interface ReceiveGoodsFormProps {
   purchaseOrderId: string;
@@ -15,11 +16,7 @@ interface ReceiveGoodsFormProps {
   lineCount: number;
 }
 
-export function ReceiveGoodsForm({
-  purchaseOrderId,
-  locations,
-  lineCount,
-}: ReceiveGoodsFormProps) {
+export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: ReceiveGoodsFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -32,12 +29,11 @@ export function ReceiveGoodsForm({
     e.preventDefault();
 
     if (!formData.locationId) {
-      setErrors({ locationId: "Location is required" });
+      setErrors({ locationId: "请选择目的地仓库" });
       return;
     }
 
     setLoading(true);
-
     try {
       await receivePurchaseOrder({
         purchaseOrderId,
@@ -49,7 +45,7 @@ export function ReceiveGoodsForm({
       router.refresh();
     } catch (error) {
       console.error("Failed to receive goods:", error);
-      alert("Failed to receive goods. Please try again.");
+      alert("收货失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -57,27 +53,26 @@ export function ReceiveGoodsForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex gap-3 rounded-lg border border-blue-500/50 bg-blue-500/10 p-4">
-        <Package className="h-5 w-5 text-blue-500" />
+      <div className="flex gap-3 rounded-lg border border-primary/50 bg-primary/10 p-4">
+        <Package className="h-5 w-5 text-primary" />
         <div className="flex-1 space-y-1 text-sm">
-          <p className="font-medium">Receiving {lineCount} items</p>
+          <p className="font-medium">即将收货 {lineCount} 项商品</p>
           <p className="text-muted-foreground">
-            This will create {lineCount} inventory lot(s) and write to StockLedger automatically.
-            The purchase order status will be set to RECEIVED.
+            收货后将自动创建 {lineCount} 条入库库存并写入库存流水记录。采购单状态将变为【已收货】。
           </p>
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="locationId">Destination Location *</Label>
+          <Label htmlFor="locationId">目的地仓库 *</Label>
           <Select
             id="locationId"
             value={formData.locationId}
             onChange={(e) => setFormData({ ...formData, locationId: e.target.value })}
             required
           >
-            <option value="">Select Location</option>
+            <option value="">{t("inventory.select_location")}</option>
             {locations.map((location) => (
               <option key={location.id} value={location.id}>
                 {location.code} - {location.name}
@@ -93,7 +88,7 @@ export function ReceiveGoodsForm({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="receivedAt">Received Date *</Label>
+          <Label htmlFor="receivedAt">{t("inventory.received_date")} *</Label>
           <Input
             id="receivedAt"
             type="date"
@@ -105,7 +100,7 @@ export function ReceiveGoodsForm({
       </div>
 
       <Button type="submit" disabled={loading} className="w-full">
-        {loading ? "Receiving..." : "Receive Goods & Create Inventory"}
+        {loading ? "收货中..." : "确认收货并创建库存"}
       </Button>
     </form>
   );

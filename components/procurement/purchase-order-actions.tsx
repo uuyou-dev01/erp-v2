@@ -19,7 +19,7 @@ export function PurchaseOrderActions({ order }: PurchaseOrderActionsProps) {
 
   const handleMarkAsOrdered = async () => {
     if (order.lines.length === 0) {
-      alert("Cannot mark as ordered: No items in purchase order");
+      alert("无法标记为已下单：采购单中没有商品");
       return;
     }
 
@@ -29,7 +29,7 @@ export function PurchaseOrderActions({ order }: PurchaseOrderActionsProps) {
       router.refresh();
     } catch (error) {
       console.error("Failed to update status:", error);
-      alert("Failed to update status");
+      alert("更新状态失败");
     } finally {
       setLoading(false);
     }
@@ -38,7 +38,7 @@ export function PurchaseOrderActions({ order }: PurchaseOrderActionsProps) {
   if (order.status === "DRAFT") {
     return (
       <Button onClick={handleMarkAsOrdered} disabled={loading}>
-        {loading ? "Updating..." : "Mark as Ordered"}
+        {loading ? "更新中..." : "标记为已下单"}
       </Button>
     );
   }

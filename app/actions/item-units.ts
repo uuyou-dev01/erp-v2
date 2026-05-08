@@ -17,7 +17,10 @@ export async function getItemUnits(storeId: string) {
     orderBy: { createdAt: "desc" },
   });
 
-  return items;
+  return items.map((item) => ({
+    ...item,
+    unitCost: item.unitCost.toString(),
+  }));
 }
 
 /**

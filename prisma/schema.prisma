@@ -21,7 +21,6 @@ model Store {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   users            User[]
   skus             SKU[]
   locations        Location[]
@@ -33,6 +32,7 @@ model Store {
   inventorySplits  InventorySplit[]
   platforms        Platform[]
   listings         Listing[]
+  importJobs       ImportJob[]
 
   @@map("stores")
 }
@@ -62,6 +62,7 @@ model SKU {
   storeId     String
   code        String
   name        String
+  parentSkuId String?
   category    String?
   brand       String?
   attributes  Json?
@@ -71,6 +72,8 @@ model SKU {
   updatedAt   DateTime @updatedAt
 
   store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  parentSku     SKU?           @relation("SkuVariants", fields: [parentSkuId], references: [id], onDelete: SetNull)
+  childSkus     SKU[]          @relation("SkuVariants")
   inventoryLots InventoryLot[]
   itemUnits     ItemUnit[]
   purchaseLines PurchaseLine[]
@@ -79,6 +82,7 @@ model SKU {
 
   @@unique([storeId, code])
   @@index([storeId])
+  @@index([parentSkuId])
   @@map("skus")
 }
 
@@ -298,16 +302,24 @@ model CustomerOrder {
   discountTotal   Decimal  @default(0) @db.Decimal(19, 4)
   shippingCharged Decimal  @default(0) @db.Decimal(19, 4)
   totalPaid       Decimal  @db.Decimal(19, 4)
+  platformFee     Decimal  @default(0) @db.Decimal(19, 4)
+  shippingFee     Decimal  @default(0) @db.Decimal(19, 4)
+  shippingProvider String?
+  shippingProviderFeeRate Decimal? @db.Decimal(8, 4)
+  netRevenue      Decimal? @db.Decimal(19, 4)
+  countryFlow     String?
   orderStatus     String   @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
   createdAt       DateTime @default(now())
   confirmedAt     DateTime?
   updatedAt       DateTime @updatedAt
 
-  store Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  lines OrderLine[]
+  store    Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  platform Platform?   @relation(fields: [platformId], references: [id])
+  lines    OrderLine[]
 
   @@index([storeId])
   @@index([orderStatus])
+  @@index([platformId])
   @@map("customer_orders")
 }
 
@@ -380,15 +392,21 @@ model Fee {
 // ============================================
 
 model Platform {
-  id        String   @id @default(cuid())
-  storeId   String
-  code      String
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(cuid())
+  storeId         String
+  code            String
+  name            String
+  country         String?
+  defaultFeeRate  Decimal? @db.Decimal(8, 4)
+  defaultCurrency String?
+  shippingRules   Json?
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  listings Listing[]
+  store          Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  listings       Listing[]
+  customerOrders CustomerOrder[]
 
   @@unique([storeId, code])
   @@index([storeId])
@@ -396,19 +414,22 @@ model Platform {
 }
 
 model Listing {
-  id          String    @id @default(cuid())
-  storeId     String
-  platformId  String
-  skuId       String?
-  itemUnitId  String?
-  listingType String // SKU, ITEM_UNIT
-  listedPrice Decimal?  @db.Decimal(19, 4)
-  currency    String?
-  status      String    @default("ACTIVE") // ACTIVE, DELISTED
-  listedAt    DateTime  @default(now())
-  delistedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  storeId           String
+  platformId        String
+  skuId             String?
+  itemUnitId        String?
+  listingType       String // SKU, ITEM_UNIT
+  listedPrice       Decimal?  @db.Decimal(19, 4)
+  currency          String?
+  feeRateOverride   Decimal?  @db.Decimal(8, 4)
+  shippingFeeOverride Decimal? @db.Decimal(19, 4)
+  estimatedNet      Decimal?  @db.Decimal(19, 4)
+  status            String    @default("ACTIVE") // ACTIVE, DELISTED
+  listedAt          DateTime  @default(now())
+  delistedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
   platform Platform  @relation(fields: [platformId], references: [id], onDelete: Cascade)
@@ -421,4 +442,43 @@ model Listing {
   @@index([itemUnitId])
   @@index([status])
   @@map("listings")
+}
+
+// ============================================
+// FX: Exchange Rates
+// ============================================
+
+model FxRate {
+  id            String   @id @default(cuid())
+  fromCurrency  String
+  toCurrency    String
+  rate          Decimal  @db.Decimal(19, 8)
+  effectiveDate DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([fromCurrency, toCurrency, effectiveDate])
+  @@map("fx_rates")
+}
+
+// ============================================
+// IMPORT: Batch Import Jobs
+// ============================================
+
+model ImportJob {
+  id          String   @id @default(cuid())
+  storeId     String
+  entityType  String // SKU, INVENTORY_LOT, PURCHASE_LINE, CUSTOMER_ORDER, LISTING
+  status      String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  totalRows   Int      @default(0)
+  successRows Int      @default(0)
+  failedRows  Int      @default(0)
+  errorReport Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([entityType])
+  @@map("import_jobs")
 }

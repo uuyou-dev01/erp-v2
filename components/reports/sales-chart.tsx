@@ -35,8 +35,9 @@ export function SalesChart({ data }: SalesChartProps) {
         <Line
           type="monotone"
           dataKey="amount"
-          stroke="#8884d8"
-          activeDot={{ r: 8 }}
+          stroke="#3B82F6"
+          strokeWidth={2}
+          activeDot={{ r: 6, fill: "#EC4899" }}
           name="销售额"
         />
       </LineChart>

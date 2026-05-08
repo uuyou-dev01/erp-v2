@@ -10,6 +10,7 @@ import { addPurchaseLine } from "@/app/actions/purchase-orders";
 import { getSKUs } from "@/app/actions/skus";
 import { isValidDecimal } from "@/lib/decimal";
 import { AlertCircle } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 interface AddPurchaseLineFormProps {
   purchaseOrderId: string;
@@ -24,7 +25,7 @@ export function AddPurchaseLineForm({
 }: AddPurchaseLineFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string; parentSkuId?: string | null }>>([]);
   const [formData, setFormData] = useState({
     skuId: "",
     quantity: "",
@@ -39,16 +40,16 @@ export function AddPurchaseLineForm({
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    if (!formData.skuId) newErrors.skuId = "SKU is required";
+    if (!formData.skuId) newErrors.skuId = "请选择SKU";
     if (!formData.quantity) {
-      newErrors.quantity = "Quantity is required";
+      newErrors.quantity = "数量为必填项";
     } else if (!isValidDecimal(formData.quantity) || parseFloat(formData.quantity) <= 0) {
-      newErrors.quantity = "Invalid quantity";
+      newErrors.quantity = "数量格式无效";
     }
     if (!formData.unitPrice) {
-      newErrors.unitPrice = "Unit price is required";
+      newErrors.unitPrice = "单价为必填项";
     } else if (!isValidDecimal(formData.unitPrice) || parseFloat(formData.unitPrice) < 0) {
-      newErrors.unitPrice = "Invalid price";
+      newErrors.unitPrice = "单价格式无效";
     }
 
     setErrors(newErrors);
@@ -57,11 +58,9 @@ export function AddPurchaseLineForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!validateForm()) return;
 
     setLoading(true);
-
     try {
       await addPurchaseLine({
         purchaseOrderId,
@@ -74,7 +73,7 @@ export function AddPurchaseLineForm({
       router.refresh();
     } catch (error) {
       console.error("Failed to add purchase line:", error);
-      alert("Failed to add line. Please try again.");
+      alert("添加商品失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -91,12 +90,36 @@ export function AddPurchaseLineForm({
             onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
             required
           >
-            <option value="">Select SKU</option>
-            {skus.map((sku) => (
-              <option key={sku.id} value={sku.id}>
-                {sku.code} - {sku.name}
-              </option>
-            ))}
+            <option value="">{t("inventory.select_sku")}</option>
+            {(() => {
+              const parents = skus.filter((s) => !s.parentSkuId);
+              const standalone = parents.filter((p) => !skus.some((s) => s.parentSkuId === p.id));
+              const groups = parents.filter((p) => skus.some((s) => s.parentSkuId === p.id));
+
+              return (
+                <>
+                  {groups.map((parent) => (
+                    <optgroup key={parent.id} label={`${parent.code} · ${parent.name}`}>
+                      <option value={parent.id}>
+                        {parent.code} (父 SKU)
+                      </option>
+                      {skus
+                        .filter((s) => s.parentSkuId === parent.id)
+                        .map((child) => (
+                          <option key={child.id} value={child.id}>
+                            　{child.code} - {child.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  ))}
+                  {standalone.map((sku) => (
+                    <option key={sku.id} value={sku.id}>
+                      {sku.code} - {sku.name}
+                    </option>
+                  ))}
+                </>
+              );
+            })()}
           </Select>
           {errors.skuId && (
             <p className="flex items-center gap-1 text-xs text-destructive">
@@ -107,13 +130,13 @@ export function AddPurchaseLineForm({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="quantity">Quantity *</Label>
+          <Label htmlFor="quantity">{t("common.quantity")} *</Label>
           <Input
             id="quantity"
             type="text"
             value={formData.quantity}
             onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-            placeholder="e.g., 100"
+            placeholder="例如：100"
             required
           />
           {errors.quantity && (
@@ -125,13 +148,13 @@ export function AddPurchaseLineForm({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="unitPrice">Unit Price ({currency}) *</Label>
+          <Label htmlFor="unitPrice">{t("purchase.unit_price")} ({currency}) *</Label>
           <Input
             id="unitPrice"
             type="text"
             value={formData.unitPrice}
             onChange={(e) => setFormData({ ...formData, unitPrice: e.target.value })}
-            placeholder="e.g., 99.99"
+            placeholder="例如：99.99"
             required
           />
           {errors.unitPrice && (
@@ -144,7 +167,7 @@ export function AddPurchaseLineForm({
       </div>
 
       <Button type="submit" disabled={loading}>
-        {loading ? "Adding..." : "Add Line"}
+        {loading ? t("common.saving") : t("purchase.add_line")}
       </Button>
     </form>
   );

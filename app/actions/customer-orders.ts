@@ -25,6 +25,7 @@ export interface CreateCustomerOrderInput {
   shippingAddress?: string;
   orderDate: Date;
   currency: string;
+  countryFlow?: string;
 }
 
 export interface CreateOrderLineInput {
@@ -44,10 +45,14 @@ export interface ConfirmOrderInput {
   orderId: string;
 }
 
-export async function getCustomerOrders(storeId: string) {
+export async function getCustomerOrders(storeId: string, platformId?: string) {
   return await prisma.customerOrder.findMany({
-    where: { storeId },
+    where: {
+      storeId,
+      ...(platformId ? { platformId } : {}),
+    },
     include: {
+      platform: true,
       lines: {
         include: {
           sku: true,
@@ -62,6 +67,7 @@ export async function getCustomerOrderById(id: string) {
   return await prisma.customerOrder.findUnique({
     where: { id },
     include: {
+      platform: true,
       lines: {
         include: {
           sku: true,
@@ -80,6 +86,13 @@ export async function getCustomerOrderById(id: string) {
   });
 }
 
+export async function updateOrderNetRevenue(orderId: string, netRevenue: string) {
+  await prisma.customerOrder.update({
+    where: { id: orderId },
+    data: { netRevenue },
+  });
+}
+
 export async function createCustomerOrder(data: CreateCustomerOrderInput) {
   const order = await prisma.customerOrder.create({
     data: {
@@ -93,6 +106,7 @@ export async function createCustomerOrder(data: CreateCustomerOrderInput) {
       shippingAddress: data.shippingAddress,
       orderDate: data.orderDate,
       currency: data.currency,
+      countryFlow: data.countryFlow,
       subtotal: "0",
       totalPaid: "0",
       orderStatus: "DRAFT",

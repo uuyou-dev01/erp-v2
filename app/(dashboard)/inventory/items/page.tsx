@@ -3,22 +3,12 @@ import { getItemUnits } from "@/app/actions/item-units";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { formatCurrency } from "@/lib/decimal";
-import { Plus, Package, CheckCircle, Clock, XCircle, Search } from "lucide-react";
+import { Plus, Package, CheckCircle, Clock, XCircle } from "lucide-react";
+import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
 
-// Force dynamic rendering
 export const dynamic = "force-dynamic";
 
-// Temporary hardcoded storeId
 const STORE_ID = "store_1";
 
 const statusColors = {
@@ -45,16 +35,84 @@ const conditionLabels = {
   DEFECTIVE: "有缺陷",
 } as const;
 
+type ItemRow = Awaited<ReturnType<typeof getItemUnits>>[number];
+
 export default async function ItemUnitsPage() {
   const items = await getItemUnits(STORE_ID);
 
-  // 统计数据
   const stats = {
     total: items.length,
     available: items.filter((i) => i.status === "AVAILABLE").length,
     allocated: items.filter((i) => i.status === "ALLOCATED").length,
     consumed: items.filter((i) => i.status === "CONSUMED").length,
   };
+
+  const columns: Column<ItemRow>[] = [
+    {
+      key: "id",
+      header: "ID",
+      hideOnMobile: true,
+      cell: (row) => <span className="font-mono text-xs">{row.id.slice(0, 8)}</span>,
+    },
+    {
+      key: "sku",
+      header: "SKU",
+      cell: (row) => (
+        <div>
+          <p className="font-medium">{row.sku.code}</p>
+          <p className="text-xs text-muted-foreground">{row.sku.name}</p>
+        </div>
+      ),
+    },
+    {
+      key: "location",
+      header: "位置",
+      cell: (row) => row.location.code,
+    },
+    {
+      key: "condition",
+      header: "成色",
+      cell: (row) =>
+        row.conditionGrade ? (
+          <Badge variant="outline">
+            {conditionLabels[row.conditionGrade as keyof typeof conditionLabels] || row.conditionGrade}
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
+    {
+      key: "cost",
+      header: "成本",
+      cell: (row) => formatCurrency(row.unitCost.toString(), row.costCurrency),
+    },
+    {
+      key: "status",
+      header: "状态",
+      cell: (row) => (
+        <Badge variant={statusColors[row.status as keyof typeof statusColors]}>
+          {statusLabels[row.status as keyof typeof statusLabels] || row.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "owner",
+      header: "所有者",
+      hideOnMobile: true,
+      cell: (row) => row.ownerId || <span className="text-muted-foreground">-</span>,
+    },
+    {
+      key: "actions",
+      header: "操作",
+      cell: (row) => (
+        <Link href={`/inventory/items/${row.id}`}>
+          <Button variant="ghost" size="sm">
+            查看
+          </Button>
+        </Link>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -73,7 +131,6 @@ export default async function ItemUnitsPage() {
         </Link>
       </div>
 
-      {/* 统计卡片 */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -122,90 +179,29 @@ export default async function ItemUnitsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>所有单品</CardTitle>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="搜索单品..." className="pl-8 w-[200px]" />
-              </div>
-            </div>
-          </div>
+          <CardTitle>所有单品</CardTitle>
         </CardHeader>
         <CardContent>
-          {items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Package className="mb-4 h-12 w-12 text-muted-foreground" />
-              <h3 className="mb-2 text-lg font-semibold">暂无单品</h3>
-              <p className="mb-4 text-sm text-muted-foreground">
-                创建第一个单品开始追踪独立商品
-              </p>
-              <Link href="/inventory/items/new">
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  添加单品
-                </Button>
-              </Link>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>SKU</TableHead>
-                  <TableHead>位置</TableHead>
-                  <TableHead>成色</TableHead>
-                  <TableHead>成本</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>所有者</TableHead>
-                  <TableHead>操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-mono text-xs">
-                      {item.id.slice(0, 8)}
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{item.sku.code}</p>
-                        <p className="text-xs text-muted-foreground">{item.sku.name}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>{item.location.code}</TableCell>
-                    <TableCell>
-                      {item.conditionGrade ? (
-                        <Badge variant="outline">
-                          {conditionLabels[item.conditionGrade as keyof typeof conditionLabels] || item.conditionGrade}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {formatCurrency(item.unitCost.toString(), item.costCurrency)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusColors[item.status as keyof typeof statusColors]}>
-                        {statusLabels[item.status as keyof typeof statusLabels] || item.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {item.ownerId || <span className="text-muted-foreground">-</span>}
-                    </TableCell>
-                    <TableCell>
-                      <Link href={`/inventory/items/${item.id}`}>
-                        <Button variant="ghost" size="sm">
-                          查看
-                        </Button>
-                      </Link>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <ResponsiveTable
+            columns={columns}
+            data={items}
+            keyExtractor={(row) => row.id}
+            emptyState={
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Package className="mb-4 h-12 w-12 text-muted-foreground" />
+                <h3 className="mb-2 text-lg font-semibold">暂无单品</h3>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  创建第一个单品开始追踪独立商品
+                </p>
+                <Link href="/inventory/items/new">
+                  <Button>
+                    <Plus className="mr-2 h-4 w-4" />
+                    添加单品
+                  </Button>
+                </Link>
+              </div>
+            }
+          />
         </CardContent>
       </Card>
     </div>

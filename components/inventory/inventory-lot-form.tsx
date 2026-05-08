@@ -12,6 +12,7 @@ import { getSKUs } from "@/app/actions/skus";
 import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal } from "@/lib/decimal";
 import { AlertCircle } from "lucide-react";
+import { t, CURRENCIES } from "@/lib/i18n";
 
 interface InventoryLotFormProps {
   storeId: string;
@@ -21,22 +22,19 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string }>>([]);
-  const [locations, setLocations] = useState<
-    Array<{ id: string; code: string; name: string }>
-  >([]);
+  const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [formData, setFormData] = useState({
     skuId: "",
     locationId: "",
     quantity: "",
     unitCost: "",
-    costCurrency: "USD",
+    costCurrency: "CNY",
     sourceId: "MANUAL_ENTRY",
     receivedAt: new Date().toISOString().split("T")[0],
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    // Load SKUs and Locations
     Promise.all([getSKUs(storeId), getLocations(storeId)]).then(([skuData, locationData]) => {
       setSKUs(skuData);
       setLocations(locationData);
@@ -46,21 +44,21 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    if (!formData.skuId) newErrors.skuId = "SKU is required";
-    if (!formData.locationId) newErrors.locationId = "Location is required";
+    if (!formData.skuId) newErrors.skuId = "请选择SKU";
+    if (!formData.locationId) newErrors.locationId = "请选择仓库位置";
     if (!formData.quantity) {
-      newErrors.quantity = "Quantity is required";
+      newErrors.quantity = "数量为必填项";
     } else if (!isValidDecimal(formData.quantity)) {
-      newErrors.quantity = "Invalid quantity format";
+      newErrors.quantity = "数量格式无效";
     } else if (parseFloat(formData.quantity) <= 0) {
-      newErrors.quantity = "Quantity must be greater than 0";
+      newErrors.quantity = "数量必须大于0";
     }
     if (!formData.unitCost) {
-      newErrors.unitCost = "Unit cost is required";
+      newErrors.unitCost = "单位成本为必填项";
     } else if (!isValidDecimal(formData.unitCost)) {
-      newErrors.unitCost = "Invalid cost format";
+      newErrors.unitCost = "成本格式无效";
     } else if (parseFloat(formData.unitCost) < 0) {
-      newErrors.unitCost = "Unit cost cannot be negative";
+      newErrors.unitCost = "成本不能为负数";
     }
 
     setErrors(newErrors);
@@ -69,13 +67,9 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setLoading(true);
-
     try {
       await createInventoryLot({
         storeId,
@@ -93,7 +87,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
       router.refresh();
     } catch (error) {
       console.error("Failed to create inventory lot:", error);
-      alert("Failed to create inventory lot. Please try again.");
+      alert("创建入库库存失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -103,7 +97,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
     <form onSubmit={handleSubmit} className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Lot Information</CardTitle>
+          <CardTitle>{t("inventory.lot_info")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -114,7 +108,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
               onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
               required
             >
-              <option value="">Select SKU</option>
+              <option value="">{t("inventory.select_sku")}</option>
               {skus.map((sku) => (
                 <option key={sku.id} value={sku.id}>
                   {sku.code} - {sku.name}
@@ -130,14 +124,14 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="locationId">Location *</Label>
+            <Label htmlFor="locationId">{t("location.name")} *</Label>
             <Select
               id="locationId"
               value={formData.locationId}
               onChange={(e) => setFormData({ ...formData, locationId: e.target.value })}
               required
             >
-              <option value="">Select Location</option>
+              <option value="">{t("inventory.select_location")}</option>
               {locations.map((location) => (
                 <option key={location.id} value={location.id}>
                   {location.code} - {location.name}
@@ -153,13 +147,13 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="quantity">Quantity *</Label>
+            <Label htmlFor="quantity">{t("inventory.quantity")} *</Label>
             <Input
               id="quantity"
               type="text"
               value={formData.quantity}
               onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-              placeholder="e.g., 100, 50.5"
+              placeholder={t("inventory.quantity_placeholder")}
               required
             />
             {errors.quantity && (
@@ -168,20 +162,18 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
                 {errors.quantity}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
-              Number of units in this lot (supports decimals)
-            </p>
+            <p className="text-xs text-muted-foreground">{t("inventory.quantity_hint")}</p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="unitCost">Unit Cost *</Label>
+              <Label htmlFor="unitCost">{t("inventory.unit_cost")} *</Label>
               <Input
                 id="unitCost"
                 type="text"
                 value={formData.unitCost}
                 onChange={(e) => setFormData({ ...formData, unitCost: e.target.value })}
-                placeholder="e.g., 99.99"
+                placeholder={t("inventory.unit_cost_placeholder")}
                 required
               />
               {errors.unitCost && (
@@ -190,32 +182,26 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
                   {errors.unitCost}
                 </p>
               )}
-              <p className="text-xs text-muted-foreground">
-                Cost per unit (immutable once set)
-              </p>
+              <p className="text-xs text-muted-foreground">{t("inventory.unit_cost_hint")}</p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="costCurrency">Currency *</Label>
+              <Label htmlFor="costCurrency">{t("common.currency")} *</Label>
               <Select
                 id="costCurrency"
                 value={formData.costCurrency}
-                onChange={(e) =>
-                  setFormData({ ...formData, costCurrency: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, costCurrency: e.target.value })}
                 required
               >
-                <option value="USD">USD</option>
-                <option value="CNY">CNY</option>
-                <option value="JPY">JPY</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
+                {CURRENCIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
               </Select>
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="receivedAt">Received Date *</Label>
+            <Label htmlFor="receivedAt">{t("inventory.received_date")} *</Label>
             <Input
               id="receivedAt"
               type="date"
@@ -223,23 +209,18 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
               onChange={(e) => setFormData({ ...formData, receivedAt: e.target.value })}
               required
             />
-            <p className="text-xs text-muted-foreground">
-              Date when inventory was received
-            </p>
+            <p className="text-xs text-muted-foreground">{t("inventory.received_date_hint")}</p>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="border-blue-500/50 bg-blue-500/5">
+      <Card className="border-primary/30 bg-primary/5">
         <CardContent className="pt-6">
           <div className="flex gap-3">
-            <AlertCircle className="h-5 w-5 text-blue-500" />
+            <AlertCircle className="h-5 w-5 text-primary" />
             <div className="space-y-1 text-sm">
-              <p className="font-medium">StockLedger Integration</p>
-              <p className="text-muted-foreground">
-                Creating this lot will automatically write an INBOUND_PURCHASE entry to the
-                StockLedger. The unit cost is immutable once set.
-              </p>
+              <p className="font-medium">{t("inventory.ledger_info")}</p>
+              <p className="text-muted-foreground">{t("inventory.ledger_hint")}</p>
             </div>
           </div>
         </CardContent>
@@ -247,15 +228,10 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>
-          {loading ? "Creating..." : "Create Inventory Lot"}
+          {loading ? t("common.creating") : t("inventory.create_lot")}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => router.back()}
-          disabled={loading}
-        >
-          Cancel
+        <Button type="button" variant="outline" onClick={() => router.back()} disabled={loading}>
+          {t("common.cancel")}
         </Button>
       </div>
     </form>

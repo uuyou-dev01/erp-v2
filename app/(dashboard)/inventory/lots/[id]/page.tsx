@@ -12,9 +12,11 @@ import {
 import { notFound } from "next/navigation";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { Package, MapPin, DollarSign, Activity } from "lucide-react";
+import { LotSplitForm } from "@/components/inventory/lot-split-form";
 
-// Force dynamic rendering
 export const dynamic = "force-dynamic";
+
+const STORE_ID = "store_1";
 
 export default async function InventoryLotDetailPage({
   params,
@@ -33,38 +35,38 @@ export default async function InventoryLotDetailPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Inventory Lot Details</h1>
-        <p className="text-muted-foreground">View lot information and transaction history</p>
+        <h1 className="text-3xl font-bold">入库库存详情</h1>
+        <p className="text-muted-foreground">查看库存来源、成本和交易历史</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Available Quantity</CardTitle>
+            <CardTitle className="text-sm font-medium">可用数量</CardTitle>
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatQuantity(availableQty)}</div>
-            <p className="text-xs text-muted-foreground">Units available</p>
+            <p className="text-xs text-muted-foreground">当前可用单位</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Unit Cost</CardTitle>
+            <CardTitle className="text-sm font-medium">单位成本</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {formatCurrency(lot.unitCost, lot.costCurrency)}
             </div>
-            <p className="text-xs text-muted-foreground">Immutable cost</p>
+            <p className="text-xs text-muted-foreground">不可变成本</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Location</CardTitle>
+            <CardTitle className="text-sm font-medium">所在位置</CardTitle>
             <MapPin className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -75,23 +77,23 @@ export default async function InventoryLotDetailPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Status</CardTitle>
+            <CardTitle className="text-sm font-medium">状态</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               <Badge variant={lot.status === "ACTIVE" ? "default" : "secondary"}>
-                {lot.status}
+                {lot.status === "ACTIVE" ? "活跃" : "已消耗"}
               </Badge>
             </div>
-            <p className="text-xs text-muted-foreground">Current status</p>
+            <p className="text-xs text-muted-foreground">当前状态</p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Lot Information</CardTitle>
+          <CardTitle>入库库存信息</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -101,20 +103,20 @@ export default async function InventoryLotDetailPage({
               <p className="text-sm text-muted-foreground">{lot.sku.name}</p>
             </div>
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Received Date</p>
+              <p className="text-sm font-medium text-muted-foreground">到货日期</p>
               <p className="text-lg font-semibold">
-                {new Date(lot.receivedAt).toLocaleDateString()}
+                {new Date(lot.receivedAt).toLocaleDateString("zh-CN")}
               </p>
             </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Source Type</p>
-              <Badge variant="outline">{lot.sourceType}</Badge>
+              <p className="text-sm font-medium text-muted-foreground">来源类型</p>
+              <Badge variant="outline">{lot.sourceType === "PURCHASE" ? "采购" : "拆分"}</Badge>
             </div>
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Source ID</p>
+              <p className="text-sm font-medium text-muted-foreground">来源ID</p>
               <p className="font-mono text-sm">{lot.sourceId}</p>
             </div>
           </div>
@@ -124,23 +126,23 @@ export default async function InventoryLotDetailPage({
       {lot.allocations.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Allocations ({lot.allocations.length})</CardTitle>
+            <CardTitle>分配记录 ({lot.allocations.length})</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Cost Amount</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>订单</TableHead>
+                  <TableHead>数量</TableHead>
+                  <TableHead>成本金额</TableHead>
+                  <TableHead>状态</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lot.allocations.map((allocation) => (
                   <TableRow key={allocation.id}>
                     <TableCell className="font-medium">
-                      Order #{allocation.orderLine.order.id.slice(0, 8)}
+                      订单 #{allocation.orderLine.order.id.slice(0, 8)}
                     </TableCell>
                     <TableCell>{formatQuantity(allocation.quantity)}</TableCell>
                     <TableCell>{formatCurrency(allocation.costAmount, lot.costCurrency)}</TableCell>
@@ -159,29 +161,31 @@ export default async function InventoryLotDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Stock Ledger History</CardTitle>
+          <CardTitle>库存流水记录</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Delta Qty</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>Reference</TableHead>
+                <TableHead>日期</TableHead>
+                <TableHead>原因</TableHead>
+                <TableHead>变动数量</TableHead>
+                <TableHead>位置</TableHead>
+                <TableHead>引用</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {lot.stockLedgers.map((ledger) => (
                 <TableRow key={ledger.id}>
                   <TableCell>
-                    {new Date(ledger.occurredAt).toLocaleString()}
+                    {new Date(ledger.occurredAt).toLocaleString("zh-CN")}
                   </TableCell>
                   <TableCell>
                     <Badge
                       variant={
-                        ledger.reason.startsWith("INBOUND") ? "default" : "secondary"
+                        ledger.reason.startsWith("INBOUND") || ledger.reason === "SPLIT_IN"
+                          ? "default"
+                          : "secondary"
                       }
                     >
                       {ledger.reason}
@@ -213,6 +217,14 @@ export default async function InventoryLotDetailPage({
           </Table>
         </CardContent>
       </Card>
+
+      {lot.status === "ACTIVE" && parseFloat(availableQty) > 0 && (
+        <LotSplitForm
+          lotId={id}
+          storeId={STORE_ID}
+          availableQty={availableQty}
+        />
+      )}
     </div>
   );
 }

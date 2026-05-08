@@ -15,12 +15,11 @@ import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { AddPurchaseLineForm } from "@/components/procurement/add-purchase-line-form";
 import { ReceiveGoodsForm } from "@/components/procurement/receive-goods-form";
 import { PurchaseOrderActions } from "@/components/procurement/purchase-order-actions";
+import { QuickReceiveButton } from "@/components/procurement/quick-receive-button";
 import { ShoppingCart, Package, Calendar, DollarSign } from "lucide-react";
 
-// Force dynamic rendering
 export const dynamic = "force-dynamic";
 
-// Temporary hardcoded storeId
 const STORE_ID = "store_1";
 
 const statusColors = {
@@ -29,6 +28,13 @@ const statusColors = {
   RECEIVED: "outline",
   CANCELLED: "destructive",
 } as const;
+
+const statusLabels: Record<string, string> = {
+  DRAFT: "草稿",
+  ORDERED: "已下单",
+  RECEIVED: "已收货",
+  CANCELLED: "已取消",
+};
 
 export default async function PurchaseOrderDetailPage({
   params,
@@ -50,9 +56,9 @@ export default async function PurchaseOrderDetailPage({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Purchase Order: {order.orderNo}</h1>
+          <h1 className="text-3xl font-bold">采购订单：{order.orderNo}</h1>
           <p className="text-muted-foreground">
-            {order.supplierName || "No supplier specified"}
+            {order.supplierName || "未指定供应商"}
           </p>
         </div>
         <PurchaseOrderActions order={order} />
@@ -61,19 +67,19 @@ export default async function PurchaseOrderDetailPage({
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Status</CardTitle>
+            <CardTitle className="text-sm font-medium">状态</CardTitle>
             <ShoppingCart className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <Badge variant={statusColors[order.status as keyof typeof statusColors]}>
-              {order.status}
+              {statusLabels[order.status] ?? order.status}
             </Badge>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Amount</CardTitle>
+            <CardTitle className="text-sm font-medium">总金额</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -85,7 +91,7 @@ export default async function PurchaseOrderDetailPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Items</CardTitle>
+            <CardTitle className="text-sm font-medium">商品数</CardTitle>
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -95,14 +101,14 @@ export default async function PurchaseOrderDetailPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ordered Date</CardTitle>
+            <CardTitle className="text-sm font-medium">下单日期</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-sm">
               {order.orderedAt
-                ? new Date(order.orderedAt).toLocaleDateString()
-                : "Not ordered yet"}
+                ? new Date(order.orderedAt).toLocaleDateString("zh-CN")
+                : "尚未下单"}
             </div>
           </CardContent>
         </Card>
@@ -110,17 +116,17 @@ export default async function PurchaseOrderDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Order Information</CardTitle>
+          <CardTitle>订单信息</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Currency</p>
+              <p className="text-sm font-medium text-muted-foreground">币种</p>
               <p className="text-lg">{order.currency}</p>
             </div>
             {order.fxRate && (
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Exchange Rate</p>
+                <p className="text-sm font-medium text-muted-foreground">汇率</p>
                 <p className="text-lg">{order.fxRate.toString()}</p>
               </div>
             )}
@@ -130,22 +136,22 @@ export default async function PurchaseOrderDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Purchase Lines</CardTitle>
+          <CardTitle>采购明细</CardTitle>
         </CardHeader>
         <CardContent>
           {order.lines.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
-              No items added yet. Add items below to continue.
+              暂无商品。请在下方添加商品。
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>SKU</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Unit Price</TableHead>
-                  <TableHead>Line Amount</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>数量</TableHead>
+                  <TableHead>单价</TableHead>
+                  <TableHead>小计</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -171,7 +177,7 @@ export default async function PurchaseOrderDetailPage({
                             type="submit"
                             className="text-sm text-destructive hover:underline"
                           >
-                            Remove
+                            删除
                           </button>
                         </form>
                       )}
@@ -187,7 +193,7 @@ export default async function PurchaseOrderDetailPage({
       {canEdit && (
         <Card>
           <CardHeader>
-            <CardTitle>Add Purchase Line</CardTitle>
+            <CardTitle>添加商品</CardTitle>
           </CardHeader>
           <CardContent>
             <AddPurchaseLineForm
@@ -202,7 +208,14 @@ export default async function PurchaseOrderDetailPage({
       {canReceive && (
         <Card className="border-green-500/50 bg-green-500/5">
           <CardHeader>
-            <CardTitle>Receive Goods</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>收货</CardTitle>
+              <QuickReceiveButton
+                purchaseOrderId={order.id}
+                locations={locations}
+                destinationLocationId={order.destinationLocationId}
+              />
+            </div>
           </CardHeader>
           <CardContent>
             <ReceiveGoodsForm
@@ -220,10 +233,10 @@ export default async function PurchaseOrderDetailPage({
             <div className="flex gap-3">
               <Package className="h-5 w-5 text-blue-500" />
               <div className="space-y-1 text-sm">
-                <p className="font-medium">Goods Received</p>
+                <p className="font-medium">已收货</p>
                 <p className="text-muted-foreground">
-                  This purchase order has been received and inventory lots have been created.
-                  Received on {order.receivedAt && new Date(order.receivedAt).toLocaleDateString()}.
+                  该采购订单已完成收货，入库库存已自动创建。
+                  收货日期：{order.receivedAt && new Date(order.receivedAt).toLocaleDateString("zh-CN")}
                 </p>
               </div>
             </div>

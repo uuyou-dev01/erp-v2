@@ -16,19 +16,18 @@ export function ConfirmOrderButton({ orderId }: ConfirmOrderButtonProps) {
 
   const handleConfirm = async () => {
     const confirmed = confirm(
-      "Confirm this order? This will deduct inventory from stock and write to StockLedger. This action cannot be undone."
+      "确认该订单？这将从库存中扣减商品并写入库存流水记录。此操作不可撤销。"
     );
 
     if (!confirmed) return;
 
     setLoading(true);
-
     try {
       await confirmOrder({ orderId });
       router.refresh();
     } catch (error) {
       console.error("Failed to confirm order:", error);
-      alert(`Failed to confirm order: ${error}`);
+      alert(`确认订单失败: ${error}`);
     } finally {
       setLoading(false);
     }
@@ -37,7 +36,7 @@ export function ConfirmOrderButton({ orderId }: ConfirmOrderButtonProps) {
   return (
     <Button onClick={handleConfirm} disabled={loading} size="lg">
       <CheckCircle className="mr-2 h-4 w-4" />
-      {loading ? "Confirming..." : "Confirm Order"}
+      {loading ? "确认中..." : "确认订单"}
     </Button>
   );
 }

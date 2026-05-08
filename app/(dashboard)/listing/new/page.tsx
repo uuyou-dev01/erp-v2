@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 // Temporary hardcoded storeId
 const STORE_ID = "store_1";
 
-export default function NewListingPage() {
+export default async function NewListingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ skuId?: string; platformId?: string }>;
+}) {
+  const params = await searchParams;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -29,7 +35,11 @@ export default function NewListingPage() {
           <CardTitle>上架信息</CardTitle>
         </CardHeader>
         <CardContent>
-          <ListingForm storeId={STORE_ID} />
+          <ListingForm
+            storeId={STORE_ID}
+            initialSkuId={params.skuId}
+            initialPlatformId={params.platformId}
+          />
         </CardContent>
       </Card>
     </div>

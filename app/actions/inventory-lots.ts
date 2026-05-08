@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { createInboundInventoryLot } from "@/lib/application/inventory";
 
 export interface CreateInventoryLotInput {
   storeId: string;
@@ -85,46 +86,18 @@ export async function getAvailableQuantity(lotId: string): Promise<string> {
 }
 
 export async function createInventoryLot(data: CreateInventoryLotInput) {
-  const quantity = new Decimal(data.quantity);
-  const unitCost = new Decimal(data.unitCost);
-
-  // Create lot and stock ledger in a transaction
   const result = await prisma.$transaction(async (tx) => {
-    // Create the inventory lot
-    const lot = await tx.inventoryLot.create({
-      data: {
-        storeId: data.storeId,
-        skuId: data.skuId,
-        locationId: data.locationId,
-        unitCost: unitCost.toFixed(4),
-        costCurrency: data.costCurrency,
-        sourceType: data.sourceType,
-        sourceId: data.sourceId,
-        receivedAt: data.receivedAt,
-        status: "ACTIVE",
-      },
+    return createInboundInventoryLot(tx, {
+      storeId: data.storeId,
+      skuId: data.skuId,
+      locationId: data.locationId,
+      quantity: data.quantity,
+      unitCost: data.unitCost,
+      costCurrency: data.costCurrency,
+      sourceType: data.sourceType,
+      sourceId: data.sourceId,
+      receivedAt: data.receivedAt,
     });
-
-    // Write to stock ledger (INBOUND)
-    await tx.stockLedger.create({
-      data: {
-        storeId: data.storeId,
-        occurredAt: data.receivedAt,
-        entityType: "LOT",
-        entityId: lot.id,
-        locationId: data.locationId,
-        deltaQty: quantity.toFixed(4),
-        reason: "INBOUND_PURCHASE",
-        refType: data.sourceType,
-        refId: data.sourceId,
-        meta: {
-          unitCost: unitCost.toString(),
-          currency: data.costCurrency,
-        },
-      },
-    });
-
-    return lot;
   });
 
   revalidatePath("/inventory/lots");
@@ -143,6 +116,107 @@ export async function updateInventoryLot(data: UpdateInventoryLotInput) {
   revalidatePath("/inventory/lots");
   revalidatePath(`/inventory/lots/${data.id}`);
   return lot;
+}
+
+export interface ConvertLotToItemUnitInput {
+  lotId: string;
+  storeId: string;
+  quantity: number;
+  conditionGrade: string;
+  notes?: string;
+}
+
+export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
+  const { lotId, storeId, quantity, conditionGrade, notes } = data;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const lot = await tx.inventoryLot.findUnique({
+      where: { id: lotId },
+      include: { sku: true, location: true },
+    });
+
+    if (!lot) throw new Error("入库库存不存在");
+    if (lot.status !== "ACTIVE") throw new Error("入库库存状态不是活跃，无法拆分");
+
+    const ledgers = await tx.stockLedger.findMany({
+      where: { entityType: "LOT", entityId: lotId },
+    });
+    const availableQty = ledgers.reduce(
+      (sum, l) => sum.plus(new Decimal(l.deltaQty.toString())),
+      new Decimal(0)
+    );
+    if (availableQty.lessThan(quantity)) {
+      throw new Error(`可用数量不足，当前可用: ${availableQty.toString()}`);
+    }
+
+    const split = await tx.inventorySplit.create({
+      data: {
+        storeId,
+        splitType: "UNBOX",
+        sourceType: "LOT",
+        sourceId: lotId,
+        totalSourceCost: new Decimal(lot.unitCost.toString()).mul(quantity).toFixed(4),
+        allocationMethod: "PROPORTIONAL_BY_QTY",
+      },
+    });
+
+    const itemUnit = await tx.itemUnit.create({
+      data: {
+        storeId,
+        skuId: lot.skuId,
+        locationId: lot.locationId,
+        unitCost: lot.unitCost,
+        costCurrency: lot.costCurrency,
+        conditionGrade,
+        notes,
+        sourceType: "SPLIT",
+        sourceId: split.id,
+        status: "AVAILABLE",
+      },
+    });
+
+    await tx.inventorySplitLine.create({
+      data: {
+        splitId: split.id,
+        targetType: "ITEM_UNIT",
+        targetId: itemUnit.id,
+        quantity: new Decimal(quantity).toFixed(4),
+        allocatedCost: new Decimal(lot.unitCost.toString()).mul(quantity).toFixed(4),
+      },
+    });
+
+    await tx.stockLedger.create({
+      data: {
+        storeId,
+        entityType: "LOT",
+        entityId: lotId,
+        locationId: lot.locationId,
+        deltaQty: new Decimal(quantity).neg().toFixed(4),
+        reason: "SPLIT_OUT",
+        refType: "SPLIT",
+        refId: split.id,
+      },
+    });
+
+    await tx.stockLedger.create({
+      data: {
+        storeId,
+        entityType: "ITEM_UNIT",
+        entityId: itemUnit.id,
+        locationId: lot.locationId,
+        deltaQty: new Decimal(quantity).toFixed(4),
+        reason: "SPLIT_IN",
+        refType: "SPLIT",
+        refId: split.id,
+      },
+    });
+
+    return { split, itemUnit };
+  });
+
+  revalidatePath(`/inventory/lots/${lotId}`);
+  revalidatePath("/inventory/items");
+  return result;
 }
 
 export async function deleteInventoryLot(id: string) {
