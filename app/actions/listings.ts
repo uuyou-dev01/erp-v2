@@ -3,6 +3,11 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import {
+  computeOrderFees,
+  feeResultToStrings,
+} from "@/lib/application/order-fees";
+import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -113,8 +118,11 @@ export async function createListing(data: {
     select: {
       defaultFeeRate: true,
       defaultCurrency: true,
+      defaultShippingFee: true,
+      shippingRules: true,
     },
   });
+  const platformDefaults = platform ? resolvePlatformListingDefaults(platform) : null;
 
   let pricingSkuId = data.skuId;
   if (!pricingSkuId && data.itemUnitId) {
@@ -135,16 +143,18 @@ export async function createListing(data: {
   const resolvedCurrency =
     data.currency ||
     referencePrice?.currency ||
-    platform?.defaultCurrency ||
+    platformDefaults?.currency ||
     null;
   const feeRateDecimal = data.feeRateOverride
     ? new Decimal(data.feeRateOverride)
-    : platform?.defaultFeeRate
-      ? new Decimal(platform.defaultFeeRate.toString())
+    : platformDefaults?.feeRate
+      ? new Decimal(platformDefaults.feeRate)
       : new Decimal(0);
   const shippingFeeDecimal = data.shippingFeeOverride
     ? new Decimal(data.shippingFeeOverride)
-    : new Decimal(0);
+    : platformDefaults?.shippingFee
+      ? new Decimal(platformDefaults.shippingFee)
+      : new Decimal(0);
   const estimatedNetDecimal = data.estimatedNet
     ? new Decimal(data.estimatedNet)
     : listedPriceDecimal
@@ -228,10 +238,10 @@ export async function quickSellListing(data: {
       : listing.platform.defaultFeeRate
         ? new Decimal(listing.platform.defaultFeeRate.toString())
         : new Decimal(0);
-    const platformFee = subtotal.mul(feeRate);
     const shippingFee = listing.shippingFeeOverride
       ? new Decimal(listing.shippingFeeOverride.toString())
       : new Decimal(0);
+
     let inventoryCost = new Decimal(0);
 
     const customerOrder = await tx.customerOrder.create({
@@ -245,7 +255,7 @@ export async function quickSellListing(data: {
         currency,
         subtotal: subtotal.toFixed(4),
         totalPaid: subtotal.toFixed(4),
-        platformFee: platformFee.toFixed(4),
+        platformFee: subtotal.mul(feeRate).toFixed(4),
         shippingFee: shippingFee.toFixed(4),
         orderStatus: "CONFIRMED",
         confirmedAt: new Date(),
@@ -260,7 +270,7 @@ export async function quickSellListing(data: {
         unitPrice: unitPrice.toFixed(4),
         lineAmount: subtotal.toFixed(4),
         supplyType: "FROM_STOCK",
-        supplyStatus: "CONSUMED",
+        supplyStatus: "READY_TO_SHIP",
       },
     });
 
@@ -280,31 +290,8 @@ export async function quickSellListing(data: {
           quantity: "1.0000",
           unitCost: unitCost.toFixed(4),
           costAmount: unitCost.toFixed(4),
-          status: "ALLOCATED",
+          status: "PENDING",
         },
-      });
-
-      await tx.stockLedger.create({
-        data: {
-          storeId: listing.storeId,
-          occurredAt: new Date(),
-          entityType: "ITEM_UNIT",
-          entityId: listing.itemUnit.id,
-          locationId: listing.itemUnit.locationId,
-          deltaQty: "-1.0000",
-          reason: "OUTBOUND_SALE",
-          refType: "ORDER_LINE",
-          refId: orderLine.id,
-          meta: {
-            orderId: customerOrder.id,
-            listingId: listing.id,
-          },
-        },
-      });
-
-      await tx.itemUnit.update({
-        where: { id: listing.itemUnit.id },
-        data: { status: "CONSUMED" },
       });
 
       await tx.listing.update({
@@ -313,7 +300,6 @@ export async function quickSellListing(data: {
       });
     } else {
       let remainingToAllocate = quantity;
-      let totalAvailableBeforeSale = new Decimal(0);
       const lots = await tx.inventoryLot.findMany({
         where: {
           storeId: listing.storeId,
@@ -325,26 +311,18 @@ export async function quickSellListing(data: {
 
       for (const lot of lots) {
         const ledgers = await tx.stockLedger.findMany({
-          where: {
-            entityType: "LOT",
-            entityId: lot.id,
-          },
+          where: { entityType: "LOT", entityId: lot.id },
         });
         const available = ledgers.reduce(
           (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
           new Decimal(0)
         );
 
-        if (available.lte(0)) continue;
-
-        totalAvailableBeforeSale = totalAvailableBeforeSale.plus(available);
-
-        if (remainingToAllocate.lte(0)) continue;
+        if (available.lte(0) || remainingToAllocate.lte(0)) continue;
 
         const allocatedQty = Decimal.min(available, remainingToAllocate);
         const unitCost = new Decimal(lot.unitCost.toString());
-        const costAmount = allocatedQty.mul(unitCost);
-        inventoryCost = inventoryCost.plus(costAmount);
+        inventoryCost = inventoryCost.plus(allocatedQty.mul(unitCost));
 
         await tx.orderAllocation.create({
           data: {
@@ -353,35 +331,10 @@ export async function quickSellListing(data: {
             lotId: lot.id,
             quantity: allocatedQty.toFixed(4),
             unitCost: unitCost.toFixed(4),
-            costAmount: costAmount.toFixed(4),
-            status: "ALLOCATED",
+            costAmount: allocatedQty.mul(unitCost).toFixed(4),
+            status: "PENDING",
           },
         });
-
-        await tx.stockLedger.create({
-          data: {
-            storeId: listing.storeId,
-            occurredAt: new Date(),
-            entityType: "LOT",
-            entityId: lot.id,
-            locationId: lot.locationId,
-            deltaQty: allocatedQty.negated().toFixed(4),
-            reason: "OUTBOUND_SALE",
-            refType: "ORDER_LINE",
-            refId: orderLine.id,
-            meta: {
-              orderId: customerOrder.id,
-              listingId: listing.id,
-            },
-          },
-        });
-
-        if (available.minus(allocatedQty).lte(0)) {
-          await tx.inventoryLot.update({
-            where: { id: lot.id },
-            data: { status: "CONSUMED" },
-          });
-        }
 
         remainingToAllocate = remainingToAllocate.minus(allocatedQty);
       }
@@ -396,11 +349,8 @@ export async function quickSellListing(data: {
           orderBy: { createdAt: "asc" },
         });
 
-        totalAvailableBeforeSale = totalAvailableBeforeSale.plus(itemUnits.length);
-
         for (const itemUnit of itemUnits) {
           if (remainingToAllocate.lt(1)) break;
-
           const unitCost = new Decimal(itemUnit.unitCost.toString());
           inventoryCost = inventoryCost.plus(unitCost);
 
@@ -412,31 +362,8 @@ export async function quickSellListing(data: {
               quantity: "1.0000",
               unitCost: unitCost.toFixed(4),
               costAmount: unitCost.toFixed(4),
-              status: "ALLOCATED",
+              status: "PENDING",
             },
-          });
-
-          await tx.stockLedger.create({
-            data: {
-              storeId: listing.storeId,
-              occurredAt: new Date(),
-              entityType: "ITEM_UNIT",
-              entityId: itemUnit.id,
-              locationId: itemUnit.locationId,
-              deltaQty: "-1.0000",
-              reason: "OUTBOUND_SALE",
-              refType: "ORDER_LINE",
-              refId: orderLine.id,
-              meta: {
-                orderId: customerOrder.id,
-                listingId: listing.id,
-              },
-            },
-          });
-
-          await tx.itemUnit.update({
-            where: { id: itemUnit.id },
-            data: { status: "CONSUMED" },
           });
 
           remainingToAllocate = remainingToAllocate.minus(1);
@@ -446,23 +373,22 @@ export async function quickSellListing(data: {
       if (remainingToAllocate.gt(0)) {
         throw new Error("库存不足，无法完成售出");
       }
-
-      if (totalAvailableBeforeSale.minus(quantity).lte(0)) {
-        await tx.listing.update({
-          where: { id: listing.id },
-          data: { status: "SOLD_OUT", delistedAt: new Date() },
-        });
-      }
     }
 
-    const netRevenue = subtotal.minus(platformFee).minus(shippingFee).minus(inventoryCost);
-    const updatedOrder = await tx.customerOrder.update({
-      where: { id: customerOrder.id },
-      data: {
-        netRevenue: netRevenue.toFixed(4),
-      },
+    const fees = computeOrderFees({
+      subtotal,
+      platformFeeRate: feeRate,
+      shippingFee,
+      inventoryCost,
     });
-    return updatedOrder.id;
+    const feeStrings = feeResultToStrings(fees);
+
+    await tx.customerOrder.update({
+      where: { id: customerOrder.id },
+      data: { netRevenue: feeStrings.netRevenue },
+    });
+
+    return customerOrder.id;
     });
 
   revalidatePath("/listing");

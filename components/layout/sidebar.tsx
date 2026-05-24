@@ -1,14 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   Package,
   ShoppingCart,
   Warehouse,
-  ListChecks,
   FileText,
   MapPin,
   Box,
@@ -18,34 +17,67 @@ import {
   ChevronRight,
   ChevronDown,
   X,
+  ClipboardList,
+  TriangleAlert,
+  Store,
+  Plus,
+  Settings,
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
+import type { QueueCounts, WorkQueue } from "@/lib/application/next-actions";
 
-const navigation = [
-  { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard },
+const STORE_ID = "store_1";
+
+type NavItem = {
+  name: string;
+  href: string;
+  icon: typeof ClipboardList;
+  queue?: WorkQueue;
+  badgeKey?: keyof QueueCounts;
+};
+
+type NavGroup = {
+  title: string;
+  items: NavItem[];
+};
+
+const workflowGroups: NavGroup[] = [
   {
-    name: "库存管理",
+    title: "运营",
+    items: [
+      { name: "工作台", href: "/workbench", icon: ClipboardList, badgeKey: "total" },
+      { name: "商品中心", href: "/inventory/skus", icon: Store },
+      { name: "库存", href: "/inventory", icon: Warehouse },
+      { name: "销售", href: "/sales", icon: Package },
+      { name: "异常中心", href: "/workbench?queue=exception", icon: TriangleAlert, queue: "exception", badgeKey: "exception" },
+      { name: "报表", href: "/reports", icon: FileText },
+    ],
+  },
+];
+
+const adminNavigation = [
+  { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard },
+  { name: "采购单据", href: "/procurement", icon: ShoppingCart },
+  {
+    name: "平台与上架",
+    href: "/listing",
+    icon: Globe,
+    submenu: [
+      { name: "上架列表", href: "/listing", icon: Store },
+      { name: "销售平台", href: "/listing/platforms", icon: Globe },
+    ],
+  },
+  {
+    name: "库存设置",
     href: "/inventory",
-    icon: Warehouse,
+    icon: Settings,
     submenu: [
       { name: "仓库位置", href: "/inventory/locations", icon: MapPin },
-      { name: "商品SKU", href: "/inventory/skus", icon: Box },
       { name: "入库库存", href: "/inventory/lots", icon: Package },
       { name: "单件商品", href: "/inventory/items", icon: PackageOpen },
     ],
   },
-  { name: "采购管理", href: "/procurement", icon: ShoppingCart },
-  { name: "销售管理", href: "/sales", icon: Package },
-  {
-    name: "商品上架",
-    href: "/listing",
-    icon: Globe,
-    submenu: [
-      { name: "上架列表", href: "/listing", icon: ListChecks },
-      { name: "销售平台", href: "/listing/platforms", icon: Globe },
-    ],
-  },
-  { name: "报表分析", href: "/reports", icon: FileText },
 ];
 
 interface SidebarProps {
@@ -53,10 +85,73 @@ interface SidebarProps {
   onMobileClose?: () => void;
 }
 
+function CountBadge({ count, critical }: { count: number; critical?: boolean }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className={cn(
+        "ml-auto rounded-md px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
+        critical ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"
+      )}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+function NavLink({
+  item,
+  active,
+  collapsed,
+  badgeCount,
+  critical,
+  onClick,
+}: {
+  item: NavItem;
+  active: boolean;
+  collapsed: boolean;
+  badgeCount: number;
+  critical?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Link
+      href={item.href}
+      onClick={onClick}
+      title={collapsed ? item.name : undefined}
+      className={cn(
+        "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+        collapsed && "justify-center px-2",
+        active
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}
+    >
+      <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+      {!collapsed && (
+        <>
+          <span className="flex-1 truncate">{item.name}</span>
+          <CountBadge count={badgeCount} critical={critical} />
+        </>
+      )}
+    </Link>
+  );
+}
+
 export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>(["库存管理"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["设置"]);
+  const [counts, setCounts] = useState<QueueCounts | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getWorkbenchQueueCounts(STORE_ID).then((data) => {
+      if (!cancelled) setCounts(data);
+    });
+    return () => { cancelled = true; };
+  }, [pathname]);
 
   useEffect(() => {
     if (mobileOpen) {
@@ -71,127 +166,178 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     );
   };
 
-  const handleNavClick = () => {
-    if (onMobileClose) onMobileClose();
+  const handleNavClick = () => onMobileClose?.();
+
+  const isWorkflowActive = (item: NavItem) => {
+    if (item.href === "/inventory" && pathname.startsWith("/inventory/skus")) return false;
+    if (!item.queue && item.href !== "/workbench") {
+      return pathname === item.href || pathname.startsWith(`${item.href}/`);
+    }
+    if (item.href === "/workbench" && pathname === "/workbench" && !item.queue) {
+      return !searchParams.get("queue");
+    }
+    if (pathname !== "/workbench") return false;
+    const currentQueue = searchParams.get("queue");
+    if (!item.queue) return !currentQueue;
+    return currentQueue === item.queue;
   };
 
   const sidebarContent = (
-    <>
-      <div className={cn(
-        "flex h-14 items-center border-b border-white/20 px-4",
-        collapsed ? "justify-center" : "justify-between"
-      )}>
-        {!collapsed && <h1 className="text-lg font-bold text-white truncate">跨境贸易ERP</h1>}
-        {collapsed && <Box className="h-6 w-6 text-white" />}
+    <div className="flex h-full flex-col">
+      <div className={cn("flex h-12 items-center border-b border-sidebar-border px-3", collapsed ? "justify-center" : "justify-between")}>
+        {!collapsed && (
+          <span className="truncate text-sm font-semibold tracking-tight text-sidebar-foreground">
+            跨境贸易 ERP
+          </span>
+        )}
+        {collapsed && <Box className="h-4 w-4 text-sidebar-foreground" />}
         <button
+          type="button"
           onClick={() => setCollapsed(!collapsed)}
-          className="hidden md:flex items-center justify-center h-7 w-7 rounded-md hover:bg-white/20 text-white/80 hover:text-white transition"
+          className="hidden h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent md:inline-flex"
         >
-          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronLeft className="h-3.5 w-3.5" />}
         </button>
         {onMobileClose && (
-          <button
-            onClick={onMobileClose}
-            className="md:hidden flex items-center justify-center h-7 w-7 rounded-md hover:bg-white/20 text-white/80 hover:text-white transition"
-          >
+          <button type="button" onClick={onMobileClose} className="inline-flex h-7 w-7 items-center justify-center rounded-md md:hidden">
             <X className="h-4 w-4" />
           </button>
         )}
       </div>
-      <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
-        {navigation.map((item) => {
-          const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-          const isExpanded = expandedItems.includes(item.name);
-          const hasSubmenu = "submenu" in item && item.submenu;
 
-          return (
-            <div key={item.name}>
-              {hasSubmenu ? (
-                <>
-                  <button
-                    onClick={() => toggleExpand(item.name)}
+      {!collapsed && (
+        <div className="border-b border-sidebar-border p-3">
+          <Link
+            href="/workbench?action=quickEntry"
+            className="inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm hover:bg-primary/90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            快速录入
+          </Link>
+        </div>
+      )}
+
+      <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+        {workflowGroups.map((group) => (
+          <div key={group.title}>
+            {!collapsed && (
+              <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {group.title}
+              </p>
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  active={isWorkflowActive(item)}
+                  collapsed={collapsed}
+                  badgeCount={item.badgeKey && counts ? counts[item.badgeKey] : 0}
+                  critical={item.badgeKey === "exception" || item.badgeKey === "inspectionException"}
+                  onClick={handleNavClick}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div>
+          {!collapsed && (
+            <button
+              type="button"
+              onClick={() => toggleExpand("设置")}
+              className="mb-1 flex w-full items-center justify-between px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+            >
+              设置
+              <ChevronDown className={cn("h-3 w-3 transition", expandedItems.includes("设置") && "rotate-180")} />
+            </button>
+          )}
+          {(collapsed || expandedItems.includes("设置")) && (
+            <div className="space-y-0.5">
+              {adminNavigation.map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const hasSubmenu = "submenu" in item && item.submenu;
+                if (hasSubmenu && !collapsed) {
+                  return (
+                    <div key={item.name}>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(item.name)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                          isActive
+                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
+                        )}
+                      >
+                        <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                        <span className="flex-1 text-left">{item.name}</span>
+                        <ChevronDown className={cn("h-3 w-3 opacity-50", expandedItems.includes(item.name) && "rotate-180")} />
+                      </button>
+                      {expandedItems.includes(item.name) && (
+                        <div className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
+                          {item.submenu!.map((sub) => (
+                            <Link
+                              key={sub.href}
+                              href={sub.href}
+                              onClick={handleNavClick}
+                              className={cn(
+                                "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                                pathname === sub.href
+                                  ? "font-medium text-foreground"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              {sub.name}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    onClick={handleNavClick}
                     className={cn(
-                      "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
-                      collapsed ? "justify-center" : "",
+                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                      collapsed && "justify-center",
                       isActive
-                        ? "bg-white/30 text-white shadow-md"
-                        : "text-white/80 hover:bg-white/20 hover:text-white"
+                        ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
                     )}
                     title={collapsed ? item.name : undefined}
                   >
-                    <item.icon className="h-5 w-5 shrink-0" />
-                    {!collapsed && (
-                      <>
-                        <span className="flex-1 text-left">{item.name}</span>
-                        <ChevronDown className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-180")} />
-                      </>
-                    )}
-                  </button>
-                  {isExpanded && !collapsed && (
-                    <div className="ml-4 mt-1 space-y-1">
-                      {item.submenu.map((subitem) => {
-                        const isSubActive = pathname === subitem.href;
-                        return (
-                          <Link
-                            key={subitem.name}
-                            href={subitem.href}
-                            onClick={handleNavClick}
-                            className={cn(
-                              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
-                              isSubActive
-                                ? "bg-white/25 text-white font-medium shadow-sm"
-                                : "text-white/70 hover:bg-white/15 hover:text-white"
-                            )}
-                          >
-                            <subitem.icon className="h-4 w-4 shrink-0" />
-                            {subitem.name}
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <Link
-                  href={item.href}
-                  onClick={handleNavClick}
-                  className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
-                    collapsed ? "justify-center" : "",
-                    isActive
-                      ? "bg-white/30 text-white shadow-md"
-                      : "text-white/80 hover:bg-white/20 hover:text-white"
-                  )}
-                  title={collapsed ? item.name : undefined}
-                >
-                  <item.icon className="h-5 w-5 shrink-0" />
-                  {!collapsed && item.name}
-                </Link>
-              )}
+                    <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                    {!collapsed && item.name}
+                  </Link>
+                );
+              })}
             </div>
-          );
-        })}
+          )}
+        </div>
       </nav>
-    </>
+    </div>
   );
 
   return (
     <>
-      {/* Desktop sidebar */}
-      <div className={cn(
-        "hidden md:flex h-full flex-col glass-sidebar transition-all duration-300",
-        collapsed ? "w-[72px]" : "w-64"
-      )}>
+      <aside
+        className={cn(
+          "hidden h-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex",
+          collapsed ? "w-[52px]" : "w-56"
+        )}
+      >
         {sidebarContent}
-      </div>
-
-      {/* Mobile overlay */}
+      </aside>
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={onMobileClose} />
-          <div className="relative h-full w-64 flex flex-col glass-sidebar">
+          <div className="absolute inset-0 bg-black/40" onClick={onMobileClose} />
+          <aside className="relative flex h-full w-56 flex-col border-r bg-sidebar shadow-xl">
             {sidebarContent}
-          </div>
+          </aside>
         </div>
       )}
     </>

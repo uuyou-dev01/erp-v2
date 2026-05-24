@@ -32,6 +32,10 @@ export async function getItemUnitById(id: string) {
     include: {
       sku: true,
       location: true,
+      listings: {
+        include: { platform: true },
+        orderBy: { listedAt: "desc" },
+      },
       allocations: {
         include: {
           orderLine: {

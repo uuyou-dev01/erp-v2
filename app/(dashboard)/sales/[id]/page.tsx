@@ -6,6 +6,8 @@ import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { AddOrderLineForm } from "@/components/sales/add-order-line-form";
 import { AllocateInventoryForm } from "@/components/sales/allocate-inventory-form";
 import { ConfirmOrderButton } from "@/components/sales/confirm-order-button";
+import { MarkOrderShippedButton } from "@/components/sales/mark-order-shipped-button";
+import { SettleOrderDialog } from "@/components/sales/settle-order-dialog";
 import {
   ShoppingCart,
   Package,
@@ -105,7 +107,21 @@ export default async function CustomerOrderDetailPage({
             {order.externalOrderNo || "无外部订单号"}
           </p>
         </div>
-        {canConfirm && <ConfirmOrderButton orderId={order.id} />}
+        <div className="flex items-center gap-2">
+          {canConfirm && <ConfirmOrderButton orderId={order.id} />}
+          {order.orderStatus === "CONFIRMED" && (
+            <MarkOrderShippedButton orderId={order.id} defaultTrackingNo={order.trackingNo} />
+          )}
+          {order.orderStatus === "SHIPPED" && !order.settledAt && (
+            <SettleOrderDialog
+              orderId={order.id}
+              currency={order.currency}
+              defaultPlatformFee={order.platformFee.toString()}
+              defaultShippingFee={order.shippingFee.toString()}
+              defaultFeeRate={order.platform?.defaultFeeRate?.toString()}
+            />
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -321,10 +337,30 @@ export default async function CustomerOrderDetailPage({
             <div className="flex gap-3">
               <Package className="h-5 w-5 text-green-500" />
               <div className="space-y-1 text-sm">
-                <p className="font-medium">订单已确认</p>
+                <p className="font-medium">订单已确认，待发货</p>
                 <p className="text-muted-foreground">
-                  该订单已确认，库存已从库中扣减。
+                  库存已预留，确认发货后将扣减库存。
                   确认时间：{order.confirmedAt && new Date(order.confirmedAt).toLocaleDateString("zh-CN")}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {order.orderStatus === "SHIPPED" && (
+        <Card className="border-blue-500/50 bg-blue-500/5">
+          <CardContent className="pt-6">
+            <div className="flex gap-3">
+              <Package className="h-5 w-5 text-blue-500" />
+              <div className="space-y-1 text-sm">
+                <p className="font-medium">已发货</p>
+                <p className="text-muted-foreground">
+                  {order.trackingNo ? `物流单号：${order.trackingNo} · ` : ""}
+                  发货时间：{order.shippedAt && new Date(order.shippedAt).toLocaleDateString("zh-CN")}
+                  {order.settledAt
+                    ? ` · 已结算（${new Date(order.settledAt).toLocaleDateString("zh-CN")}）`
+                    : " · 待结算手续费/邮费"}
                 </p>
               </div>
             </div>

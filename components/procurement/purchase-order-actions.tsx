@@ -4,12 +4,17 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { updatePurchaseOrderStatus } from "@/app/actions/purchase-orders";
+import { MarkShippedDialog } from "@/components/procurement/mark-shipped-dialog";
 
 interface PurchaseOrderActionsProps {
   order: {
     id: string;
     status: string;
     lines: unknown[];
+    trackingNo?: string | null;
+    carrier?: string | null;
+    etaDate?: string | Date | null;
+    shipmentNote?: string | null;
   };
 }
 
@@ -40,6 +45,21 @@ export function PurchaseOrderActions({ order }: PurchaseOrderActionsProps) {
       <Button onClick={handleMarkAsOrdered} disabled={loading}>
         {loading ? "更新中..." : "标记为已下单"}
       </Button>
+    );
+  }
+
+  if (order.status === "ORDERED" || order.status === "SHIPPED") {
+    return (
+      <MarkShippedDialog
+        purchaseOrderId={order.id}
+        defaultTrackingNo={order.trackingNo}
+        defaultCarrier={order.carrier}
+        defaultEtaDate={
+          order.etaDate ? new Date(order.etaDate).toISOString() : null
+        }
+        defaultShipmentNote={order.shipmentNote}
+        isResubmit={order.status === "SHIPPED"}
+      />
     );
   }
 

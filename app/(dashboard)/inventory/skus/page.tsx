@@ -1,23 +1,17 @@
-import { getSKUs } from "@/app/actions/skus";
+import { getSkuCardOverviews } from "@/app/actions/sku-card-overviews";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import Link from "next/link";
 import { SKUImportButton } from "@/components/inventory/sku-import-button";
-import { SKUManagementTable } from "@/components/inventory/sku-management-table";
+import { SKUCardGrid } from "@/components/inventory/sku-card-grid";
 
 export const dynamic = "force-dynamic";
 
 const STORE_ID = "store_1";
 
 export default async function SKUsPage() {
-  const skus = await getSKUs(STORE_ID);
+  const products = await getSkuCardOverviews(STORE_ID);
 
-  const categories = [
-    ...new Set(skus.map((s) => s.category).filter((value): value is string => Boolean(value))),
-  ].sort((a, b) => a.localeCompare(b, "zh-CN"));
-  const brands = [
-    ...new Set(skus.map((s) => s.brand).filter((value): value is string => Boolean(value))),
-  ].sort((a, b) => a.localeCompare(b, "zh-CN"));
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -36,7 +30,7 @@ export default async function SKUsPage() {
         </div>
       </div>
 
-      <SKUManagementTable skus={skus} categories={categories} brands={brands} />
+      <SKUCardGrid products={products} />
     </div>
   );
 }

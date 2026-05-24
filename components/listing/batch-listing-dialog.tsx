@@ -1,20 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Stepper } from "@/components/shared/stepper";
 import { batchCreateListings } from "@/app/actions/listings";
-import { Layers, X, Check } from "lucide-react";
+import { Layers, X, Check, CheckCircle, Truck, AlertTriangle } from "lucide-react";
 
 interface BatchListingDialogProps {
   storeId: string;
   platforms: Array<{ id: string; name: string; code: string }>;
-  skus: Array<{ id: string; code: string; name: string }>;
+  skus: Array<{
+    id: string;
+    code: string;
+    name: string;
+    sellableQty?: number;
+    inTransitQty?: number;
+  }>;
 }
 
 const STEPS = [
@@ -96,6 +103,14 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
   const selectedPlatform = platforms.find((p) => p.id === platformId);
   const selectedSkuList = skus.filter((s) => selectedSkus.has(s.id));
 
+  const inTransitOnlySelected = useMemo(
+    () =>
+      selectedSkuList.filter(
+        (s) => (s.sellableQty ?? 0) === 0 && (s.inTransitQty ?? 0) > 0
+      ),
+    [selectedSkuList]
+  );
+
   if (!open) {
     return (
       <Button variant="outline" onClick={() => setOpen(true)}>
@@ -143,6 +158,9 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                 <div className="max-h-[40vh] overflow-auto border rounded-lg divide-y">
                   {skus.map((sku) => {
                     const checked = selectedSkus.has(sku.id);
+                    const sellable = sku.sellableQty ?? 0;
+                    const inTransit = sku.inTransitQty ?? 0;
+                    const onlyInTransit = sellable === 0 && inTransit > 0;
                     return (
                       <label
                         key={sku.id}
@@ -155,16 +173,36 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                           className="h-4 w-4 rounded border-gray-300"
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">
-                            {sku.code}
-                          </p>
+                          <p className="text-sm font-medium truncate">{sku.code}</p>
                           <p className="text-xs text-muted-foreground truncate">
                             {sku.name}
                           </p>
                         </div>
-                        {checked && (
-                          <Check className="h-4 w-4 text-brand-blue shrink-0" />
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {sellable > 0 ? (
+                            <Badge
+                              variant="default"
+                              className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30"
+                            >
+                              <CheckCircle className="mr-1 h-3 w-3" />
+                              {sellable}
+                            </Badge>
+                          ) : null}
+                          {onlyInTransit ? (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-500/40 bg-amber-500/10 text-amber-700"
+                            >
+                              <Truck className="mr-1 h-3 w-3" />
+                              {inTransit}
+                            </Badge>
+                          ) : inTransit > 0 ? (
+                            <Badge variant="secondary" className="text-xs">
+                              +{inTransit} 在途
+                            </Badge>
+                          ) : null}
+                        </div>
+                        {checked && <Check className="h-4 w-4 text-brand-blue shrink-0" />}
                       </label>
                     );
                   })}
@@ -247,6 +285,26 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
           {/* Step 3: 确认 */}
           {step === 3 && (
             <div className="space-y-4">
+              {inTransitOnlySelected.length > 0 ? (
+                <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <div className="space-y-1">
+                    <p className="font-medium text-amber-700">
+                      {inTransitOnlySelected.length} 个 SKU 暂无可发货库存（仅在转运中）
+                    </p>
+                    <p className="text-muted-foreground">
+                      仍可创建上架（用于平台占位/提醒），但售出前请先把货调拨到本土仓 / 代发仓。涉及：
+                      {inTransitOnlySelected
+                        .slice(0, 5)
+                        .map((s) => s.code)
+                        .join("、")}
+                      {inTransitOnlySelected.length > 5
+                        ? ` 等 ${inTransitOnlySelected.length} 个`
+                        : ""}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               <div className="rounded-lg border p-4 space-y-3">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">选中SKU</span>

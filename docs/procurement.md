@@ -299,3 +299,134 @@ Kiro Spec → Design
 API 设计
 
 前端流程设计
+
+---
+
+## 九、v1.1 更新（2026-05-08）— 物流字段与"代发仓"语义
+
+### 1) 状态机微调
+
+将 v1 文档里的 INBOUND 落地为更口语化的 **SHIPPED**：
+
+```
+DRAFT → ORDERED → SHIPPED → RECEIVED → CLOSED
+              ↘                    ↘
+               CANCELLED            CANCELLED
+```
+
+- **SHIPPED（在途）** = v1 文档中的 INBOUND，含义不变：货已发出但未到节点，**不生成可售库存**
+- 兼容性：ORDERED 仍可直接走到 RECEIVED（小批量、本地交易场景），不强制经过 SHIPPED
+
+### 2) PurchaseOrder 新增字段
+
+```prisma
+shippedAt     DateTime?  // 发货日期
+etaDate       DateTime?  // 预计到货日期
+trackingNo    String?    // 物流单号（一单一号）
+carrier       String?    // 承运商
+shipmentNote  String?    @db.Text  // 多包裹/二程物流等备注
+```
+
+> 一单一号为主；多包裹/拆包裹场景先用 `shipmentNote` 文本兜底，未来有强需求再升级为 `PurchaseShipment` 子表。
+
+### 3) 表单与时间线
+
+- 创建时（PurchaseWizard Step 1）：可填 `etaDate / trackingNo / carrier / shipmentNote`（全选填）
+- ORDERED 状态：详情页提供「标记为已发货」对话框，回填或新填物流信息
+- SHIPPED 状态：可「更新物流信息」+「确认收货」
+- 详情页展示 4 段时间线：下单 → 发货 → 预计/实际到货 → 收货入库
+
+### 4) "代发仓" 语义统一到 `Location.isSellableDefault`
+
+不引入新枚举，复用现有字段表达：
+
+| Location.type | isSellableDefault | 含义 | 收货后是否可上架 |
+| --- | --- | --- | --- |
+| WAREHOUSE | true | 本土自营仓 | ✅ |
+| FORWARDER | **false（默认）** | 普通转运/集运仓 | ❌ 需调拨到本土仓 |
+| FORWARDER | **true** | **代发型转运仓** | ✅ 由该仓代发 |
+| PERSON | true | 朋友/合作方代持代发 | ✅ |
+| TRANSIT | false | 纯在途逻辑节点 | ❌ |
+
+收货时 UI 会根据目的地仓的 `isSellableDefault`：
+- ✅ 提示「到货后可直接上架/发货」
+- ⚠️ 提示「转运中状态，需调拨到本土仓后才能上架」
+
+### 5) 与 Listing 的联动（v1.1 范围内仅文档约定，UI 联动留 v1.2）
+
+- 「可上架库存」 = 所在 Location.isSellableDefault = true 的 Lot/ItemUnit
+- Listing 创建时如果该 SKU 没有可售库存，应给出黄色提醒（呼应 constraints.md 第 9 条「只提醒不阻断」）
+- v1.2 将在 listing 列表与「可上架商品」对话框中分开展示「可发货 / 转运中」两栏
+
+### 6) 不在本次范围（留作 v1.2+）
+
+- 多包裹拆单（PurchaseShipment 子表）
+- listing 创建时的可售库存校验 / 提醒 → **已在 v1.2 完成**
+- "在途库存"在补货建议中作为供给参与计算
+- 物流轨迹查询 / 物流 API 对接
+
+---
+
+## 十、v1.2 更新（2026-05-08）— Listing 与"可售库存"联动
+
+### 1) 引入"可售库存"统一查询
+
+新增 `lib/application/inventory.ts#getStoreStockBreakdown(storeId)`：
+
+返回每个 SKU 的：
+```ts
+{
+  skuId,
+  sellableQty,          // isSellableDefault=true 仓位的总量
+  inTransitQty,         // isSellableDefault=false 仓位的总量
+  sellableLocations[],  // 按位置分组（含 code/name/type/qty）
+  inTransitLocations[],
+}
+```
+
+性能：3 条 SQL（lot ledger groupBy + active lot + available item_unit），适合 listing 列表一次性渲染。
+
+通过 server action `getSkuStockBreakdownMap(storeId)` 包装为 plain object，可在 client component 跨边界使用。
+
+### 2) Listing 列表（`/listing`）
+
+- 表头加「可发货库存」列：绿色徽章「可发 N」+ 黄色徽章「转运 M」
+- 顶部 stat card 把"销售平台数"换为「可发货 SKU」，副标题提示"另有 X 个 SKU 仅在转运中"
+
+### 3) 可上架商品对话框（PublishableSkuDialog）
+
+- 顶部新增 Tab 切换：**可发货 (N) / 转运中 (M)**
+- 触发按钮加蓝色徽章显示可发货 SKU 数量
+- "转运中" Tab 顶部黄色提醒：建议先调拨 / 检查代发仓配置
+- 每条候选 SKU 展示库存徽章 + 仓位明细（如 `WH-001 5 · CN_FORWARDER 3`）
+
+### 4) 单条 Listing 创建（ListingForm）
+
+- SKU 下拉选项后追加 `· 可发 N / 转运 M`，选择前一目了然
+- 选中 SKU 后展示 SkuStockHint：
+  - 有可发库存：绿色徽章 + 仓位明细
+  - 仅在途：黄色提醒「暂无可发货库存，仅有 X 件在转运中」
+  - 完全无库存：黄色提醒「Listing 仍可创建（占位用），售出前请确保到货」
+- 仍允许提交（呼应 constraints.md 第 9 条「只提醒不阻断」）
+
+### 5) 批量上架（BatchListingDialog）
+
+- Step 0 SKU 列表每行末尾显示库存徽章：
+  - 绿色：有可发库存
+  - 黄色：仅在转运中
+  - 灰色 secondary："+N 在途"（同时有可发 + 在途）
+- Step 3 确认页：若选中的 SKU 包含"仅在转运中"的，顶部黄色提醒列出前 5 个 SKU code
+
+### 6) 一致的视觉语言
+
+| 状态 | 徽章颜色 | 图标 |
+|---|---|---|
+| 可发货 | emerald 绿 | CheckCircle |
+| 转运中 / 在途 | amber 黄 | Truck |
+| 完全无库存 | secondary 灰 | AlertTriangle |
+
+### 7) 仍未做（留作 v1.3+）
+
+- 「调拨」操作 UI（目前只能手动改 lot 的 location）
+- 在途库存参与补货建议（Intelligence 模块）
+- 多包裹采购单（PurchaseShipment 子表）

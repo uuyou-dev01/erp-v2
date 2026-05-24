@@ -239,7 +239,7 @@ export function ProcurementAnalytics({
                     />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number) => [`${value} 单`, "采购单数"]} />
+                <Tooltip formatter={(value) => [`${value ?? 0} 单`, "采购单数"]} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>

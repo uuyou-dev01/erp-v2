@@ -32,7 +32,11 @@ model Store {
   inventorySplits  InventorySplit[]
   platforms        Platform[]
   listings         Listing[]
-  importJobs       ImportJob[]
+  importJobs           ImportJob[]
+  quickEntries         QuickEntry[]
+  inboundShipments     InboundShipment[]
+  consolidationBatches ConsolidationBatch[]
+  inspectionEvents     InspectionEvent[]
 
   @@map("stores")
 }
@@ -67,9 +71,11 @@ model SKU {
   brand       String?
   attributes  Json?
   description String?
-  imageUrl    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  imageUrl      String?
+  isAutoCreated Boolean  @default(false)
+  mergeStatus   String?  // PENDING, CONFIRMED, MERGED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
   parentSku     SKU?           @relation("SkuVariants", fields: [parentSkuId], references: [id], onDelete: SetNull)
@@ -101,9 +107,15 @@ model Location {
   updatedAt         DateTime @updatedAt
 
   store        Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  inventoryLots InventoryLot[]
-  itemUnits    ItemUnit[]
-  stockLedgers StockLedger[]
+  inventoryLots        InventoryLot[]
+  itemUnits            ItemUnit[]
+  stockLedgers         StockLedger[]
+  inboundShipmentsFrom InboundShipment[]    @relation("ShipmentFrom")
+  inboundShipmentsTo   InboundShipment[]    @relation("ShipmentTo")
+  consolidationFrom    ConsolidationBatch[] @relation("ConsolidationFrom")
+  consolidationTo      ConsolidationBatch[] @relation("ConsolidationTo")
+  inspections          InspectionEvent[]
+  purchaseOrdersDest   PurchaseOrder[]
 
   @@unique([storeId, code])
   @@index([storeId])
@@ -121,6 +133,7 @@ model InventoryLot {
   sourceType   String // PURCHASE, SPLIT
   sourceId     String
   receivedAt   DateTime
+  batchLabel   String?
   status       String   @default("ACTIVE") // ACTIVE, CONSUMED
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -245,15 +258,22 @@ model PurchaseOrder {
   fxRate          Decimal? @db.Decimal(19, 8)
   subtotal        Decimal  @db.Decimal(19, 4)
   totalAmount     Decimal  @db.Decimal(19, 4)
-  status          String   @default("DRAFT") // DRAFT, ORDERED, RECEIVED, CANCELLED
+  status          String   @default("DRAFT") // DRAFT, ORDERED, SHIPPED, RECEIVED, CANCELLED
   orderedAt       DateTime?
+  shippedAt       DateTime?
+  etaDate         DateTime?
   receivedAt      DateTime?
+  trackingNo      String?
+  carrier         String?
+  shipmentNote    String?  @db.Text
   destinationLocationId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  store Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  lines PurchaseLine[]
+  store                 Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  destinationLocation   Location?          @relation(fields: [destinationLocationId], references: [id], onDelete: SetNull)
+  lines                 PurchaseLine[]
+  inboundShipments      InboundShipment[]
 
   @@unique([storeId, orderNo])
   @@index([storeId])
@@ -309,6 +329,10 @@ model CustomerOrder {
   netRevenue      Decimal? @db.Decimal(19, 4)
   countryFlow     String?
   orderStatus     String   @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
+  shippedAt       DateTime?
+  trackingNo      String?
+  shippingProof   Json?
+  settledAt       DateTime?
   createdAt       DateTime @default(now())
   confirmedAt     DateTime?
   updatedAt       DateTime @updatedAt
@@ -397,9 +421,10 @@ model Platform {
   code            String
   name            String
   country         String?
-  defaultFeeRate  Decimal? @db.Decimal(8, 4)
-  defaultCurrency String?
-  shippingRules   Json?
+  defaultFeeRate     Decimal? @db.Decimal(8, 4)
+  defaultCurrency    String?
+  defaultShippingFee Decimal? @db.Decimal(19, 4)
+  shippingRules      Json?
   notes           String?  @db.Text
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -481,4 +506,158 @@ model ImportJob {
   @@index([storeId])
   @@index([entityType])
   @@map("import_jobs")
+}
+
+// ============================================
+// LOGISTICS: Inbound shipments, consolidation, inspection
+// ============================================
+
+model InboundShipment {
+  id              String    @id @default(cuid())
+  storeId         String
+  purchaseOrderId String?
+  legIndex        Int       @default(1)
+  fromLocationId  String?
+  toLocationId    String?
+  trackingNo      String?
+  carrier         String?
+  shippedAt       DateTime?
+  etaDate         DateTime?
+  receivedAt      DateTime?
+  status          String    @default("PENDING") // PENDING, IN_TRANSIT, DELIVERED, EXCEPTION
+  shipmentNote    String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  fromLocation  Location?      @relation("ShipmentFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation    Location?      @relation("ShipmentTo", fields: [toLocationId], references: [id], onDelete: SetNull)
+
+  @@index([storeId])
+  @@index([purchaseOrderId])
+  @@index([status])
+  @@map("inbound_shipments")
+}
+
+model ConsolidationBatch {
+  id                 String    @id @default(cuid())
+  storeId            String
+  fromLocationId     String?
+  toLocationId       String?
+  status             String    @default("OPEN") // OPEN, SEALED, SHIPPED, RECEIVED
+  outboundTrackingNo String?
+  carrier            String?
+  shippedAt          DateTime?
+  receivedAt         DateTime?
+  note               String?   @db.Text
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  store        Store                     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  fromLocation Location?                 @relation("ConsolidationFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation   Location?                 @relation("ConsolidationTo", fields: [toLocationId], references: [id], onDelete: SetNull)
+  lines        ConsolidationBatchLine[]
+
+  @@index([storeId])
+  @@index([status])
+  @@map("consolidation_batches")
+}
+
+model ConsolidationBatchLine {
+  id         String  @id @default(cuid())
+  batchId    String
+  sourceType String // PURCHASE_LINE, LOT, ITEM_UNIT, QUICK_ENTRY
+  sourceId   String
+  quantity   Decimal @db.Decimal(19, 4)
+
+  batch ConsolidationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@map("consolidation_batch_lines")
+}
+
+model InspectionEvent {
+  id            String   @id @default(cuid())
+  storeId       String
+  refType       String // QUICK_ENTRY, PURCHASE_LINE, ITEM_UNIT, INBOUND_SHIPMENT
+  refId         String
+  locationId    String?
+  result        String // PASSED, FAILED, PARTIAL
+  failureReason String?  @db.Text
+  photos        Json?
+  inspectedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([storeId])
+  @@index([refType, refId])
+  @@map("inspection_events")
+}
+
+// ============================================
+// QUICK ENTRY: Excel-style capture + async structure
+// ============================================
+
+model QuickEntry {
+  id        String   @id @default(cuid())
+  storeId   String
+  sourceType String  @default("MANUAL") // MANUAL, PASTE, IMPORT
+
+  rawBrand              String?
+  rawProductName        String
+  rawVariant            String?
+  rawCategory           String?
+  conditionType         String?  // 新品, 中古
+  quantity              Decimal  @default(1) @db.Decimal(19, 4)
+  purchasePrice         Decimal? @db.Decimal(19, 4)
+  purchaseCurrency      String?
+  purchasePlatformText  String?
+  purchaseDate          DateTime?
+  purchaseTrackingNo    String?
+  purchaseShippingFee   Decimal? @db.Decimal(19, 4)
+  currentLocationText   String?
+  transitTrackingNo     String?
+  transitShippingFee    Decimal? @db.Decimal(19, 4)
+  listingPlatformsText  String?
+  salePlatformText      String?
+  saleCurrency          String?
+  salePrice             Decimal? @db.Decimal(19, 4)
+  saleShippingFee       Decimal? @db.Decimal(19, 4)
+  saleMiscFee           Decimal? @db.Decimal(19, 4)
+  salePlatformFeeText   String?
+  saleDate              DateTime?
+  note                  String?  @db.Text
+  batchNote             String?
+
+  workflowStage   String   @default("PURCHASE") // PURCHASE, LOGISTICS, INSPECTION, LISTING, SOLD, SHIPPED, SETTLED, CLOSED
+  inspectionResult String? // PASSED, FAILED, PENDING
+  inspectionNote   String? @db.Text
+  inspectedAt      DateTime?
+
+  processedStatus String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, PARTIAL, FAILED
+  processedAt     DateTime?
+  errorMessage    String?  @db.Text
+
+  generatedSkuId            String?
+  generatedLotId            String?
+  generatedItemUnitIds      Json?
+  generatedPurchaseOrderId  String?
+  generatedPurchaseLineId   String?
+  generatedListingIds       Json?
+  generatedCustomerOrderId  String?
+  generatedOrderLineId      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([processedStatus])
+  @@index([workflowStage])
+  @@index([createdAt])
+  @@map("quick_entries")
 }

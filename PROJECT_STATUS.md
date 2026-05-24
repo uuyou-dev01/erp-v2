@@ -1,7 +1,7 @@
 # 项目状态总览
 
 ## 最后更新
-2026年5月7日
+2026年5月24日 — 工作流升级（阶段化交易工作台）
 
 ## 项目信息
 
@@ -9,6 +9,32 @@
 **技术栈**：Next.js 15 + TypeScript + Prisma + PostgreSQL  
 **UI库**：shadcn/ui + Tailwind CSS  
 **图表库**：Recharts  
+
+## 最近升级（2026-05-24）：阶段化交易工作台
+
+ERP 已升级为贴近 Excel 实操的阶段化业务流：
+**采购录入 → 补物流 → 到货检查 → 上架 → 售出登记 → 通知发货 → 结算**
+
+核心变化：
+
+- **Prisma 模型扩展**：
+  - `QuickEntry`：新增 `workflowStage / inspectionResult / inspectionNote / inspectedAt` 阶段字段
+  - `CustomerOrder`：新增 `shippedAt / trackingNo / shippingProof / settledAt`
+  - `InventoryLot`：新增 `batchLabel`（批次描述）
+  - 新模型：`InboundShipment`、`ConsolidationBatch(+Line)`、`InspectionEvent`
+- **新流程语义**：
+  - 全新商品 → `InventoryLot`；中古/瑕疵/非统一 → `ItemUnit`（强制批次描述）
+  - 售出登记仅创建 `OrderAllocation`（PENDING），**不立即扣库存**
+  - 确认发货时才扣减库存并写入 `OUTBOUND_SALE` 流水
+  - 结算时补录手续费/邮费，重算 `netRevenue`
+- **服务层**：`lib/application/quick-entry.ts` 重写为分阶段处理（采购/物流/检查/上架/售出），并提供 `updateAndProcessQuickEntry`、`inspectQuickEntry` 用于续填和检查
+- **新 server actions**：`markOrderShipped`、`settleCustomerOrder`、`updateQuickEntry`、`inspectQuickEntryAction`
+- **UI**：
+  - `/workbench`：4 个阶段 Tab（采购/补物流/上架/售出）+ 成色下拉 + 中古时批次描述必填 + 待补全队列（可续填 / 检查通过 / 检查失败）
+  - 采购详情页：在途状态显示物流信息块；状态机支持 `SHIPPED`
+  - 销售详情页：CONFIRMED 后挂载「确认已发货」按钮；SHIPPED 后挂载「结算订单」对话框
+  - 上架页：新增「活跃上架 · 快捷售出」卡片，每条上架可直接 `售出`（走新流程）
+  - 侧边栏：工作台置顶，"库存管理"改为"库存查看"避免误用旧入口
 
 ## 已完成模块
 
@@ -35,9 +61,11 @@
 - 一键收货
 - CSV 导入采购行
 - 供应商信息 + 多货币支持
+- **物流联动（v1.1）**：状态机扩展 SHIPPED（在途），表单加 `etaDate / trackingNo / carrier / shipmentNote`，详情页 4 段时间线
+- **代发仓语义**：复用 `Location.isSellableDefault` 表达「代发型转运仓」，收货时按目的地仓显示可售/不可售提示
 - ResponsiveTable + 完整中文化
 
-**文档**：`docs/modules/procurement.md`
+**文档**：`docs/procurement.md`（含 v1.1 物流字段与代发仓语义补充）
 
 ### ✅ 3. 销售管理模块
 - 多平台支持：平台必选 + 费率自动带出
@@ -53,9 +81,10 @@
 - 到手价估算（选平台+填价格实时计算）
 - 平台筛选 Tab + 到手价列
 - 批量上架对话框（4 步 Stepper：选SKU→选平台→定价→确认）
+- **可售库存联动（v1.2）**：列表/对话框/创建表单全面展示「可发货 / 转运中」库存状态，仅在转运中的 SKU 提示先调拨
 - ResponsiveTable + 完整中文化
 
-**文档**：`docs/modules/listing.md`
+**文档**：`docs/listing.md`、`docs/procurement.md`（v1.2 联动章节）
 
 ### ✅ 5. 报表分析模块
 - 时间范围切换（近7天/30天/90天/全部）
@@ -221,6 +250,9 @@
 2. 搜索框功能完善
 3. 数据缓存策略 + 大数据量分页
 4. 详情页编辑功能
+5. **库存调拨 UI（v1.3）**：把转运仓库存调拨到本土仓 / 代发仓的标准操作（当前需要手改 lot 的 location）
+6. **多包裹拆单（v1.3）**：评估是否升级为 `PurchaseShipment` 子表（当前用 shipmentNote 兜底）
+7. **在途库存 → 补货建议（Intelligence v0.1）**：把 SHIPPED 状态的采购量计入 SKU 的"在途供给"
 
 ### 中期
 1. 完整 i18n 框架（多语言切换）

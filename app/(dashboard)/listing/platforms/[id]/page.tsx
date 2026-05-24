@@ -205,6 +205,7 @@ export default async function PlatformDetailPage({
               country: platform.country,
               defaultFeeRate: platform.defaultFeeRate,
               defaultCurrency: platform.defaultCurrency,
+              defaultShippingFee: platform.defaultShippingFee,
               shippingRules: platform.shippingRules,
               notes: platform.notes,
             }}

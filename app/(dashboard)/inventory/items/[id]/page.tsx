@@ -12,7 +12,14 @@ import {
 import { notFound } from "next/navigation";
 import { formatCurrency } from "@/lib/decimal";
 import { ItemUnitForm } from "@/components/inventory/item-unit-form";
-import { Package, MapPin, DollarSign, Calendar, Image, User, FileText } from "lucide-react";
+import { Package, MapPin, DollarSign, Calendar, Image, User, FileText, Store } from "lucide-react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { getProductTicketByEntity } from "@/lib/application/workflow-queries";
+import { ProductTicketShell } from "@/components/product-ticket/product-ticket-shell";
+import { getPlatforms } from "@/app/actions/platforms";
+
+const STORE_ID = "store_1";
 
 // Force dynamic rendering
 export const dynamic = "force-dynamic";
@@ -24,6 +31,12 @@ const statusColors = {
   RETURN_CHECK: "secondary",
 } as const;
 
+const listingStatusLabels: Record<string, string> = {
+  ACTIVE: "上架中",
+  DELISTED: "已下架",
+  SOLD_OUT: "已售罄",
+};
+
 export default async function ItemUnitDetailPage({
   params,
 }: {
@@ -31,6 +44,19 @@ export default async function ItemUnitDetailPage({
 }) {
   const { id } = await params;
   const item = await getItemUnitById(id);
+  const [ticket, platforms] = await Promise.all([
+    getProductTicketByEntity("itemUnit", id),
+    getPlatforms(STORE_ID),
+  ]);
+  const platformOptions = platforms.map((platform) => ({
+    id: platform.id,
+    code: platform.code,
+    name: platform.name,
+    defaultCurrency: platform.defaultCurrency,
+    defaultFeeRate: platform.defaultFeeRate,
+    defaultShippingFee: platform.defaultShippingFee,
+    shippingRules: platform.shippingRules,
+  }));
 
   if (!item) {
     notFound();
@@ -49,6 +75,55 @@ export default async function ItemUnitDetailPage({
           {item.status}
         </Badge>
       </div>
+
+      {ticket && (
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <ProductTicketShell ticket={ticket} platforms={platformOptions} compact />
+        </div>
+      )}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Store className="h-4 w-4" />
+            上架记录
+          </CardTitle>
+          <Link href="/listing">
+            <Button variant="outline" size="sm">
+              前往上架列表
+            </Button>
+          </Link>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {item.listings.length === 0 ? (
+            <p className="text-sm text-muted-foreground">该单件尚未创建 Listing。</p>
+          ) : (
+            item.listings.map((listing) => (
+              <div key={listing.id} className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <p className="font-medium">{listing.platform.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {listing.listedPrice && listing.currency
+                      ? formatCurrency(listing.listedPrice.toString(), listing.currency)
+                      : "未设置价格"}{" "}
+                    · {new Date(listing.listedAt).toLocaleDateString("zh-CN")}
+                  </p>
+                </div>
+                <Badge variant={listing.status === "ACTIVE" ? "default" : "outline"}>
+                  {listingStatusLabels[listing.status] || listing.status}
+                </Badge>
+              </div>
+            ))
+          )}
+          <p className="text-xs text-muted-foreground">
+            也可在{" "}
+            <Link href={`/inventory/skus/${item.sku.id}`} className="text-primary underline-offset-4 hover:underline">
+              SKU {item.sku.code}
+            </Link>{" "}
+            页面查看该 SKU 下所有上架。
+          </p>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>

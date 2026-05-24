@@ -3,6 +3,11 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { syncQuickEntryFromOrder } from "@/lib/application/workflow-queries";
+import {
+  computeOrderFees,
+  feeResultToStrings,
+} from "@/lib/application/order-fees";
 
 export type OrderStatus =
   | "DRAFT"
@@ -202,57 +207,50 @@ export async function confirmOrder(data: ConfirmOrderInput) {
     }
   }
 
-  // Transaction: Update order + Write stock ledgers
+  // Transaction: confirm order without deducting inventory (deduct on ship)
   await prisma.$transaction(async (tx) => {
-    // 1. Update order status
+    const subtotal = order.lines.reduce(
+      (sum, line) => sum.plus(new Decimal(line.lineAmount.toString())),
+      new Decimal(0)
+    );
+    const inventoryCost = order.lines.reduce((sum, line) => {
+      return line.allocations.reduce(
+        (lineSum, alloc) => lineSum.plus(new Decimal(alloc.costAmount.toString())),
+        sum
+      );
+    }, new Decimal(0));
+
+    const platform = order.platformId
+      ? await tx.platform.findUnique({ where: { id: order.platformId } })
+      : null;
+    const feeRate = platform?.defaultFeeRate
+      ? new Decimal(platform.defaultFeeRate.toString())
+      : null;
+
+    const fees = computeOrderFees({
+      subtotal,
+      platformFeeRate: feeRate,
+      shippingFee: new Decimal(order.shippingFee.toString()),
+      inventoryCost,
+    });
+    const feeStrings = feeResultToStrings(fees);
+
     await tx.customerOrder.update({
       where: { id: data.orderId },
       data: {
         orderStatus: "CONFIRMED",
         confirmedAt: new Date(),
+        platformFee: feeStrings.platformFee,
+        shippingFee: feeStrings.shippingFee,
+        netRevenue: feeStrings.netRevenue,
       },
     });
 
-    // 2. Write OUTBOUND_SALE to stock ledger for each allocation
-    for (const line of order.lines) {
-      for (const allocation of line.allocations) {
-        if (allocation.lotId) {
-          const lot = await tx.inventoryLot.findUnique({
-            where: { id: allocation.lotId },
-          });
-
-          if (lot) {
-            await tx.stockLedger.create({
-              data: {
-                storeId: order.storeId,
-                occurredAt: new Date(),
-                entityType: "LOT",
-                entityId: allocation.lotId,
-                locationId: lot.locationId,
-                deltaQty: new Decimal(allocation.quantity.toString())
-                  .negated()
-                  .toFixed(4),
-                reason: "OUTBOUND_SALE",
-                refType: "ORDER_LINE",
-                refId: line.id,
-                meta: {
-                  orderId: order.id,
-                  externalOrderNo: order.externalOrderNo,
-                  allocationId: allocation.id,
-                },
-              },
-            });
-          }
-        }
-      }
-    }
-
-    // 3. Update line supply status
     for (const line of order.lines) {
       await tx.orderLine.update({
         where: { id: line.id },
         data: {
-          supplyStatus: "CONSUMED",
+          supplyStatus: line.allocations.length > 0 ? "READY_TO_SHIP" : "UNFULFILLED",
         },
       });
     }
@@ -261,6 +259,182 @@ export async function confirmOrder(data: ConfirmOrderInput) {
   revalidatePath("/sales");
   revalidatePath(`/sales/${data.orderId}`);
   revalidatePath("/inventory/lots");
+}
+
+export async function markOrderShipped(orderId: string, trackingNo?: string) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      lines: {
+        include: {
+          allocations: true,
+        },
+      },
+    },
+  });
+
+  if (!order) throw new Error("订单不存在");
+  if (order.orderStatus !== "CONFIRMED") {
+    throw new Error("只有已确认订单可以标记发货");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const line of order.lines) {
+      for (const allocation of line.allocations) {
+        if (allocation.status === "SHIPPED" || allocation.status === "DELIVERED") continue;
+
+        if (allocation.itemUnitId) {
+          const item = await tx.itemUnit.findUnique({
+            where: { id: allocation.itemUnitId },
+          });
+          if (!item) continue;
+
+          await tx.stockLedger.create({
+            data: {
+              storeId: order.storeId,
+              occurredAt: new Date(),
+              entityType: "ITEM_UNIT",
+              entityId: item.id,
+              locationId: item.locationId,
+              deltaQty: new Decimal(allocation.quantity.toString()).negated().toFixed(4),
+              reason: "OUTBOUND_SALE",
+              refType: "ORDER_LINE",
+              refId: line.id,
+              meta: { orderId: order.id, allocationId: allocation.id },
+            },
+          });
+
+          await tx.itemUnit.update({
+            where: { id: item.id },
+            data: { status: "CONSUMED" },
+          });
+        } else if (allocation.lotId) {
+          const lot = await tx.inventoryLot.findUnique({
+            where: { id: allocation.lotId },
+          });
+          if (!lot) continue;
+
+          await tx.stockLedger.create({
+            data: {
+              storeId: order.storeId,
+              occurredAt: new Date(),
+              entityType: "LOT",
+              entityId: lot.id,
+              locationId: lot.locationId,
+              deltaQty: new Decimal(allocation.quantity.toString()).negated().toFixed(4),
+              reason: "OUTBOUND_SALE",
+              refType: "ORDER_LINE",
+              refId: line.id,
+              meta: { orderId: order.id, allocationId: allocation.id },
+            },
+          });
+
+          const ledgers = await tx.stockLedger.findMany({
+            where: { entityType: "LOT", entityId: lot.id },
+          });
+          const remaining = ledgers.reduce(
+            (sum, l) => sum.plus(new Decimal(l.deltaQty.toString())),
+            new Decimal(0)
+          );
+          if (remaining.minus(allocation.quantity).lte(0)) {
+            await tx.inventoryLot.update({
+              where: { id: lot.id },
+              data: { status: "CONSUMED" },
+            });
+          }
+        }
+
+        await tx.orderAllocation.update({
+          where: { id: allocation.id },
+          data: { status: "SHIPPED" },
+        });
+      }
+
+      await tx.orderLine.update({
+        where: { id: line.id },
+        data: { supplyStatus: "CONSUMED" },
+      });
+    }
+
+    await tx.customerOrder.update({
+      where: { id: orderId },
+      data: {
+        orderStatus: "SHIPPED",
+        shippedAt: new Date(),
+        trackingNo: trackingNo?.trim() || undefined,
+      },
+    });
+  });
+
+  await syncQuickEntryFromOrder(orderId, "SHIPPED");
+
+  revalidatePath("/sales");
+  revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/inventory/lots");
+  revalidatePath("/inventory/items");
+  revalidatePath("/workbench");
+}
+
+export async function settleCustomerOrder(
+  orderId: string,
+  data: {
+    platformFee?: string;
+    shippingFee?: string;
+    platformFeeRate?: string;
+  }
+) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      platform: true,
+      lines: {
+        include: { allocations: true },
+      },
+    },
+  });
+
+  if (!order) throw new Error("订单不存在");
+
+  const subtotal = new Decimal(order.subtotal.toString());
+  const inventoryCost = order.lines.reduce((sum, line) => {
+    return line.allocations.reduce(
+      (lineSum, alloc) => lineSum.plus(new Decimal(alloc.costAmount.toString())),
+      sum
+    );
+  }, new Decimal(0));
+
+  const platformFeeRate = data.platformFeeRate
+    ? new Decimal(data.platformFeeRate)
+    : order.platform?.defaultFeeRate
+      ? new Decimal(order.platform.defaultFeeRate.toString())
+      : null;
+
+  const fees = computeOrderFees({
+    subtotal,
+    platformFeeAmount: data.platformFee ? new Decimal(data.platformFee) : null,
+    platformFeeRate,
+    shippingFee: data.shippingFee ? new Decimal(data.shippingFee) : new Decimal(order.shippingFee.toString()),
+    inventoryCost,
+  });
+  const feeStrings = feeResultToStrings(fees);
+
+  await prisma.customerOrder.update({
+    where: { id: orderId },
+    data: {
+      platformFee: feeStrings.platformFee,
+      shippingFee: feeStrings.shippingFee,
+      netRevenue: feeStrings.netRevenue,
+      settledAt: new Date(),
+    },
+  });
+
+  await syncQuickEntryFromOrder(orderId, "SETTLED");
+
+  revalidatePath("/sales");
+  revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/reports");
+  revalidatePath("/dashboard");
+  revalidatePath("/workbench");
 }
 
 async function recalculateOrderTotals(orderId: string) {

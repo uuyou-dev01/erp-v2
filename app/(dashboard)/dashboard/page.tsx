@@ -43,12 +43,18 @@ const PO_STATUS_MAP: Record<string, { label: string; className: string }> = {
   DRAFT: { label: "草稿", className: "bg-gray-100 text-gray-700 border-gray-200" },
   ORDERED: { label: "已下单", className: "bg-blue-100 text-blue-700 border-blue-200" },
   RECEIVED: { label: "已收货", className: "bg-green-100 text-green-700 border-green-200" },
+  RETURNED: { label: "已退货", className: "bg-red-100 text-red-700 border-red-200" },
   CANCELLED: { label: "已取消", className: "bg-red-100 text-red-700 border-red-200" },
 };
 
-function fmtCurrency(value: string | number) {
+function fmtCurrency(value: string | number, currency: string = "CNY") {
   const num = typeof value === "string" ? parseFloat(value) : value;
-  return `¥${num.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(num);
 }
 
 function formatMonthLabel(month: string) {
@@ -100,6 +106,7 @@ export default async function DashboardPage({
     ]);
 
   const recentOrders = purchaseOrders.slice(0, 5);
+  const baseCurrency = monthlyMetrics.baseCurrency ?? overview.baseCurrency ?? "CNY";
 
   const trendData = monthlyPnL.map((d) => ({
     month: d.month,
@@ -150,11 +157,11 @@ export default async function DashboardPage({
 
       {/* 统计卡片 */}
       <DashboardStats
-        salesAmount={fmtCurrency(monthlyMetrics.salesAmount)}
+        salesAmount={fmtCurrency(monthlyMetrics.salesAmount, baseCurrency)}
         salesOrderCount={monthlyMetrics.salesOrderCount}
-        purchaseAmount={fmtCurrency(monthlyMetrics.purchaseAmount)}
+        purchaseAmount={fmtCurrency(monthlyMetrics.purchaseAmount, baseCurrency)}
         purchaseOrderCount={monthlyMetrics.purchaseOrderCount}
-        grossProfit={fmtCurrency(monthlyMetrics.grossProfit)}
+        grossProfit={fmtCurrency(monthlyMetrics.grossProfit, baseCurrency)}
         profitRate={`${monthlyMetrics.profitRate}%`}
         movingSkuRatio={`${monthlyMetrics.movingSkuRatio}%`}
         soldSkuCount={monthlyMetrics.soldSkuCount}
@@ -167,7 +174,7 @@ export default async function DashboardPage({
             <CardTitle className="text-sm font-medium">平台费</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">{fmtCurrency(monthlyMetrics.platformFee)}</div>
+            <div className="text-xl font-bold">{fmtCurrency(monthlyMetrics.platformFee, baseCurrency)}</div>
             <p className="text-xs text-muted-foreground">已确认销售订单</p>
           </CardContent>
         </Card>
@@ -176,7 +183,7 @@ export default async function DashboardPage({
             <CardTitle className="text-sm font-medium">物流/发货费</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">{fmtCurrency(monthlyMetrics.shippingFee)}</div>
+            <div className="text-xl font-bold">{fmtCurrency(monthlyMetrics.shippingFee, baseCurrency)}</div>
             <p className="text-xs text-muted-foreground">按订单记录费用</p>
           </CardContent>
         </Card>
@@ -185,7 +192,7 @@ export default async function DashboardPage({
             <CardTitle className="text-sm font-medium">销售成本</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">{fmtCurrency(monthlyMetrics.inventoryCost)}</div>
+            <div className="text-xl font-bold">{fmtCurrency(monthlyMetrics.inventoryCost, baseCurrency)}</div>
             <p className="text-xs text-muted-foreground">按库存分配成本</p>
           </CardContent>
         </Card>
@@ -194,7 +201,7 @@ export default async function DashboardPage({
             <CardTitle className="text-sm font-medium">当前库存值</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">{fmtCurrency(overview.inventory.totalValue)}</div>
+            <div className="text-xl font-bold">{fmtCurrency(overview.inventory.totalValue, baseCurrency)}</div>
             <p className="text-xs text-muted-foreground">
               {overview.inventory.lotCount} 入库库存 · {overview.inventory.itemCount} 单品
             </p>
@@ -204,8 +211,8 @@ export default async function DashboardPage({
 
       {/* 图表区 */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <SalesTrendChart data={trendData} />
-        <PlatformPieChart data={pieData} />
+        <SalesTrendChart data={trendData} currency={baseCurrency} />
+        <PlatformPieChart data={pieData} currency={baseCurrency} />
       </div>
 
       {/* 最近采购订单 */}
@@ -254,7 +261,7 @@ export default async function DashboardPage({
                       </TableCell>
                       <TableCell>{order.supplierName || "—"}</TableCell>
                       <TableCell className="text-right">
-                        {fmtCurrency(order.totalAmount.toString())}
+                        {fmtCurrency(order.totalAmount.toString(), order.currency)}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge className={s.className}>{s.label}</Badge>

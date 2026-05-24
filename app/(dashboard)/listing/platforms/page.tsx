@@ -49,6 +49,18 @@ const columns: Column<PlatformRow>[] = [
     cell: (row) => <span>{formatRate(row.defaultFeeRate)}</span>,
   },
   {
+    key: "defaultShippingFee",
+    header: "默认邮费",
+    cell: (row) => (
+      <span>
+        {row.defaultShippingFee
+          ? `${row.defaultCurrency || ""} ${row.defaultShippingFee}`.trim()
+          : "-"}
+      </span>
+    ),
+    hideOnMobile: true,
+  },
+  {
     key: "shippingRules",
     header: "配送规则",
     cell: (row) => {

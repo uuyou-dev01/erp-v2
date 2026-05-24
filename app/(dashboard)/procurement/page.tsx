@@ -24,14 +24,18 @@ const STORE_ID = "store_1";
 const statusColors = {
   DRAFT: "secondary",
   ORDERED: "default",
+  SHIPPED: "outline",
   RECEIVED: "outline",
+  RETURNED: "destructive",
   CANCELLED: "destructive",
 } as const;
 
 const statusLabels: Record<string, string> = {
   DRAFT: "草稿",
   ORDERED: "已下单",
+  SHIPPED: "在途",
   RECEIVED: "已收货",
+  RETURNED: "已退货",
   CANCELLED: "已取消",
 };
 
@@ -236,11 +240,14 @@ export default async function ProcurementPage() {
     total: orders.length,
     draft: orders.filter((o) => o.status === "DRAFT").length,
     ordered: orders.filter((o) => o.status === "ORDERED").length,
+    shipped: orders.filter((o) => o.status === "SHIPPED").length,
     received: orders.filter((o) => o.status === "RECEIVED").length,
     thisMonthOrderCount,
     thisQuarterOrderCount,
     thisMonthAmountCny,
-    pendingReceiveCount: orders.filter((o) => o.status === "ORDERED").length,
+    pendingReceiveCount: orders.filter(
+      (o) => o.status === "ORDERED" || o.status === "SHIPPED"
+    ).length,
     overallReceiveRate:
       orders.length > 0
         ? ((orders.filter((o) => o.status === "RECEIVED").length / orders.length) * 100).toFixed(1)
@@ -267,7 +274,7 @@ export default async function ProcurementPage() {
         <StatCard
           title="采购订单总数"
           value={stats.total}
-          subtitle={`草稿 ${stats.draft} / 待收货 ${stats.ordered} / 已收货 ${stats.received}`}
+          subtitle={`草稿 ${stats.draft} / 待收货 ${stats.pendingReceiveCount}（含在途 ${stats.shipped}）/ 已收货 ${stats.received}`}
           icon={ShoppingCart}
           iconColor="text-muted-foreground"
         />

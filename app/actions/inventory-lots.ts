@@ -3,7 +3,21 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
-import { createInboundInventoryLot } from "@/lib/application/inventory";
+import {
+  createInboundInventoryLot,
+  getStoreStockBreakdown,
+  type SkuStockBreakdown,
+} from "@/lib/application/inventory";
+
+/**
+ * 获取 store 内每个 SKU 的可售/转运库存细分（plain object 版，可跨 server action 边界传输）
+ */
+export async function getSkuStockBreakdownMap(
+  storeId: string
+): Promise<Record<string, SkuStockBreakdown>> {
+  const map = await getStoreStockBreakdown(storeId);
+  return Object.fromEntries(map.entries());
+}
 
 export interface CreateInventoryLotInput {
   storeId: string;

@@ -20,6 +20,7 @@ interface PlatformFormProps {
     country: string | null;
     defaultFeeRate: string | null;
     defaultCurrency: string | null;
+    defaultShippingFee: string | null;
     shippingRules: unknown;
     notes: string | null;
   };
@@ -56,6 +57,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
     country: initialData?.country || "",
     defaultFeeRate: initialData?.defaultFeeRate || "",
     defaultCurrency: initialData?.defaultCurrency || "",
+    defaultShippingFee: initialData?.defaultShippingFee || "",
     notes: initialData?.notes || "",
   });
   const [shippingRules, setShippingRules] = useState<ShippingRuleForm[]>(() => {
@@ -89,6 +91,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
         name: formData.name,
         country: formData.country || undefined,
         defaultFeeRate: formData.defaultFeeRate || undefined,
+        defaultShippingFee: formData.defaultShippingFee || undefined,
         defaultCurrency: formData.defaultCurrency || undefined,
         shippingRules: shippingRules
           .filter((rule) =>
@@ -220,6 +223,24 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
               即 {feeRatePercent}% 的平台抽成
             </p>
           )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="defaultShippingFee">默认邮费</Label>
+          <Input
+            id="defaultShippingFee"
+            type="number"
+            step="1"
+            min="0"
+            placeholder={formData.defaultCurrency ? `例如：750 (${formData.defaultCurrency})` : "例如：750"}
+            value={formData.defaultShippingFee}
+            onChange={(e) =>
+              setFormData({ ...formData, defaultShippingFee: e.target.value })
+            }
+          />
+          <p className="text-xs text-muted-foreground">
+            工作台创建 Listing 时会自动带出；未填写则使用下方首条有金额的配送规则。
+          </p>
         </div>
       </div>
 

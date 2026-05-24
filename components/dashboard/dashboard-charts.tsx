@@ -33,11 +33,16 @@ function formatMonth(month: string) {
   return `${parseInt(parts[1])}月`;
 }
 
-function formatCurrency(value: number) {
-  return `¥${value.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+function formatCurrency(value: number, currency: string) {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
-export function SalesTrendChart({ data }: { data: MonthlyData[] }) {
+export function SalesTrendChart({ data, currency }: { data: MonthlyData[]; currency: string }) {
   return (
     <ChartCard title="销售趋势（近 6 个月）" timeRanges={[]}>
       <div className="h-[300px] min-w-0">
@@ -60,10 +65,14 @@ export function SalesTrendChart({ data }: { data: MonthlyData[] }) {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="month" tickFormatter={formatMonth} fontSize={12} />
-              <YAxis fontSize={12} tickFormatter={(v) => `¥${v}`} width={70} />
+              <YAxis
+                fontSize={12}
+                tickFormatter={(v) => formatCurrency(Number(v), currency)}
+                width={90}
+              />
               <Tooltip
                 formatter={(value, name) => [
-                  formatCurrency(Number(value)),
+                  formatCurrency(Number(value), currency),
                   name === "revenue" ? "收入" : "利润",
                 ]}
                 labelFormatter={(label) => formatMonth(String(label))}
@@ -92,7 +101,7 @@ export function SalesTrendChart({ data }: { data: MonthlyData[] }) {
   );
 }
 
-export function PlatformPieChart({ data }: { data: PlatformData[] }) {
+export function PlatformPieChart({ data, currency }: { data: PlatformData[]; currency: string }) {
   return (
     <ChartCard title="平台销售分布" timeRanges={[]}>
       <div className="h-[300px] min-w-0">
@@ -122,7 +131,7 @@ export function PlatformPieChart({ data }: { data: PlatformData[] }) {
                   />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => [formatCurrency(Number(value)), "销售额"]} />
+              <Tooltip formatter={(value) => [formatCurrency(Number(value), currency), "销售额"]} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>

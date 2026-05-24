@@ -7,11 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { createListing } from "@/app/actions/listings";
 import { getPlatforms } from "@/app/actions/platforms";
 import { getSKUs } from "@/app/actions/skus";
 import { getItemUnits } from "@/app/actions/item-units";
-import { Calculator } from "lucide-react";
+import { getSkuStockBreakdownMap } from "@/app/actions/inventory-lots";
+import type { SkuStockBreakdown } from "@/lib/application/inventory";
+import { Calculator, CheckCircle, Truck, AlertTriangle } from "lucide-react";
 
 interface ListingFormProps {
   storeId: string;
@@ -54,6 +57,7 @@ export function ListingForm({
   const [platforms, setPlatforms] = useState<PlatformData[]>([]);
   const [skus, setSkus] = useState<SKU[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const [stockMap, setStockMap] = useState<Record<string, SkuStockBreakdown>>({});
   const [formData, setFormData] = useState({
     platformId: initialPlatformId,
     listingType: "SKU" as "SKU" | "ITEM_UNIT",
@@ -67,14 +71,16 @@ export function ListingForm({
 
   useEffect(() => {
     const loadData = async () => {
-      const [platformsData, skusData, itemUnitsData] = await Promise.all([
+      const [platformsData, skusData, itemUnitsData, stockData] = await Promise.all([
         getPlatforms(storeId),
         getSKUs(storeId),
         getItemUnits(storeId),
+        getSkuStockBreakdownMap(storeId),
       ]);
       setPlatforms(platformsData as unknown as PlatformData[]);
       setSkus(skusData);
       setItemUnits(itemUnitsData.filter((item) => item.status === "AVAILABLE"));
+      setStockMap(stockData);
 
       if (initialPlatformId) {
         const selected = (platformsData as unknown as PlatformData[]).find(
@@ -223,12 +229,24 @@ export function ListingForm({
             required
           >
             <option value="">选择SKU</option>
-            {skus.map((sku) => (
-              <option key={sku.id} value={sku.id}>
-                {sku.code} - {sku.name}
-              </option>
-            ))}
+            {skus.map((sku) => {
+              const breakdown = stockMap[sku.id];
+              const stockLabel = breakdown
+                ? ` · 可发 ${breakdown.sellableQty}${
+                    breakdown.inTransitQty > 0
+                      ? ` / 转运 ${breakdown.inTransitQty}`
+                      : ""
+                  }`
+                : "";
+              return (
+                <option key={sku.id} value={sku.id}>
+                  {sku.code} - {sku.name}
+                  {stockLabel}
+                </option>
+              );
+            })}
           </Select>
+          {formData.skuId ? <SkuStockHint breakdown={stockMap[formData.skuId]} /> : null}
         </div>
       ) : (
         <div className="space-y-2">
@@ -417,5 +435,69 @@ export function ListingForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
+  const sellable = breakdown?.sellableQty ?? 0;
+  const inTransit = breakdown?.inTransitQty ?? 0;
+
+  if (sellable === 0 && inTransit === 0) {
+    return (
+      <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+        <p className="text-muted-foreground">
+          该 SKU 暂无任何库存。Listing 仍可创建（仅做平台占位/提醒），售出前请确保到货。
+        </p>
+      </div>
+    );
+  }
+
+  if (sellable === 0 && inTransit > 0) {
+    return (
+      <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
+        <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+        <div className="space-y-1">
+          <p className="text-amber-700 font-medium">
+            暂无可发货库存，仅有 {inTransit} 件在转运中
+          </p>
+          <p className="text-muted-foreground">
+            {breakdown!.inTransitLocations
+              .map((loc) => `${loc.code} ${loc.qty}`)
+              .join(" · ")}
+            。建议先调拨到本土仓 / 代发仓后再上架。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-xs">
+      <Badge
+        variant="default"
+        className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30"
+      >
+        <CheckCircle className="mr-1 h-3 w-3" />
+        可发 {sellable}
+      </Badge>
+      {inTransit > 0 ? (
+        <Badge
+          variant="outline"
+          className="border-amber-500/40 bg-amber-500/10 text-amber-700"
+        >
+          <Truck className="mr-1 h-3 w-3" />
+          转运 {inTransit}
+        </Badge>
+      ) : null}
+      {breakdown && breakdown.sellableLocations.length > 0 ? (
+        <span className="text-muted-foreground">
+          ·{" "}
+          {breakdown.sellableLocations
+            .map((loc) => `${loc.code} ${loc.qty}`)
+            .join(" · ")}
+        </span>
+      ) : null}
+    </div>
   );
 }

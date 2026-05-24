@@ -23,6 +23,7 @@ export async function getPlatforms(storeId: string) {
   return platforms.map((platform) => ({
     ...platform,
     defaultFeeRate: platform.defaultFeeRate?.toString() ?? null,
+    defaultShippingFee: platform.defaultShippingFee?.toString() ?? null,
   }));
 }
 
@@ -48,6 +49,7 @@ export async function getPlatformById(id: string) {
   return {
     ...platform,
     defaultFeeRate: platform.defaultFeeRate?.toString() ?? null,
+    defaultShippingFee: platform.defaultShippingFee?.toString() ?? null,
     listings: platform.listings.map((listing) => ({
       ...listing,
       listedPrice: listing.listedPrice?.toString() ?? null,
@@ -64,6 +66,7 @@ export async function createPlatform(data: {
   name: string;
   country?: string;
   defaultFeeRate?: string;
+  defaultShippingFee?: string;
   shippingRules?: PlatformShippingRuleInput[];
   defaultCurrency?: string;
   notes?: string;
@@ -75,6 +78,7 @@ export async function createPlatform(data: {
       name: data.name,
       country: data.country || null,
       defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
+      defaultShippingFee: data.defaultShippingFee ? new Decimal(data.defaultShippingFee) : null,
       shippingRules: normalizeShippingRules(data.shippingRules),
       defaultCurrency: data.defaultCurrency || null,
       notes: data.notes || null,
@@ -92,6 +96,7 @@ export async function updatePlatform(
     name: string;
     country?: string;
     defaultFeeRate?: string;
+    defaultShippingFee?: string;
     shippingRules?: PlatformShippingRuleInput[];
     defaultCurrency?: string;
     notes?: string;
@@ -104,6 +109,7 @@ export async function updatePlatform(
       name: data.name,
       country: data.country || null,
       defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
+      defaultShippingFee: data.defaultShippingFee ? new Decimal(data.defaultShippingFee) : null,
       shippingRules: normalizeShippingRules(data.shippingRules),
       defaultCurrency: data.defaultCurrency || null,
       notes: data.notes || null,

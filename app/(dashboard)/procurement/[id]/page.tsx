@@ -25,14 +25,18 @@ const STORE_ID = "store_1";
 const statusColors = {
   DRAFT: "secondary",
   ORDERED: "default",
+  SHIPPED: "outline",
   RECEIVED: "outline",
+  RETURNED: "destructive",
   CANCELLED: "destructive",
 } as const;
 
 const statusLabels: Record<string, string> = {
   DRAFT: "草稿",
   ORDERED: "已下单",
+  SHIPPED: "在途",
   RECEIVED: "已收货",
+  RETURNED: "已退货",
   CANCELLED: "已取消",
 };
 
@@ -50,7 +54,8 @@ export default async function PurchaseOrderDetailPage({
   }
 
   const canEdit = order.status === "DRAFT";
-  const canReceive = order.status === "ORDERED" && order.lines.length > 0;
+  const canReceive =
+    (order.status === "ORDERED" || order.status === "SHIPPED") && order.lines.length > 0;
 
   return (
     <div className="space-y-6">
@@ -118,7 +123,7 @@ export default async function PurchaseOrderDetailPage({
         <CardHeader>
           <CardTitle>订单信息</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <p className="text-sm font-medium text-muted-foreground">币种</p>
@@ -131,6 +136,22 @@ export default async function PurchaseOrderDetailPage({
               </div>
             )}
           </div>
+          {(order.trackingNo || order.carrier || order.shippedAt) && (
+            <div className="rounded-lg border bg-slate-50 p-4 text-sm">
+              <p className="font-medium">物流信息</p>
+              {order.trackingNo && <p className="mt-1">单号：{order.trackingNo}</p>}
+              {order.carrier && <p>承运商：{order.carrier}</p>}
+              {order.shippedAt && (
+                <p>发货：{new Date(order.shippedAt).toLocaleDateString("zh-CN")}</p>
+              )}
+              {order.etaDate && (
+                <p>预计到货：{new Date(order.etaDate).toLocaleDateString("zh-CN")}</p>
+              )}
+              {order.shipmentNote && (
+                <p className="text-muted-foreground">{order.shipmentNote}</p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
