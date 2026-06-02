@@ -66,12 +66,12 @@ function deriveVariantLifecycle(input: {
     nextActionLabel = "处理发货/结算";
   } else if (input.usedAvailableCount > 0 && !input.hasListings) {
     lifecycleStage = "IN_STOCK";
-    nextActionLabel = "创建 Listing";
-    riskTags.push("中古待创建 Listing");
+    nextActionLabel = "添加上架记录";
+    riskTags.push("中古待上架检查");
   }
 
   if (input.newStockCount > 0 && !input.hasListings && !input.inTransit) {
-    riskTags.push("待创建 Listing");
+    riskTags.push("待上架检查");
   }
 
   return {
@@ -274,7 +274,7 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
           code: platform.code,
           name: platform.name,
           status: "NOT_CREATED" as const,
-          statusLabel: "未创建 Listing",
+          statusLabel: "未添加上架记录",
           stockLabel: newStockCount > 0 ? `新品库存 ${newStockCount}` : "无可售库存",
         };
       });

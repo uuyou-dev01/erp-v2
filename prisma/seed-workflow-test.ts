@@ -48,9 +48,27 @@ async function ensureBaseData() {
 
   const locations = await Promise.all(
     [
-      { code: "TEST-WH-CN", name: "测试中国仓", type: "WAREHOUSE", isSellableDefault: true },
-      { code: "TEST-WH-JP", name: "测试日本仓", type: "WAREHOUSE", isSellableDefault: true },
-      { code: "TEST-FWD-JP", name: "测试集运仓", type: "FORWARDER", isSellableDefault: false },
+      {
+        code: "TEST-WH-CN",
+        name: "测试中国仓",
+        type: "WAREHOUSE",
+        region: "CN_SHANGHAI",
+        isSellableDefault: true,
+      },
+      {
+        code: "TEST-WH-JP",
+        name: "测试日本仓",
+        type: "WAREHOUSE",
+        region: "JP_TOKYO",
+        isSellableDefault: true,
+      },
+      {
+        code: "TEST-FWD-JP",
+        name: "测试集运仓",
+        type: "FORWARDER",
+        region: "JP_OSAKA",
+        isSellableDefault: false,
+      },
     ].map((location) =>
       prisma.location.upsert({
         where: { storeId_code: { storeId: store.id, code: location.code } },

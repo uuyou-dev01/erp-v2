@@ -111,7 +111,9 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
                 required
               >
                 {CURRENCIES.map((c) => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
                 ))}
               </Select>
             </div>

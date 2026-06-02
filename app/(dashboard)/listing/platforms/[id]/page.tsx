@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/decimal";
 import { COUNTRIES, CURRENCIES } from "@/lib/i18n";
-import { ArrowLeft, Globe, Package, Percent, Truck } from "lucide-react";
+import { ArrowLeft, Globe, Package, Pencil, Percent, Truck } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { PlatformDeleteButton } from "@/components/listing/platform-delete-button";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,19 @@ export default async function PlatformDetailPage({
             <h1 className="mt-2 text-3xl font-bold">{platform.name}</h1>
             <p className="text-muted-foreground">查看平台费率、配送规则和当前上架记录。</p>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="#platform-edit">
+            <Button variant="outline" size="sm">
+              <Pencil className="mr-2 h-4 w-4" />
+              编辑
+            </Button>
+          </Link>
+          <PlatformDeleteButton
+            id={platform.id}
+            name={platform.name}
+            storeId={STORE_ID}
+          />
         </div>
       </div>
 
@@ -191,7 +205,7 @@ export default async function PlatformDetailPage({
         </Card>
       </div>
 
-      <Card>
+      <Card id="platform-edit">
         <CardHeader>
           <CardTitle>编辑平台信息</CardTitle>
         </CardHeader>

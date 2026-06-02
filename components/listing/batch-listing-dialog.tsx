@@ -25,7 +25,7 @@ interface BatchListingDialogProps {
 }
 
 const STEPS = [
-  { label: "选择SKU", description: "勾选要上架的商品" },
+  { label: "选择SKU", description: "勾选要记录的平台覆盖商品" },
   { label: "选择平台", description: "选择目标销售平台" },
   { label: "设置价格", description: "统一定价（选填）" },
   { label: "确认提交", description: "检查并提交" },
@@ -115,7 +115,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
     return (
       <Button variant="outline" onClick={() => setOpen(true)}>
         <Layers className="mr-2 h-4 w-4" />
-        批量上架
+        批量添加上架记录
       </Button>
     );
   }
@@ -126,7 +126,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
       <Card className="relative w-full max-w-2xl max-h-[85vh] overflow-auto z-10">
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>批量上架</CardTitle>
+            <CardTitle>批量添加上架记录</CardTitle>
             <button
               onClick={handleClose}
               className="text-muted-foreground hover:text-foreground"
@@ -152,7 +152,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
               </div>
               {skus.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">
-                  暂无可用SKU，请先创建商品
+                  暂无可用 SKU，请先创建商品
                 </p>
               ) : (
                 <div className="max-h-[40vh] overflow-auto border rounded-lg divide-y">
@@ -251,7 +251,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
           {step === 2 && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                为所有选中的SKU设置统一价格，留空则不设置价格。
+                为所有选中的 SKU 设置统一价格，留空则不设置价格。
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -293,7 +293,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                       {inTransitOnlySelected.length} 个 SKU 暂无可发货库存（仅在转运中）
                     </p>
                     <p className="text-muted-foreground">
-                      仍可创建上架（用于平台占位/提醒），但售出前请先把货调拨到本土仓 / 代发仓。涉及：
+                      仍可记录平台覆盖（用于平台占位/提醒），登记售出前请先把货调拨到本土仓 / 代发仓。涉及：
                       {inTransitOnlySelected
                         .slice(0, 5)
                         .map((s) => s.code)
@@ -324,7 +324,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                 </div>
                 <div className="border-t pt-3">
                   <p className="text-xs text-muted-foreground mb-2">
-                    将上架以下商品：
+                    将为以下商品添加上架记录：
                   </p>
                   <div className="max-h-32 overflow-auto space-y-1">
                     {selectedSkuList.map((sku) => (
@@ -356,7 +356,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
               <Button onClick={handleSubmit} disabled={loading}>
                 {loading
                   ? "创建中..."
-                  : `确认上架 (${selectedSkus.size} 个)`}
+                  : `确认创建 (${selectedSkus.size} 个)`}
               </Button>
             )}
           </div>

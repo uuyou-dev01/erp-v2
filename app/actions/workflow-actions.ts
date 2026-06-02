@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import type { EntityType } from "@/lib/application/next-actions";
 import { retryQuickEntry } from "@/app/actions/quick-entries";
-import { confirmOrder, markOrderShipped, settleCustomerOrder } from "@/app/actions/customer-orders";
+import { confirmOrder, cancelCustomerOrder, markOrderDelivered, markOrderReturned, markOrderShipped, saveOrderShippingProof, settleCustomerOrder } from "@/app/actions/customer-orders";
+import { approveReturnInspection } from "@/app/actions/item-units";
+import { shippingProofToJson, type ShippingProof } from "@/lib/application/shipping-proof";
 import { confirmInboundShipmentDelivered } from "@/app/actions/logistics";
 import { createListing } from "@/app/actions/listings";
 import {
@@ -91,7 +93,19 @@ export interface ShipOrderPayload {
   trackingNo?: string;
   shipper?: string;
   shippingMethod?: string;
+  pickupCode?: string;
   proofNote?: string;
+  imageUrls?: string[];
+}
+
+function buildShippingProof(payload: ShipOrderPayload): ShippingProof {
+  return shippingProofToJson({
+    shipper: clean(payload.shipper),
+    shippingMethod: clean(payload.shippingMethod),
+    pickupCode: clean(payload.pickupCode),
+    proofNote: clean(payload.proofNote),
+    imageUrls: payload.imageUrls?.filter(Boolean),
+  });
 }
 
 export interface SettleOrderPayload {
@@ -387,7 +401,11 @@ export async function submitInbound(
     receivedAt: order.receivedAt ?? new Date(),
   });
   revalidatePath("/workbench");
-  return { success: true };
+  revalidatePath("/inventory/sellable");
+  return {
+    success: true,
+    sellablePageHref: "/inventory/sellable?from=workbench&unlisted=1",
+  };
 }
 
 export async function submitConsolidatePurchase(
@@ -553,12 +571,14 @@ export async function submitCreateListing(
     revalidatePath("/workbench");
     revalidatePath(`/inventory/items/${item.id}`);
     revalidatePath(`/inventory/skus/${item.skuId}`);
-    revalidatePath("/listing");
+    revalidatePath("/inventory/coverage");
+    revalidatePath("/inventory/coverage/pending");
+    revalidatePath("/inventory/sellable");
     return {
       ids: results.map((row) => row.id),
       skuId: sku?.id ?? item.skuId,
       skuCode: sku?.code,
-      listingPageHref: "/listing",
+      listingPageHref: "/inventory/sellable",
       skuPageHref: sku ? `/inventory/skus/${sku.id}` : undefined,
     };
   }
@@ -604,21 +624,86 @@ export async function submitCreateListing(
     revalidatePath("/workbench");
     revalidatePath("/inventory/skus");
     revalidatePath(`/inventory/skus/${lot.skuId}`);
-    revalidatePath("/listing");
+    revalidatePath("/inventory/coverage");
+    revalidatePath("/inventory/coverage/pending");
+    revalidatePath("/inventory/sellable");
     return {
       ids: results.map((row) => row.id),
       skuId: sku?.id ?? lot.skuId,
       skuCode: sku?.code,
-      listingPageHref: "/listing",
+      listingPageHref: "/inventory/sellable",
       skuPageHref: sku ? `/inventory/skus/${sku.id}` : undefined,
     };
   }
 
-  throw new Error("当前对象不支持创建上架");
+  throw new Error("当前对象不支持添加上架记录");
+}
+
+export async function submitSaveShippingProof(entityId: string, payload: ShipOrderPayload) {
+  await saveOrderShippingProof(entityId, buildShippingProof(payload), {
+    trackingNo: clean(payload.trackingNo),
+  });
+  revalidatePath("/workbench");
+  return { success: true };
+}
+
+export async function submitConfirmDelivery(entityId: string) {
+  await markOrderDelivered(entityId);
+  revalidatePath("/workbench");
+  return { success: true };
+}
+
+export interface RegisterReturnPayload {
+  note?: string;
+  returnTrackingNo?: string;
+  restockMode?: "RETURN_CHECK" | "AVAILABLE";
+  refundAmount?: string;
+  platformFeeReversal?: string;
+  shippingFeeReversal?: string;
+}
+
+export interface CancelOrderPayload {
+  reason?: string;
+}
+
+export interface ApproveReturnInspectionPayload {
+  note?: string;
+}
+
+export async function submitCancelOrder(entityId: string, payload: CancelOrderPayload) {
+  await cancelCustomerOrder(entityId, clean(payload.reason));
+  revalidatePath("/workbench");
+  return { success: true };
+}
+
+export async function submitRegisterReturn(entityId: string, payload: RegisterReturnPayload) {
+  await markOrderReturned(entityId, {
+    note: clean(payload.note),
+    returnTrackingNo: clean(payload.returnTrackingNo),
+    restockMode: payload.restockMode,
+    refundAmount: clean(payload.refundAmount),
+    platformFeeReversal: clean(payload.platformFeeReversal),
+    shippingFeeReversal: clean(payload.shippingFeeReversal),
+  });
+  revalidatePath("/workbench");
+  return { success: true };
+}
+
+export async function submitApproveReturnInspection(
+  entityId: string,
+  payload: ApproveReturnInspectionPayload
+) {
+  await approveReturnInspection(entityId, clean(payload.note));
+  revalidatePath("/workbench");
+  return { success: true };
 }
 
 export async function submitShipOrder(entityId: string, payload: ShipOrderPayload) {
-  await markOrderShipped(entityId, clean(payload.trackingNo));
+  await markOrderShipped(entityId, {
+    trackingNo: clean(payload.trackingNo),
+    shippingProof: buildShippingProof(payload),
+  });
+  revalidatePath("/workbench");
   return { success: true };
 }
 

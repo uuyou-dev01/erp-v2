@@ -27,14 +27,16 @@ interface MonthlyProcurementPoint {
   receivedCount: number;
 }
 
-interface SupplierProcurementPoint {
+interface BreakdownPoint {
   name: string;
   orderCount: number;
 }
 
 interface ProcurementAnalyticsProps {
   monthlyData: MonthlyProcurementPoint[];
-  supplierData: SupplierProcurementPoint[];
+  breakdownData: BreakdownPoint[];
+  breakdownTitle: string;
+  scopeLabel: string;
 }
 
 type ViewMode = "month" | "quarter" | "year";
@@ -48,7 +50,9 @@ function formatCny(value: number) {
 
 export function ProcurementAnalytics({
   monthlyData,
-  supplierData,
+  breakdownData,
+  breakdownTitle,
+  scopeLabel,
 }: ProcurementAnalyticsProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("month");
 
@@ -64,7 +68,13 @@ export function ProcurementAnalytics({
 
     const grouped = new Map<
       string,
-      { period: string; amountCny: number; orderCount: number; receivedCount: number; sortKey: string }
+      {
+        period: string;
+        amountCny: number;
+        orderCount: number;
+        receivedCount: number;
+        sortKey: string;
+      }
     >();
 
     for (const item of monthlyData) {
@@ -121,7 +131,11 @@ export function ProcurementAnalytics({
   }, [monthlyData, viewMode]);
 
   const title =
-    viewMode === "month" ? "采购趋势（月度）" : viewMode === "quarter" ? "采购趋势（季度）" : "采购趋势（年度）";
+    viewMode === "month"
+      ? `${scopeLabel}采购趋势（月度）`
+      : viewMode === "quarter"
+        ? `${scopeLabel}采购趋势（季度）`
+        : `${scopeLabel}采购趋势（年度）`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -133,7 +147,9 @@ export function ProcurementAnalytics({
               <button
                 onClick={() => setViewMode("month")}
                 className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                  viewMode === "month" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                  viewMode === "month"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground"
                 }`}
               >
                 月
@@ -141,7 +157,9 @@ export function ProcurementAnalytics({
               <button
                 onClick={() => setViewMode("quarter")}
                 className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                  viewMode === "quarter" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                  viewMode === "quarter"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground"
                 }`}
               >
                 季
@@ -149,7 +167,9 @@ export function ProcurementAnalytics({
               <button
                 onClick={() => setViewMode("year")}
                 className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                  viewMode === "year" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                  viewMode === "year"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground"
                 }`}
               >
                 年
@@ -170,22 +190,32 @@ export function ProcurementAnalytics({
                 <YAxis yAxisId="left" tick={{ fontSize: 12 }} width={80} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} width={50} />
                 <Tooltip
-                  formatter={((value: number, name: string) => {
-                    if (name === "amountCny") return [formatCny(value), "采购金额（CNY）"];
-                    if (name === "orderCount") return [`${value} 单`, "采购单数"];
-                    if (name === "receivedCount") return [`${value} 单`, "已收货单数"];
-                    return [value, name];
-                  }) as never}
+                  formatter={
+                    ((value: number, name: string) => {
+                      if (name === "amountCny") return [formatCny(value), "采购金额（CNY）"];
+                      if (name === "orderCount") return [`${value} 单`, "采购单数"];
+                      if (name === "receivedCount") return [`${value} 单`, "已收货单数"];
+                      return [value, name];
+                    }) as never
+                  }
                 />
                 <Legend
-                  formatter={((value: string) => {
-                    if (value === "amountCny") return "采购金额（CNY）";
-                    if (value === "orderCount") return "采购单数";
-                    if (value === "receivedCount") return "已收货单数";
-                    return value;
-                  }) as never}
+                  formatter={
+                    ((value: string) => {
+                      if (value === "amountCny") return "采购金额（CNY）";
+                      if (value === "orderCount") return "采购单数";
+                      if (value === "receivedCount") return "已收货单数";
+                      return value;
+                    }) as never
+                  }
                 />
-                <Bar yAxisId="left" dataKey="amountCny" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                <Bar
+                  yAxisId="left"
+                  dataKey="amountCny"
+                  fill="#3B82F6"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={56}
+                />
                 <Line
                   yAxisId="right"
                   type="monotone"
@@ -210,29 +240,27 @@ export function ProcurementAnalytics({
 
       <Card>
         <CardHeader>
-          <CardTitle>供应商采购单占比</CardTitle>
+          <CardTitle>{breakdownTitle}</CardTitle>
         </CardHeader>
         <CardContent>
-          {supplierData.length === 0 ? (
+          {breakdownData.length === 0 ? (
             <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
-              暂无供应商数据
+              暂无占比数据
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={supplierData}
+                  data={breakdownData}
                   dataKey="orderCount"
                   nameKey="name"
                   cx="50%"
                   cy="50%"
                   outerRadius={90}
-                  label={({ name, percent }) =>
-                    `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
-                  }
+                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
                   labelLine={false}
                 >
-                  {supplierData.map((_item, index) => (
+                  {breakdownData.map((_item, index) => (
                     <Cell
                       key={`supplier-cell-${index}`}
                       fill={PIE_COLORS[index % PIE_COLORS.length]}

@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { isValidLocationRegion } from "@/lib/inventory/location-regions";
 import { revalidatePath } from "next/cache";
 
 export type LocationType = "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT";
@@ -9,8 +10,20 @@ export interface CreateLocationInput {
   storeId: string;
   code?: string;
   name: string;
+  region: string;
   type: LocationType;
   isSellableDefault?: boolean;
+}
+
+function normalizeRegion(region: string): string {
+  const value = region.trim();
+  if (!value) {
+    throw new Error("请选择地区");
+  }
+  if (!isValidLocationRegion(value)) {
+    throw new Error("地区无效，请重新选择");
+  }
+  return value;
 }
 
 export interface UpdateLocationInput extends CreateLocationInput {
@@ -38,6 +51,7 @@ export async function createLocation(data: CreateLocationInput) {
       storeId: data.storeId,
       code,
       name: data.name,
+      region: normalizeRegion(data.region),
       type: data.type,
       isSellableDefault: data.isSellableDefault ?? true,
     },
@@ -88,6 +102,7 @@ export async function updateLocation(data: UpdateLocationInput) {
     data: {
       code: data.code,
       name: data.name,
+      region: normalizeRegion(data.region),
       type: data.type,
       isSellableDefault: data.isSellableDefault,
     },

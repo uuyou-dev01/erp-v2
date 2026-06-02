@@ -192,6 +192,41 @@ export async function getStoreStockBreakdown(
   return result;
 }
 
+/**
+ * 按全库存 FIFO 规则，解析会优先从哪个仓位发货。
+ * 与 quickSellListing 在未限定 shipFromLocationId 时的扣减顺序一致。
+ */
+export async function resolveFifoShipFromLocation(
+  storeId: string,
+  skuId: string
+): Promise<string | null> {
+  const lots = await prisma.inventoryLot.findMany({
+    where: { storeId, skuId, status: "ACTIVE" },
+    orderBy: { receivedAt: "asc" },
+  });
+
+  for (const lot of lots) {
+    const ledgers = await prisma.stockLedger.findMany({
+      where: { entityType: "LOT", entityId: lot.id },
+    });
+    const available = ledgers.reduce(
+      (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
+      new Decimal(0)
+    );
+    if (available.gt(0)) {
+      return lot.locationId;
+    }
+  }
+
+  const itemUnit = await prisma.itemUnit.findFirst({
+    where: { storeId, skuId, status: "AVAILABLE" },
+    orderBy: { createdAt: "asc" },
+    select: { locationId: true },
+  });
+
+  return itemUnit?.locationId ?? null;
+}
+
 /** 单 SKU 版本，便于在 listing 表单等地按需调用 */
 export async function getSkuStockBreakdown(
   storeId: string,

@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
 import { syncQuickEntryFromOrder } from "@/lib/application/workflow-queries";
@@ -8,6 +9,13 @@ import {
   computeOrderFees,
   feeResultToStrings,
 } from "@/lib/application/order-fees";
+import {
+  mergeShippingProof,
+  parseShippingProof,
+  shippingProofToJson,
+  type ReturnFinancials,
+  type ShippingProof,
+} from "@/lib/application/shipping-proof";
 
 export type OrderStatus =
   | "DRAFT"
@@ -261,7 +269,358 @@ export async function confirmOrder(data: ConfirmOrderInput) {
   revalidatePath("/inventory/lots");
 }
 
-export async function markOrderShipped(orderId: string, trackingNo?: string) {
+export async function saveOrderShippingProof(
+  orderId: string,
+  proof: ShippingProof,
+  options?: { trackingNo?: string }
+) {
+  const order = await prisma.customerOrder.findUnique({ where: { id: orderId } });
+  if (!order) throw new Error("订单不存在");
+  if (order.orderStatus !== "CONFIRMED") {
+    throw new Error("只有待发货订单可以暂存发货凭证");
+  }
+
+  const merged = shippingProofToJson(mergeShippingProof(order.shippingProof, proof));
+
+  await prisma.customerOrder.update({
+    where: { id: orderId },
+    data: {
+      shippingProof: merged as Prisma.InputJsonValue,
+      ...(options?.trackingNo !== undefined
+        ? { trackingNo: options.trackingNo.trim() || null }
+        : {}),
+    },
+  });
+
+  revalidatePath("/sales");
+  revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/workbench");
+}
+
+export async function markOrderDelivered(orderId: string) {
+  const order = await prisma.customerOrder.findUnique({ where: { id: orderId } });
+  if (!order) throw new Error("订单不存在");
+  if (order.orderStatus !== "SHIPPED") {
+    throw new Error("只有已发货订单可以确认妥投");
+  }
+
+  await prisma.customerOrder.update({
+    where: { id: orderId },
+    data: { orderStatus: "DELIVERED" },
+  });
+
+  revalidatePath("/sales");
+  revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/workbench");
+}
+
+function computeReturnFinancialAdjustments(
+  order: {
+    subtotal: { toString(): string };
+    platformFee: { toString(): string };
+    shippingFee: { toString(): string };
+  },
+  input?: {
+    refundAmount?: string;
+    platformFeeReversal?: string;
+    shippingFeeReversal?: string;
+  }
+): ReturnFinancials | null {
+  if (!input?.refundAmount && !input?.platformFeeReversal && !input?.shippingFeeReversal) {
+    return null;
+  }
+
+  const subtotal = new Decimal(order.subtotal.toString());
+  const refundAmount = input.refundAmount ? new Decimal(input.refundAmount) : new Decimal(0);
+  const platformFeeReversal = input.platformFeeReversal
+    ? new Decimal(input.platformFeeReversal)
+    : new Decimal(0);
+  const shippingFeeReversal = input.shippingFeeReversal
+    ? new Decimal(input.shippingFeeReversal)
+    : new Decimal(0);
+  const adjustedPlatformFee = Decimal.max(
+    0,
+    new Decimal(order.platformFee.toString()).minus(platformFeeReversal)
+  );
+  const adjustedShippingFee = Decimal.max(
+    0,
+    new Decimal(order.shippingFee.toString()).minus(shippingFeeReversal)
+  );
+  const adjustedNetRevenue = subtotal
+    .minus(adjustedPlatformFee)
+    .minus(adjustedShippingFee)
+    .minus(refundAmount);
+
+  return {
+    refundAmount: refundAmount.gt(0) ? refundAmount.toFixed(4) : undefined,
+    platformFeeReversal: platformFeeReversal.gt(0) ? platformFeeReversal.toFixed(4) : undefined,
+    shippingFeeReversal: shippingFeeReversal.gt(0) ? shippingFeeReversal.toFixed(4) : undefined,
+    adjustedPlatformFee: adjustedPlatformFee.toFixed(4),
+    adjustedShippingFee: adjustedShippingFee.toFixed(4),
+    adjustedNetRevenue: adjustedNetRevenue.toFixed(4),
+    recordedAt: new Date().toISOString(),
+  };
+}
+
+export async function cancelCustomerOrder(orderId: string, reason?: string) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    include: { lines: { include: { allocations: true } } },
+  });
+  if (!order) throw new Error("订单不存在");
+
+  const cancellable = ["DRAFT", "PLACED", "PAID", "CONFIRMED"];
+  if (!cancellable.includes(order.orderStatus)) {
+    throw new Error("当前状态不可取消，已发货订单请走退货流程");
+  }
+
+  const cancelReason = reason?.trim();
+  if (!cancelReason) {
+    throw new Error("请填写取消原因");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const line of order.lines) {
+      for (const allocation of line.allocations) {
+        if (["SHIPPED", "DELIVERED", "RETURNED"].includes(allocation.status)) {
+          continue;
+        }
+
+        if (allocation.itemUnitId) {
+          const item = await tx.itemUnit.findUnique({
+            where: { id: allocation.itemUnitId },
+          });
+          if (item && item.status !== "CONSUMED") {
+            await tx.itemUnit.update({
+              where: { id: item.id },
+              data: { status: "AVAILABLE" },
+            });
+          }
+        } else if (allocation.lotId) {
+          const lot = await tx.inventoryLot.findUnique({
+            where: { id: allocation.lotId },
+          });
+          if (lot) {
+            await tx.stockLedger.create({
+              data: {
+                storeId: order.storeId,
+                occurredAt: new Date(),
+                entityType: "LOT",
+                entityId: lot.id,
+                locationId: lot.locationId,
+                deltaQty: "0.0000",
+                reason: "DEALLOCATE",
+                refType: "ORDER_LINE",
+                refId: line.id,
+                meta: {
+                  orderId: order.id,
+                  allocationId: allocation.id,
+                  quantity: allocation.quantity.toString(),
+                  cancelReason,
+                },
+              },
+            });
+          }
+        }
+
+        await tx.orderAllocation.delete({ where: { id: allocation.id } });
+      }
+
+      await tx.orderLine.update({
+        where: { id: line.id },
+        data: { supplyStatus: "UNFULFILLED" },
+      });
+    }
+
+    const mergedProof = shippingProofToJson(
+      mergeShippingProof(order.shippingProof, {
+        cancelReason,
+        cancelledAt: new Date().toISOString(),
+        proofNote: [
+          parseShippingProof(order.shippingProof).proofNote,
+          `订单取消：${cancelReason}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      })
+    );
+
+    await tx.customerOrder.update({
+      where: { id: orderId },
+      data: {
+        orderStatus: "CANCELLED",
+        shippingProof: mergedProof as Prisma.InputJsonValue,
+      },
+    });
+  });
+
+  revalidatePath("/sales");
+  revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/workbench");
+  revalidatePath("/inventory/lots");
+  revalidatePath("/inventory/items");
+  revalidatePath("/inventory/sellable");
+}
+
+export interface RegisterReturnInput {
+  note?: string;
+  returnTrackingNo?: string;
+  /** 单品退货回库方式；批次库存始终按数量回滚到原批次 */
+  restockMode?: "RETURN_CHECK" | "AVAILABLE";
+  refundAmount?: string;
+  platformFeeReversal?: string;
+  shippingFeeReversal?: string;
+}
+
+export async function markOrderReturned(orderId: string, data?: RegisterReturnInput) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      lines: { include: { allocations: true } },
+    },
+  });
+  if (!order) throw new Error("订单不存在");
+  if (order.orderStatus !== "SHIPPED" && order.orderStatus !== "DELIVERED") {
+    throw new Error("只有已发货或待结算订单可以登记退货");
+  }
+
+  const returnNote = data?.note?.trim();
+  if (!returnNote) {
+    throw new Error("请填写退货说明");
+  }
+
+  const restockMode = data?.restockMode ?? "RETURN_CHECK";
+  const returnTrackingNo = data?.returnTrackingNo?.trim();
+  const returnedAt = new Date().toISOString();
+  const returnFinancials = computeReturnFinancialAdjustments(order, data);
+
+  await prisma.$transaction(async (tx) => {
+    for (const line of order.lines) {
+      for (const allocation of line.allocations) {
+        if (allocation.status !== "SHIPPED" && allocation.status !== "DELIVERED") {
+          continue;
+        }
+
+        if (allocation.itemUnitId) {
+          const item = await tx.itemUnit.findUnique({
+            where: { id: allocation.itemUnitId },
+          });
+          if (!item) continue;
+
+          await tx.stockLedger.create({
+            data: {
+              storeId: order.storeId,
+              occurredAt: new Date(),
+              entityType: "ITEM_UNIT",
+              entityId: item.id,
+              locationId: item.locationId,
+              deltaQty: new Decimal(allocation.quantity.toString()).toFixed(4),
+              reason: "RETURN_IN",
+              refType: "ORDER_LINE",
+              refId: line.id,
+              meta: {
+                orderId: order.id,
+                allocationId: allocation.id,
+                returnNote,
+                returnTrackingNo,
+              },
+            },
+          });
+
+          await tx.itemUnit.update({
+            where: { id: item.id },
+            data: {
+              status: restockMode === "AVAILABLE" ? "AVAILABLE" : "RETURN_CHECK",
+            },
+          });
+        } else if (allocation.lotId) {
+          const lot = await tx.inventoryLot.findUnique({
+            where: { id: allocation.lotId },
+          });
+          if (!lot) continue;
+
+          await tx.stockLedger.create({
+            data: {
+              storeId: order.storeId,
+              occurredAt: new Date(),
+              entityType: "LOT",
+              entityId: lot.id,
+              locationId: lot.locationId,
+              deltaQty: new Decimal(allocation.quantity.toString()).toFixed(4),
+              reason: "RETURN_IN",
+              refType: "ORDER_LINE",
+              refId: line.id,
+              meta: {
+                orderId: order.id,
+                allocationId: allocation.id,
+                returnNote,
+                returnTrackingNo,
+              },
+            },
+          });
+
+          await tx.inventoryLot.update({
+            where: { id: lot.id },
+            data: { status: "ACTIVE" },
+          });
+        }
+
+        await tx.orderAllocation.update({
+          where: { id: allocation.id },
+          data: { status: "RETURNED" },
+        });
+      }
+
+      await tx.orderLine.update({
+        where: { id: line.id },
+        data: { supplyStatus: "RETURNED" },
+      });
+    }
+
+    const mergedProof = shippingProofToJson(
+      mergeShippingProof(order.shippingProof, {
+        proofNote: [
+          parseShippingProof(order.shippingProof).proofNote,
+          `退货登记：${returnNote}`,
+          returnTrackingNo ? `退货物流：${returnTrackingNo}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        returnTrackingNo,
+        returnedAt,
+        restockMode,
+        returnFinancials: returnFinancials ?? undefined,
+      })
+    );
+
+    await tx.customerOrder.update({
+      where: { id: orderId },
+      data: {
+        orderStatus: "RETURNED",
+        shippingProof: mergedProof as Prisma.InputJsonValue,
+        ...(returnFinancials
+          ? {
+              platformFee: returnFinancials.adjustedPlatformFee,
+              shippingFee: returnFinancials.adjustedShippingFee,
+              netRevenue: returnFinancials.adjustedNetRevenue,
+            }
+          : {}),
+      },
+    });
+  });
+
+  revalidatePath("/sales");
+  revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/workbench");
+  revalidatePath("/inventory/lots");
+  revalidatePath("/inventory/items");
+  revalidatePath("/inventory/sellable");
+}
+
+export async function markOrderShipped(
+  orderId: string,
+  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -356,12 +715,20 @@ export async function markOrderShipped(orderId: string, trackingNo?: string) {
       });
     }
 
+    const mergedProof = options?.shippingProof
+      ? shippingProofToJson(mergeShippingProof(order.shippingProof, options.shippingProof))
+      : shippingProofToJson(parseShippingProof(order.shippingProof));
+
     await tx.customerOrder.update({
       where: { id: orderId },
       data: {
         orderStatus: "SHIPPED",
         shippedAt: new Date(),
-        trackingNo: trackingNo?.trim() || undefined,
+        trackingNo: options?.trackingNo?.trim() || undefined,
+        shippingProof:
+          Object.keys(mergedProof).length > 0
+            ? (mergedProof as Prisma.InputJsonValue)
+            : undefined,
       },
     });
   });

@@ -7,9 +7,20 @@ import {
   computeOrderFees,
   feeResultToStrings,
 } from "@/lib/application/order-fees";
+import { resolveFifoShipFromLocation } from "@/lib/application/inventory";
 import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
+
+function revalidateListingSurfaces(listingId?: string) {
+  revalidatePath("/listing");
+  revalidatePath("/listing/pending");
+  revalidatePath("/inventory/coverage");
+  revalidatePath("/inventory/coverage/pending");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/inventory/sold");
+  if (listingId) revalidatePath(`/listing/${listingId}`);
+}
 
 async function getSkuReferencePrice(skuId: string) {
   const latestSaleLine = await prisma.orderLine.findFirst({
@@ -178,15 +189,39 @@ export async function createListing(data: {
     },
   });
 
-  revalidatePath("/listing");
+  revalidateListingSurfaces();
   return { id: listing.id };
+}
+
+export async function getListingFifoShipFromLocation(listingId: string) {
+  const listing = await prisma.listing.findUnique({
+    where: { id: listingId },
+    include: { sku: true },
+  });
+
+  if (!listing || listing.listingType !== "SKU" || !listing.sku) {
+    return { locationId: null as string | null };
+  }
+
+  const locationId = await resolveFifoShipFromLocation(
+    listing.storeId,
+    listing.sku.id
+  );
+  return { locationId };
 }
 
 export async function quickSellListing(data: {
   listingId: string;
   quantity?: string;
   unitPrice?: string;
+  platformFeeAmount?: string;
+  platformFeeRate?: string;
+  shippingFee?: string;
+  shipFromLocationId?: string;
   customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  shippingAddress?: string;
   externalOrderNo?: string;
 }) {
   try {
@@ -215,7 +250,7 @@ export async function quickSellListing(data: {
     }
 
     if (listing.status !== "ACTIVE") {
-      throw new Error("只有上架中的商品可以快捷售出");
+      throw new Error("只有在售 Listing 可以登记售出");
     }
 
     const sku = listing.sku || listing.itemUnit?.sku;
@@ -238,9 +273,19 @@ export async function quickSellListing(data: {
       : listing.platform.defaultFeeRate
         ? new Decimal(listing.platform.defaultFeeRate.toString())
         : new Decimal(0);
-    const shippingFee = listing.shippingFeeOverride
-      ? new Decimal(listing.shippingFeeOverride.toString())
-      : new Decimal(0);
+    const effectiveFeeRate = data.platformFeeRate
+      ? new Decimal(data.platformFeeRate)
+      : feeRate;
+    const platformFeeAmount = data.platformFeeAmount
+      ? new Decimal(data.platformFeeAmount)
+      : null;
+    const shippingFee = data.shippingFee
+      ? new Decimal(data.shippingFee)
+      : listing.shippingFeeOverride
+        ? new Decimal(listing.shippingFeeOverride.toString())
+        : listing.platform.defaultShippingFee
+          ? new Decimal(listing.platform.defaultShippingFee.toString())
+          : new Decimal(0);
 
     let inventoryCost = new Decimal(0);
 
@@ -251,11 +296,14 @@ export async function quickSellListing(data: {
         platformId: listing.platformId,
         externalOrderNo: data.externalOrderNo || undefined,
         customerName: data.customerName || "散客",
+        customerEmail: data.customerEmail || undefined,
+        customerPhone: data.customerPhone || undefined,
+        shippingAddress: data.shippingAddress || undefined,
         orderDate: new Date(),
         currency,
         subtotal: subtotal.toFixed(4),
         totalPaid: subtotal.toFixed(4),
-        platformFee: subtotal.mul(feeRate).toFixed(4),
+        platformFee: (platformFeeAmount ?? subtotal.mul(effectiveFeeRate)).toFixed(4),
         shippingFee: shippingFee.toFixed(4),
         orderStatus: "CONFIRMED",
         confirmedAt: new Date(),
@@ -305,6 +353,9 @@ export async function quickSellListing(data: {
           storeId: listing.storeId,
           skuId: sku.id,
           status: "ACTIVE",
+          ...(data.shipFromLocationId
+            ? { locationId: data.shipFromLocationId }
+            : {}),
         },
         orderBy: { receivedAt: "asc" },
       });
@@ -345,6 +396,9 @@ export async function quickSellListing(data: {
             storeId: listing.storeId,
             skuId: sku.id,
             status: "AVAILABLE",
+            ...(data.shipFromLocationId
+              ? { locationId: data.shipFromLocationId }
+              : {}),
           },
           orderBy: { createdAt: "asc" },
         });
@@ -371,13 +425,18 @@ export async function quickSellListing(data: {
       }
 
       if (remainingToAllocate.gt(0)) {
-        throw new Error("库存不足，无法完成售出");
+        throw new Error(
+          data.shipFromLocationId
+            ? "所选发货仓库存不足，无法完成售出"
+            : "库存不足，无法完成售出"
+        );
       }
     }
 
     const fees = computeOrderFees({
       subtotal,
-      platformFeeRate: feeRate,
+      platformFeeRate: effectiveFeeRate,
+      platformFeeAmount,
       shippingFee,
       inventoryCost,
     });
@@ -391,16 +450,16 @@ export async function quickSellListing(data: {
     return customerOrder.id;
     });
 
-  revalidatePath("/listing");
-  revalidatePath("/sales");
+    revalidateListingSurfaces();
+    revalidatePath("/sales");
     revalidatePath(`/sales/${orderId}`);
-  revalidatePath("/inventory/lots");
-  revalidatePath("/inventory/items");
+    revalidatePath("/inventory/lots");
+    revalidatePath("/inventory/items");
     return { success: true, orderId };
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "快捷售出失败，请重试",
+      error: error instanceof Error ? error.message : "登记售出失败，请重试",
     };
   }
 }
@@ -462,7 +521,7 @@ export async function batchCreateListings(data: {
     })
   );
 
-  revalidatePath("/listing");
+  revalidateListingSurfaces();
   return { count: listings.length };
 }
 
@@ -492,8 +551,7 @@ export async function updateListing(
     data: updateData,
   });
 
-  revalidatePath("/listing");
-  revalidatePath(`/listing/${id}`);
+  revalidateListingSurfaces(id);
   return listing;
 }
 
@@ -506,8 +564,7 @@ export async function delistListing(id: string) {
     },
   });
 
-  revalidatePath("/listing");
-  revalidatePath(`/listing/${id}`);
+  revalidateListingSurfaces(id);
   return listing;
 }
 
@@ -516,5 +573,5 @@ export async function deleteListing(id: string) {
     where: { id },
   });
 
-  revalidatePath("/listing");
+  revalidateListingSurfaces();
 }

@@ -13,6 +13,7 @@ import {
   Send,
   Store,
   Truck,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -68,6 +69,18 @@ const QUEUE_META: Partial<Record<WorkItem["queue"], { icon: LucideIcon; classNam
     className: "text-emerald-600",
     badge: "border-emerald-100 text-emerald-700",
     mark: "🚀",
+  },
+  shipped: {
+    icon: Truck,
+    className: "text-teal-600",
+    badge: "border-teal-100 text-teal-700",
+    mark: "📬",
+  },
+  returnInspection: {
+    icon: ClipboardCheck,
+    className: "text-orange-600",
+    badge: "border-orange-100 text-orange-700",
+    mark: "🔍",
   },
   pendingSettlement: {
     icon: BadgeCheck,

@@ -9,7 +9,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createSKU, updateSKU } from "@/app/actions/skus";
-import { X, Plus, Upload, Link as LinkIcon, GitBranch } from "lucide-react";
+import {
+  mergeSkuCatalogAttributes,
+  parseSkuCatalogMeta,
+  resolveCoverImageUrl,
+  type CatalogStatus,
+  type ProductKind,
+  type SkuCatalogImage,
+  type SkuNewFields,
+  type SkuUsedFields,
+} from "@/lib/application/sku-catalog";
+import { X, Plus, Upload, Link as LinkIcon, GitBranch, Star } from "lucide-react";
 import { t } from "@/lib/i18n";
 
 export interface ParentOption {
@@ -24,6 +34,11 @@ export interface ParentOption {
 interface SKUFormProps {
   storeId: string;
   parentOptions?: ParentOption[];
+  /** 紧凑布局，用于详情页编辑弹层 */
+  compact?: boolean;
+  /** 保存成功后回调；提供时不再跳转到列表页 */
+  onSaved?: (skuId: string) => void;
+  onCancel?: () => void;
   initialData?: {
     id: string;
     code: string;
@@ -51,11 +66,50 @@ const CHILD_PRESET_ATTRIBUTES = [
   { key: "款式", value: "" },
 ];
 
-export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormProps) {
+function initialCatalogState(initialData?: SKUFormProps["initialData"]) {
+  const parsed = initialData?.attributes
+    ? parseSkuCatalogMeta(initialData.attributes, initialData.imageUrl)
+    : null;
+  return {
+    catalogStatus: (parsed?.catalogStatus ?? "active") as CatalogStatus,
+    productKind: (parsed?.productKind ?? "NEW") as ProductKind,
+    referencePrice: parsed?.referencePrice ?? "",
+    referenceCost: parsed?.referenceCost ?? "",
+    currency: parsed?.currency ?? "CNY",
+    series: parsed?.series ?? "",
+    notes: parsed?.notes ?? "",
+    tagsInput: (parsed?.tags ?? []).join(", "),
+    images:
+      parsed?.images && parsed.images.length > 0
+        ? parsed.images
+        : initialData?.imageUrl
+          ? [{ url: initialData.imageUrl, isCover: true }]
+          : ([] as SkuCatalogImage[]),
+    newFields: (parsed?.newFields ?? {}) as SkuNewFields,
+    usedFields: (parsed?.usedFields ?? {}) as SkuUsedFields,
+    variantEntries: parsed
+      ? Object.entries(parsed.variantAttributes).map(([key, value]) => ({
+          key,
+          value: String(value),
+        }))
+      : [],
+  };
+}
+
+export function SKUForm({
+  storeId,
+  parentOptions = [],
+  initialData,
+  compact = false,
+  onSaved,
+  onCancel,
+}: SKUFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [uploadMode, setUploadMode] = useState<"url" | "file">("url");
   const [uploading, setUploading] = useState(false);
+  const [imageUrlInput, setImageUrlInput] = useState("");
+  const [catalog, setCatalog] = useState(() => initialCatalogState(initialData));
   const [formData, setFormData] = useState({
     parentSkuId: initialData?.parentSkuId || "",
     code: initialData?.code || "",
@@ -67,12 +121,7 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
   });
 
   const [attributes, setAttributes] = useState<Array<{ key: string; value: string }>>(
-    initialData?.attributes
-      ? Object.entries(initialData.attributes).map(([key, value]) => ({
-          key,
-          value: String(value),
-        }))
-      : []
+    () => initialCatalogState(initialData).variantEntries
   );
 
   const isChild = formData.parentSkuId !== "";
@@ -133,7 +182,10 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
       }
 
       const { url } = await response.json();
-      setFormData({ ...formData, imageUrl: url });
+      setCatalog((prev) => ({
+        ...prev,
+        images: [...prev.images, { url, isCover: prev.images.length === 0 }],
+      }));
     } catch (error) {
       console.error("Upload error:", error);
       alert(error instanceof Error ? error.message : "图片上传失败");
@@ -147,7 +199,7 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
     setLoading(true);
 
     try {
-      const attributesObj = attributes.reduce(
+      const variantObj = attributes.reduce(
         (acc, attr) => {
           if (attr.key.trim()) {
             acc[attr.key.trim()] = attr.value;
@@ -157,6 +209,31 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
         {} as Record<string, string>
       );
 
+      const tags = catalog.tagsInput
+        .split(/[,，]/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      const merged = mergeSkuCatalogAttributes(initialData?.attributes, {
+        catalogStatus: catalog.catalogStatus,
+        productKind: catalog.productKind,
+        referencePrice: catalog.referencePrice || null,
+        referenceCost: catalog.referenceCost || null,
+        currency: catalog.currency || null,
+        series: catalog.series || null,
+        notes: catalog.notes || null,
+        tags,
+        images: catalog.images.length > 0 ? catalog.images : undefined,
+        newFields: catalog.productKind === "NEW" ? catalog.newFields : undefined,
+        usedFields: catalog.productKind === "USED" ? catalog.usedFields : undefined,
+      });
+
+      const attributesPayload = { ...merged, ...variantObj };
+      const coverUrl = resolveCoverImageUrl(
+        parseSkuCatalogMeta(attributesPayload),
+        formData.imageUrl
+      );
+
       const data = {
         storeId,
         code: formData.code,
@@ -164,18 +241,25 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
         parentSkuId: formData.parentSkuId || undefined,
         category: formData.category || undefined,
         brand: formData.brand || undefined,
-        attributes: Object.keys(attributesObj).length > 0 ? attributesObj : undefined,
+        attributes: attributesPayload,
         description: formData.description || undefined,
-        imageUrl: formData.imageUrl || undefined,
+        imageUrl: coverUrl || undefined,
       };
 
+      let skuId: string;
       if (initialData) {
-        await updateSKU({ id: initialData.id, ...data });
+        const sku = await updateSKU({ id: initialData.id, ...data });
+        skuId = sku.id;
       } else {
-        await createSKU(data);
+        const sku = await createSKU(data);
+        skuId = sku.id;
       }
 
-      router.push("/inventory/skus");
+      if (onSaved) {
+        onSaved(skuId);
+      } else {
+        router.push(`/inventory/skus/${skuId}`);
+      }
       router.refresh();
     } catch (error) {
       console.error("Failed to save SKU:", error);
@@ -205,65 +289,221 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
     setAttributes(newAttributes);
   };
 
+  const sectionGap = compact ? "space-y-3" : "space-y-6";
+  const cardHeaderClass = compact ? "py-3" : undefined;
+  const cardTitleClass = compact ? "text-sm font-medium" : undefined;
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Step 1: Parent relationship */}
+    <form onSubmit={handleSubmit} className={sectionGap}>
+      {!initialData ? (
+        <Card>
+          <CardHeader className={cardHeaderClass}>
+            <CardTitle className={`flex items-center gap-2 ${cardTitleClass ?? ""}`}>
+              <GitBranch className="h-4 w-4" />
+              SKU 类型
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="parentSkuId" className={compact ? "text-xs" : undefined}>
+                父 SKU（可选）
+              </Label>
+              <select
+                id="parentSkuId"
+                value={formData.parentSkuId}
+                onChange={(e) => handleParentChange(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <option value="">独立 / 父 SKU（产品线）</option>
+                {parentOptions.map((sku) => (
+                  <option key={sku.id} value={sku.id}>
+                    {sku.code} · {sku.name}
+                    {sku._count.childSkus > 0 ? ` (${sku._count.childSkus} 子款)` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {!compact && isChild && selectedParent ? (
+              <p className="text-xs text-muted-foreground">
+                子款属于「{selectedParent.name}」，代码后缀可自定义。
+              </p>
+            ) : null}
+            {!compact && !isChild ? (
+              <p className="text-xs text-muted-foreground">
+                父 SKU 代表产品线，可后续添加颜色/尺码等子 SKU。
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GitBranch className="h-5 w-5" />
-            SKU 类型
-          </CardTitle>
+        <CardHeader className={cardHeaderClass}>
+          <CardTitle className={cardTitleClass}>商品类型与状态</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2">
-            <Label htmlFor="parentSkuId">该 SKU 是否属于某个父 SKU？</Label>
+            <Label>商品类型</Label>
             <select
-              id="parentSkuId"
-              value={formData.parentSkuId}
-              onChange={(e) => handleParentChange(e.target.value)}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={catalog.productKind}
+              onChange={(e) =>
+                setCatalog((c) => ({
+                  ...c,
+                  productKind: e.target.value as ProductKind,
+                }))
+              }
             >
-              <option value="">独立 SKU / 父 SKU（产品线）</option>
-              {parentOptions.map((sku) => (
-                <option key={sku.id} value={sku.id}>
-                  {sku.code} · {sku.name}
-                  {sku._count.childSkus > 0 ? ` (已有 ${sku._count.childSkus} 个子款)` : ""}
-                </option>
-              ))}
+              <option value="NEW">全新</option>
+              <option value="USED">中古</option>
             </select>
           </div>
-
-          {isChild && selectedParent ? (
-            <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm space-y-2">
-              <p className="font-medium text-blue-900">
-                创建子 SKU — 属于「{selectedParent.name}」的一个变体
-              </p>
-              <p className="text-blue-700">
-                子 SKU 代码已根据父 SKU 自动生成，你可以修改后缀。
-                子 SKU 拥有独立的库存、成本和销售记录。
-              </p>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-muted bg-muted/30 p-4 text-sm space-y-2">
-              <p className="font-medium">
-                独立 SKU 或父 SKU（产品线）
-              </p>
-              <p className="text-muted-foreground">
-                父 SKU 代表一个产品系列（如「经典T恤」），它本身可以入库也可以不入库。
-                后续可以在它下面创建多个子 SKU（如各尺码/颜色）。
-              </p>
-            </div>
-          )}
+          <div className="space-y-2">
+            <Label>档案状态</Label>
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={catalog.catalogStatus}
+              onChange={(e) =>
+                setCatalog((c) => ({
+                  ...c,
+                  catalogStatus: e.target.value as CatalogStatus,
+                }))
+              }
+            >
+              <option value="active">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label>参考售价</Label>
+            <Input
+              value={catalog.referencePrice}
+              onChange={(e) =>
+                setCatalog((c) => ({ ...c, referencePrice: e.target.value }))
+              }
+              placeholder="可选"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>参考成本</Label>
+            <Input
+              value={catalog.referenceCost}
+              onChange={(e) =>
+                setCatalog((c) => ({ ...c, referenceCost: e.target.value }))
+              }
+              placeholder="可选"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>币种</Label>
+            <Input
+              value={catalog.currency}
+              onChange={(e) => setCatalog((c) => ({ ...c, currency: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>系列</Label>
+            <Input
+              value={catalog.series}
+              onChange={(e) => setCatalog((c) => ({ ...c, series: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>标签（逗号分隔）</Label>
+            <Input
+              value={catalog.tagsInput}
+              onChange={(e) => setCatalog((c) => ({ ...c, tagsInput: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>备注</Label>
+            <Textarea
+              value={catalog.notes}
+              onChange={(e) => setCatalog((c) => ({ ...c, notes: e.target.value }))}
+              rows={2}
+            />
+          </div>
         </CardContent>
       </Card>
 
+      {catalog.productKind === "NEW" ? (
+        <Card>
+          <CardHeader className={cardHeaderClass}>
+            <CardTitle className={cardTitleClass}>全新商品字段</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={Boolean(catalog.newFields.isSealed)}
+                onChange={(e) =>
+                  setCatalog((c) => ({
+                    ...c,
+                    newFields: { ...c.newFields, isSealed: e.target.checked },
+                  }))
+                }
+              />
+              未拆封
+            </label>
+            <div className="space-y-2">
+              <Label>条码</Label>
+              <Input
+                value={catalog.newFields.barcode ?? ""}
+                onChange={(e) =>
+                  setCatalog((c) => ({
+                    ...c,
+                    newFields: { ...c.newFields, barcode: e.target.value },
+                  }))
+                }
+              />
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader className={cardHeaderClass}>
+            <CardTitle className={cardTitleClass}>中古商品字段</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>默认品相</Label>
+              <Input
+                value={catalog.usedFields.defaultConditionGrade ?? ""}
+                onChange={(e) =>
+                  setCatalog((c) => ({
+                    ...c,
+                    usedFields: {
+                      ...c.usedFields,
+                      defaultConditionGrade: e.target.value,
+                    },
+                  }))
+                }
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={Boolean(catalog.usedFields.hasBox)}
+                onChange={(e) =>
+                  setCatalog((c) => ({
+                    ...c,
+                    usedFields: { ...c.usedFields, hasBox: e.target.checked },
+                  }))
+                }
+              />
+              含原盒
+            </label>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Step 2: Basic info */}
       <Card>
-        <CardHeader>
-          <CardTitle>{t("sku.basic_info")}</CardTitle>
+        <CardHeader className={cardHeaderClass}>
+          <CardTitle className={cardTitleClass}>{t("sku.basic_info")}</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="code">{t("sku.code")} *</Label>
@@ -344,8 +584,8 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
           </div>
 
           <div className="space-y-2">
-            <Label>{t("sku.image")}</Label>
-            <div className="flex gap-2 mb-2">
+            <Label>图片（多图，可设封面）</Label>
+            <div className="flex flex-wrap gap-2 mb-2">
               <Button
                 type="button"
                 variant={uploadMode === "url" ? "default" : "outline"}
@@ -367,19 +607,36 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
             </div>
 
             {uploadMode === "url" ? (
-              <>
+              <div className="flex gap-2">
                 <Input
-                  id="imageUrl"
-                  value={formData.imageUrl}
-                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                  value={imageUrlInput}
+                  onChange={(e) => setImageUrlInput(e.target.value)}
                   placeholder="https://example.com/image.jpg"
                 />
-                <p className="text-xs text-muted-foreground">{t("sku.image_url_hint")}</p>
-              </>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    if (!imageUrlInput.trim()) return;
+                    setCatalog((c) => ({
+                      ...c,
+                      images: [
+                        ...c.images,
+                        {
+                          url: imageUrlInput.trim(),
+                          isCover: c.images.length === 0,
+                        },
+                      ],
+                    }));
+                    setImageUrlInput("");
+                  }}
+                >
+                  添加
+                </Button>
+              </div>
             ) : (
               <>
                 <Input
-                  id="imageFile"
                   type="file"
                   accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
                   onChange={handleFileChange}
@@ -391,44 +648,73 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
               </>
             )}
 
-            {formData.imageUrl && (
-              <div className="mt-2 border rounded-lg p-2 bg-muted/50 relative">
-                <img
-                  src={formData.imageUrl}
-                  alt="预览"
-                  className="max-h-32 rounded object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute top-2 right-2"
-                  onClick={() => setFormData({ ...formData, imageUrl: "" })}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+            {catalog.images.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-3">
+                {catalog.images.map((img, index) => (
+                  <div key={`${img.url}-${index}`} className="relative rounded-lg border p-2">
+                    <img src={img.url} alt="" className="h-24 w-24 rounded object-cover" />
+                    {img.isCover ? (
+                      <Badge className="absolute left-2 top-2 text-[10px]">封面</Badge>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="absolute left-2 top-2 h-7 px-2 text-[10px]"
+                        onClick={() =>
+                          setCatalog((c) => ({
+                            ...c,
+                            images: c.images.map((item, i) => ({
+                              ...item,
+                              isCover: i === index,
+                            })),
+                          }))
+                        }
+                      >
+                        <Star className="mr-0.5 h-3 w-3" />
+                        封面
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1 h-7 w-7"
+                      onClick={() =>
+                        setCatalog((c) => {
+                          const next = c.images.filter((_, i) => i !== index);
+                          if (next.length > 0 && !next.some((n) => n.isCover)) {
+                            next[0] = { ...next[0], isCover: true };
+                          }
+                          return { ...c, images: next };
+                        })
+                      }
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
               </div>
-            )}
+            ) : null}
           </div>
         </CardContent>
       </Card>
 
       {/* Step 3: Attributes */}
       <Card>
-        <CardHeader>
+        <CardHeader className={cardHeaderClass}>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
-              <CardTitle>
+              <CardTitle className={cardTitleClass}>
                 {isChild ? "变体规格" : "产品属性"}
               </CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {isChild
-                  ? "描述这个变体的具体规格（颜色、尺码等），用于区分同一产品线下的不同子款"
-                  : "描述产品线的共同特征（材质、产地等），子 SKU 不需要重复填写这些"}
-              </p>
+              {!compact ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {isChild
+                    ? "颜色、尺码等变体维度"
+                    : "产品线共同特征（材质、产地等）"}
+                </p>
+              ) : null}
             </div>
             <Button type="button" variant="outline" size="sm" onClick={addAttribute}>
               <Plus className="mr-2 h-4 w-4" />
@@ -492,7 +778,7 @@ export function SKUForm({ storeId, parentOptions = [], initialData }: SKUFormPro
         <Button
           type="button"
           variant="outline"
-          onClick={() => router.back()}
+          onClick={() => (onCancel ? onCancel() : router.back())}
           disabled={loading || uploading}
         >
           {t("common.cancel")}

@@ -18,6 +18,22 @@ export const dynamic = "force-dynamic";
 
 const STORE_ID = "store_1";
 
+function getAdjustMeta(ledgerMeta: unknown) {
+  if (!ledgerMeta || typeof ledgerMeta !== "object") return null;
+  const value = ledgerMeta as Record<string, unknown>;
+  const countedUnitCost = value.countedUnitCost;
+  const notes = value.notes;
+  const source = value.source;
+  return {
+    countedUnitCost:
+      typeof countedUnitCost === "string" || typeof countedUnitCost === "number"
+        ? String(countedUnitCost)
+        : null,
+    notes: typeof notes === "string" ? notes : null,
+    fromSkuStocktake: source === "SKU_LOCATION_STOCKTAKE",
+  };
+}
+
 export default async function InventoryLotDetailPage({
   params,
 }: {
@@ -171,48 +187,67 @@ export default async function InventoryLotDetailPage({
                 <TableHead>原因</TableHead>
                 <TableHead>变动数量</TableHead>
                 <TableHead>位置</TableHead>
+                <TableHead>盘点信息</TableHead>
                 <TableHead>引用</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lot.stockLedgers.map((ledger) => (
-                <TableRow key={ledger.id}>
-                  <TableCell>
-                    {new Date(ledger.occurredAt).toLocaleString("zh-CN")}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        ledger.reason.startsWith("INBOUND") || ledger.reason === "SPLIT_IN"
-                          ? "default"
-                          : "secondary"
-                      }
-                    >
-                      {ledger.reason}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={
-                        parseFloat(ledger.deltaQty.toString()) > 0
-                          ? "text-green-500"
-                          : "text-red-500"
-                      }
-                    >
-                      {parseFloat(ledger.deltaQty.toString()) > 0 ? "+" : ""}
-                      {formatQuantity(ledger.deltaQty)}
-                    </span>
-                  </TableCell>
-                  <TableCell>{ledger.locationId.slice(0, 8)}</TableCell>
-                  <TableCell>
-                    {ledger.refType && (
-                      <span className="font-mono text-xs">
-                        {ledger.refType}: {ledger.refId?.slice(0, 8)}
+              {lot.stockLedgers.map((ledger) => {
+                const adjustMeta = ledger.reason === "ADJUST" ? getAdjustMeta(ledger.meta) : null;
+                return (
+                  <TableRow key={ledger.id}>
+                    <TableCell>
+                      {new Date(ledger.occurredAt).toLocaleString("zh-CN")}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          ledger.reason.startsWith("INBOUND") || ledger.reason === "SPLIT_IN"
+                            ? "default"
+                            : "secondary"
+                        }
+                      >
+                        {ledger.reason}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={
+                          parseFloat(ledger.deltaQty.toString()) > 0
+                            ? "text-green-500"
+                            : "text-red-500"
+                        }
+                      >
+                        {parseFloat(ledger.deltaQty.toString()) > 0 ? "+" : ""}
+                        {formatQuantity(ledger.deltaQty)}
                       </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                    </TableCell>
+                    <TableCell>{ledger.locationId.slice(0, 8)}</TableCell>
+                    <TableCell>
+                      {adjustMeta ? (
+                        <div className="text-xs">
+                          {adjustMeta.fromSkuStocktake ? (
+                            <p className="text-muted-foreground">来源: SKU 盘点</p>
+                          ) : null}
+                          <p>盘点单价: {formatCurrency(adjustMeta.countedUnitCost ?? "0", lot.costCurrency)}</p>
+                          {adjustMeta.notes ? (
+                            <p className="text-muted-foreground">备注: {adjustMeta.notes}</p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {ledger.refType && (
+                        <span className="font-mono text-xs">
+                          {ledger.refType}: {ledger.refId?.slice(0, 8)}
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>

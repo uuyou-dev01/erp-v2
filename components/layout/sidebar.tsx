@@ -12,6 +12,7 @@ import {
   MapPin,
   Box,
   PackageOpen,
+  PackageCheck,
   Globe,
   ChevronLeft,
   ChevronRight,
@@ -35,6 +36,7 @@ type NavItem = {
   icon: typeof ClipboardList;
   queue?: WorkQueue;
   badgeKey?: keyof QueueCounts;
+  submenu?: NavItem[];
 };
 
 type NavGroup = {
@@ -47,8 +49,18 @@ const workflowGroups: NavGroup[] = [
     title: "运营",
     items: [
       { name: "工作台", href: "/workbench", icon: ClipboardList, badgeKey: "total" },
-      { name: "商品中心", href: "/inventory/skus", icon: Store },
-      { name: "库存", href: "/inventory", icon: Warehouse },
+      {
+        name: "库存",
+        href: "/inventory/sellable",
+        icon: Warehouse,
+        submenu: [
+          { name: "可售库存", href: "/inventory/sellable", icon: PackageCheck },
+          { name: "库存盘点", href: "/inventory/stocktake", icon: Box },
+          { name: "Listing 分类", href: "/listing", icon: Globe },
+          { name: "已售库存", href: "/inventory/sold", icon: Package },
+          { name: "商品档案", href: "/inventory/skus", icon: Store },
+        ],
+      },
       { name: "销售", href: "/sales", icon: Package },
       { name: "异常中心", href: "/workbench?queue=exception", icon: TriangleAlert, queue: "exception", badgeKey: "exception" },
       { name: "报表", href: "/reports", icon: FileText },
@@ -60,15 +72,6 @@ const adminNavigation = [
   { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard },
   { name: "采购单据", href: "/procurement", icon: ShoppingCart },
   {
-    name: "平台与上架",
-    href: "/listing",
-    icon: Globe,
-    submenu: [
-      { name: "上架列表", href: "/listing", icon: Store },
-      { name: "销售平台", href: "/listing/platforms", icon: Globe },
-    ],
-  },
-  {
     name: "库存设置",
     href: "/inventory",
     icon: Settings,
@@ -76,6 +79,7 @@ const adminNavigation = [
       { name: "仓库位置", href: "/inventory/locations", icon: MapPin },
       { name: "入库库存", href: "/inventory/lots", icon: Package },
       { name: "单件商品", href: "/inventory/items", icon: PackageOpen },
+      { name: "销售平台配置", href: "/listing/platforms", icon: Globe },
     ],
   },
 ];
@@ -142,7 +146,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>(["设置"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["库存", "设置"]);
   const [counts, setCounts] = useState<QueueCounts | null>(null);
 
   useEffect(() => {
@@ -169,7 +173,6 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const handleNavClick = () => onMobileClose?.();
 
   const isWorkflowActive = (item: NavItem) => {
-    if (item.href === "/inventory" && pathname.startsWith("/inventory/skus")) return false;
     if (!item.queue && item.href !== "/workbench") {
       return pathname === item.href || pathname.startsWith(`${item.href}/`);
     }
@@ -226,17 +229,63 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
               </p>
             )}
             <div className="space-y-0.5">
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.href}
-                  item={item}
-                  active={isWorkflowActive(item)}
-                  collapsed={collapsed}
-                  badgeCount={item.badgeKey && counts ? counts[item.badgeKey] : 0}
-                  critical={item.badgeKey === "exception" || item.badgeKey === "inspectionException"}
-                  onClick={handleNavClick}
-                />
-              ))}
+              {group.items.map((item) => {
+                if (item.submenu && !collapsed) {
+                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  return (
+                    <div key={item.href}>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(item.name)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                          isActive
+                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        )}
+                      >
+                        <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                        <span className="flex-1 text-left">{item.name}</span>
+                        <ChevronDown className={cn("h-3 w-3 opacity-50", expandedItems.includes(item.name) && "rotate-180")} />
+                      </button>
+                      {expandedItems.includes(item.name) && (
+                        <div className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
+                          {item.submenu.map((sub) => (
+                            <Link
+                              key={sub.href}
+                              href={sub.href}
+                              onClick={handleNavClick}
+                              className={cn(
+                                "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                                pathname === sub.href
+                                  ? "font-medium text-foreground"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              <span className="flex-1 truncate">{sub.name}</span>
+                              <CountBadge
+                                count={sub.badgeKey && counts ? counts[sub.badgeKey] : 0}
+                                critical={sub.badgeKey === "exception" || sub.badgeKey === "inspectionException"}
+                              />
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    active={isWorkflowActive(item)}
+                    collapsed={collapsed}
+                    badgeCount={item.badgeKey && counts ? counts[item.badgeKey] : 0}
+                    critical={item.badgeKey === "exception" || item.badgeKey === "inspectionException"}
+                    onClick={handleNavClick}
+                  />
+                );
+              })}
             </div>
           </div>
         ))}

@@ -16,6 +16,8 @@ import { AddPurchaseLineForm } from "@/components/procurement/add-purchase-line-
 import { ReceiveGoodsForm } from "@/components/procurement/receive-goods-form";
 import { PurchaseOrderActions } from "@/components/procurement/purchase-order-actions";
 import { QuickReceiveButton } from "@/components/procurement/quick-receive-button";
+import { BackButton } from "@/components/shared/back-button";
+import { ProductImage } from "@/components/ui/product-image";
 import { ShoppingCart, Package, Calendar, DollarSign } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -60,11 +62,14 @@ export default async function PurchaseOrderDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">采购订单：{order.orderNo}</h1>
-          <p className="text-muted-foreground">
-            {order.supplierName || "未指定供应商"}
-          </p>
+        <div className="flex items-start gap-3">
+          <BackButton label="" className="mt-1" />
+          <div>
+            <h1 className="text-3xl font-bold">采购订单：{order.orderNo}</h1>
+            <p className="text-muted-foreground">
+              {order.supplierName || "未指定供应商"} / {order.currency}
+            </p>
+          </div>
         </div>
         <PurchaseOrderActions order={order} />
       </div>
@@ -111,9 +116,7 @@ export default async function PurchaseOrderDetailPage({
           </CardHeader>
           <CardContent>
             <div className="text-sm">
-              {order.orderedAt
-                ? new Date(order.orderedAt).toLocaleDateString("zh-CN")
-                : "尚未下单"}
+              {order.orderedAt ? new Date(order.orderedAt).toLocaleDateString("zh-CN") : "尚未下单"}
             </div>
           </CardContent>
         </Card>
@@ -147,9 +150,7 @@ export default async function PurchaseOrderDetailPage({
               {order.etaDate && (
                 <p>预计到货：{new Date(order.etaDate).toLocaleDateString("zh-CN")}</p>
               )}
-              {order.shipmentNote && (
-                <p className="text-muted-foreground">{order.shipmentNote}</p>
-              )}
+              {order.shipmentNote && <p className="text-muted-foreground">{order.shipmentNote}</p>}
             </div>
           )}
         </CardContent>
@@ -169,9 +170,9 @@ export default async function PurchaseOrderDetailPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>SKU</TableHead>
-                  <TableHead>数量</TableHead>
-                  <TableHead>单价</TableHead>
-                  <TableHead>小计</TableHead>
+                  <TableHead className="text-right">数量</TableHead>
+                  <TableHead className="text-right">单价</TableHead>
+                  <TableHead className="text-right">小计</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -179,16 +180,26 @@ export default async function PurchaseOrderDetailPage({
                 {order.lines.map((line) => (
                   <TableRow key={line.id}>
                     <TableCell>
-                      <div>
-                        <p className="font-medium">{line.sku.code}</p>
-                        <p className="text-sm text-muted-foreground">{line.sku.name}</p>
+                      <div className="flex items-center gap-3">
+                        <ProductImage
+                          src={line.sku.imageUrl}
+                          alt={line.sku.name}
+                          size="md"
+                          className="rounded-md"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{line.sku.name}</p>
+                          <p className="truncate font-mono text-xs text-muted-foreground">
+                            {line.sku.code}
+                          </p>
+                        </div>
                       </div>
                     </TableCell>
-                    <TableCell>{formatQuantity(line.quantity)}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-right">{formatQuantity(line.quantity)}</TableCell>
+                    <TableCell className="text-right">
                       {formatCurrency(line.unitPrice, order.currency)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-right font-medium">
                       {formatCurrency(line.lineAmount, order.currency)}
                     </TableCell>
                     <TableCell className="text-right">
@@ -256,8 +267,8 @@ export default async function PurchaseOrderDetailPage({
               <div className="space-y-1 text-sm">
                 <p className="font-medium">已收货</p>
                 <p className="text-muted-foreground">
-                  该采购订单已完成收货，入库库存已自动创建。
-                  收货日期：{order.receivedAt && new Date(order.receivedAt).toLocaleDateString("zh-CN")}
+                  该采购订单已完成收货，入库库存已自动创建。 收货日期：
+                  {order.receivedAt && new Date(order.receivedAt).toLocaleDateString("zh-CN")}
                 </p>
               </div>
             </div>

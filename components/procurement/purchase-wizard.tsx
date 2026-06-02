@@ -17,24 +17,12 @@ import {
 } from "@/components/ui/table";
 import { Stepper } from "@/components/shared/stepper";
 import { CSVImportDialog } from "@/components/shared/csv-import-dialog";
-import {
-  createPurchaseOrder,
-  addPurchaseLine,
-} from "@/app/actions/purchase-orders";
+import { createPurchaseOrder, addPurchaseLine } from "@/app/actions/purchase-orders";
 import { createSKU, getSKUs } from "@/app/actions/skus";
 import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal, formatCurrency } from "@/lib/decimal";
 import { t, CURRENCIES } from "@/lib/i18n";
-import {
-  AlertCircle,
-  Plus,
-  Trash2,
-  Upload,
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  X,
-} from "lucide-react";
+import { AlertCircle, Plus, Trash2, Upload, ArrowLeft, ArrowRight, Check, X } from "lucide-react";
 import Decimal from "decimal.js";
 
 interface PurchaseWizardProps {
@@ -96,9 +84,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const [submitting, setSubmitting] = useState(false);
 
   const [skus, setSKUs] = useState<SKUOption[]>([]);
-  const [locations, setLocations] = useState<
-    Array<{ id: string; code: string; name: string }>
-  >([]);
+  const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
 
   // Step 1 — basic info
   const [basicInfo, setBasicInfo] = useState({
@@ -140,9 +126,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const groupedSkus = useMemo(() => {
     const query = skuSearch.trim().toLowerCase();
     const matched = query
-      ? skus.filter((sku) =>
-          [sku.code, sku.name].some((v) => v.toLowerCase().includes(query))
-        )
+      ? skus.filter((sku) => [sku.code, sku.name].some((v) => v.toLowerCase().includes(query)))
       : skus;
 
     const matchedIds = new Set(matched.map((s) => s.id));
@@ -181,8 +165,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const validateStep1 = useCallback(() => {
     const errs: Record<string, string> = {};
     if (!basicInfo.orderNo.trim()) errs.orderNo = "采购单号为必填项";
-    if (basicInfo.fxRate && !isValidDecimal(basicInfo.fxRate))
-      errs.fxRate = "汇率格式无效";
+    if (basicInfo.fxRate && !isValidDecimal(basicInfo.fxRate)) errs.fxRate = "汇率格式无效";
     if (!basicInfo.orderedAt) errs.orderedAt = "采购日期为必填项";
     setBasicErrors(errs);
     return Object.keys(errs).length === 0;
@@ -194,7 +177,11 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     if (!newLine.skuId) errs.skuId = "请选择SKU";
     if (!newLine.quantity || !isValidDecimal(newLine.quantity) || parseFloat(newLine.quantity) <= 0)
       errs.quantity = "请输入有效数量";
-    if (!newLine.unitPrice || !isValidDecimal(newLine.unitPrice) || parseFloat(newLine.unitPrice) < 0)
+    if (
+      !newLine.unitPrice ||
+      !isValidDecimal(newLine.unitPrice) ||
+      parseFloat(newLine.unitPrice) < 0
+    )
       errs.unitPrice = "请输入有效单价";
     setLineErrors(errs);
     if (Object.keys(errs).length > 0) return;
@@ -375,9 +362,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <Input
                   id="orderNo"
                   value={basicInfo.orderNo}
-                  onChange={(e) =>
-                    setBasicInfo({ ...basicInfo, orderNo: e.target.value })
-                  }
+                  onChange={(e) => setBasicInfo({ ...basicInfo, orderNo: e.target.value })}
                   placeholder="PO-YYYYMMDD-XXX"
                 />
                 {basicErrors.orderNo && (
@@ -393,9 +378,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <Input
                   id="supplierName"
                   value={basicInfo.supplierName}
-                  onChange={(e) =>
-                    setBasicInfo({ ...basicInfo, supplierName: e.target.value })
-                  }
+                  onChange={(e) => setBasicInfo({ ...basicInfo, supplierName: e.target.value })}
                   placeholder={t("purchase.supplier_placeholder")}
                 />
               </div>
@@ -407,9 +390,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <Select
                   id="currency"
                   value={basicInfo.currency}
-                  onChange={(e) =>
-                    setBasicInfo({ ...basicInfo, currency: e.target.value })
-                  }
+                  onChange={(e) => setBasicInfo({ ...basicInfo, currency: e.target.value })}
                 >
                   {CURRENCIES.map((c) => (
                     <option key={c.value} value={c.value}>
@@ -424,9 +405,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <Input
                   id="fxRate"
                   value={basicInfo.fxRate}
-                  onChange={(e) =>
-                    setBasicInfo({ ...basicInfo, fxRate: e.target.value })
-                  }
+                  onChange={(e) => setBasicInfo({ ...basicInfo, fxRate: e.target.value })}
                   placeholder={t("purchase.fx_rate_placeholder")}
                 />
                 {basicErrors.fxRate && (
@@ -445,9 +424,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                   id="orderedAt"
                   type="date"
                   value={basicInfo.orderedAt}
-                  onChange={(e) =>
-                    setBasicInfo({ ...basicInfo, orderedAt: e.target.value })
-                  }
+                  onChange={(e) => setBasicInfo({ ...basicInfo, orderedAt: e.target.value })}
                   required
                 />
                 {basicErrors.orderedAt && (
@@ -489,11 +466,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>采购商品</CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCsvOpen(true)}
-              >
+              <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
                 <Upload className="mr-2 h-4 w-4" />
                 CSV 导入
               </Button>
@@ -544,10 +517,19 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                           return group.children.map((sku) => {
                             const active = sku.id === newLine.skuId;
                             return (
-                              <button key={sku.id} type="button" className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${active ? "bg-blue-50 text-blue-700" : ""}`} onClick={() => selectSku(sku)}>
+                              <button
+                                key={sku.id}
+                                type="button"
+                                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${active ? "bg-blue-50 text-blue-700" : ""}`}
+                                onClick={() => selectSku(sku)}
+                              >
                                 <span className="min-w-0">
-                                  <span className="block truncate font-mono font-medium">{sku.code}</span>
-                                  <span className="block truncate text-xs text-muted-foreground">{sku.name}</span>
+                                  <span className="block truncate font-mono font-medium">
+                                    {sku.code}
+                                  </span>
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {sku.name}
+                                  </span>
                                 </span>
                                 {active && <Check className="h-4 w-4 shrink-0" />}
                               </button>
@@ -560,23 +542,42 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
 
                         return (
                           <div key={group.parent.id} className={gi > 0 ? "border-t" : ""}>
-                            <button type="button" className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${parentActive ? "bg-blue-50 text-blue-700" : ""}`} onClick={() => selectSku(group.parent!)}>
+                            <button
+                              type="button"
+                              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${parentActive ? "bg-blue-50 text-blue-700" : ""}`}
+                              onClick={() => selectSku(group.parent!)}
+                            >
                               <span className="min-w-0">
                                 <span className="block truncate font-mono font-medium">
                                   {group.parent.code}
-                                  {hasChildren && <span className="ml-2 text-xs font-normal text-muted-foreground">({group.children.length} 个子款)</span>}
+                                  {hasChildren && (
+                                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                      ({group.children.length} 个子款)
+                                    </span>
+                                  )}
                                 </span>
-                                <span className="block truncate text-xs text-muted-foreground">{group.parent.name}</span>
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {group.parent.name}
+                                </span>
                               </span>
                               {parentActive && <Check className="h-4 w-4 shrink-0" />}
                             </button>
                             {group.children.map((child) => {
                               const childActive = child.id === newLine.skuId;
                               return (
-                                <button key={child.id} type="button" className={`flex w-full items-center justify-between gap-3 py-1.5 pl-7 pr-3 text-left text-sm hover:bg-blue-50 ${childActive ? "bg-blue-50 text-blue-700" : ""}`} onClick={() => selectSku(child)}>
+                                <button
+                                  key={child.id}
+                                  type="button"
+                                  className={`flex w-full items-center justify-between gap-3 py-1.5 pl-7 pr-3 text-left text-sm hover:bg-blue-50 ${childActive ? "bg-blue-50 text-blue-700" : ""}`}
+                                  onClick={() => selectSku(child)}
+                                >
                                   <span className="min-w-0">
-                                    <span className="block truncate font-mono text-xs">{child.code}</span>
-                                    <span className="block truncate text-xs text-muted-foreground">{child.name}</span>
+                                    <span className="block truncate font-mono text-xs">
+                                      {child.code}
+                                    </span>
+                                    <span className="block truncate text-xs text-muted-foreground">
+                                      {child.name}
+                                    </span>
                                   </span>
                                   {childActive && <Check className="h-4 w-4 shrink-0" />}
                                 </button>
@@ -609,9 +610,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <Label>{t("common.quantity")} *</Label>
                 <Input
                   value={newLine.quantity}
-                  onChange={(e) =>
-                    setNewLine({ ...newLine, quantity: e.target.value })
-                  }
+                  onChange={(e) => setNewLine({ ...newLine, quantity: e.target.value })}
                   placeholder="100"
                 />
                 {lineErrors.quantity && (
@@ -628,9 +627,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 </Label>
                 <Input
                   value={newLine.unitPrice}
-                  onChange={(e) =>
-                    setNewLine({ ...newLine, unitPrice: e.target.value })
-                  }
+                  onChange={(e) => setNewLine({ ...newLine, unitPrice: e.target.value })}
                   placeholder="99.99"
                 />
                 {lineErrors.unitPrice && (
@@ -672,9 +669,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                       <TableRow key={l.id}>
                         <TableCell>
                           <p className="font-medium">{l.skuCode}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {l.skuName}
-                          </p>
+                          <p className="text-xs text-muted-foreground">{l.skuName}</p>
                         </TableCell>
                         <TableCell className="text-right">{l.quantity}</TableCell>
                         <TableCell className="text-right">
@@ -728,14 +723,13 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">供应商</p>
-                  <p className="font-medium">
-                    {basicInfo.supplierName || "—"}
-                  </p>
+                  <p className="font-medium">{basicInfo.supplierName || "—"}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">币种</p>
                   <p className="font-medium">
-                    {CURRENCIES.find((c) => c.value === basicInfo.currency)?.label ?? basicInfo.currency}
+                    {CURRENCIES.find((c) => c.value === basicInfo.currency)?.label ??
+                      basicInfo.currency}
                   </p>
                 </div>
                 <div>
@@ -749,9 +743,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <div>
                   <p className="text-sm text-muted-foreground">目的地仓库</p>
                   <p className="font-medium">
-                    {destLocation
-                      ? `${destLocation.code} - ${destLocation.name}`
-                      : "—"}
+                    {destLocation ? `${destLocation.code} - ${destLocation.name}` : "—"}
                   </p>
                 </div>
               </div>
@@ -777,9 +769,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     <TableRow key={l.id}>
                       <TableCell>
                         <p className="font-medium">{l.skuCode}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {l.skuName}
-                        </p>
+                        <p className="text-xs text-muted-foreground">{l.skuName}</p>
                       </TableCell>
                       <TableCell className="text-right">{l.quantity}</TableCell>
                       <TableCell className="text-right">
@@ -813,11 +803,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
             </Button>
           )}
           {step === 0 && (
-            <Button
-              variant="outline"
-              onClick={() => router.back()}
-              disabled={submitting}
-            >
+            <Button variant="outline" onClick={() => router.back()} disabled={submitting}>
               {t("common.cancel")}
             </Button>
           )}
@@ -894,8 +880,14 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                           ...quickSku,
                           parentSkuId: pid,
                           code: quickSku.code || `${parent.code}-${suffix}`,
-                          category: quickSku.category || (parent as SKUOption & { category?: string }).category || "",
-                          brand: quickSku.brand || (parent as SKUOption & { brand?: string }).brand || "",
+                          category:
+                            quickSku.category ||
+                            (parent as SKUOption & { category?: string }).category ||
+                            "",
+                          brand:
+                            quickSku.brand ||
+                            (parent as SKUOption & { brand?: string }).brand ||
+                            "",
                         });
                       } else {
                         setQuickSku({ ...quickSku, parentSkuId: "" });
@@ -904,11 +896,13 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   >
                     <option value="">独立 SKU / 父 SKU</option>
-                    {skus.filter((s) => !s.parentSkuId).map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.code} · {s.name}
-                      </option>
-                    ))}
+                    {skus
+                      .filter((s) => !s.parentSkuId)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.code} · {s.name}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -920,7 +914,9 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                       onChange={(e) =>
                         setQuickSku({ ...quickSku, code: e.target.value.toUpperCase() })
                       }
-                      placeholder={quickSku.parentSkuId ? "自动生成，可修改" : "例如：IPHONE15-CASE-CLEAR"}
+                      placeholder={
+                        quickSku.parentSkuId ? "自动生成，可修改" : "例如：IPHONE15-CASE-CLEAR"
+                      }
                       required
                     />
                   </div>

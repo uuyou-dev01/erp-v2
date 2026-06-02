@@ -28,6 +28,8 @@ const CARD_META: Partial<Record<WorkQueue, { icon: LucideIcon; className: string
   pendingListing: { icon: Store, className: "text-violet-600", mark: "🏷️" },
   listed: { icon: Store, className: "text-purple-600", mark: "🛍️" },
   pendingShipment: { icon: Send, className: "text-emerald-600", mark: "🚀" },
+  shipped: { icon: Truck, className: "text-teal-600", mark: "📬" },
+  returnInspection: { icon: ClipboardCheck, className: "text-orange-600", mark: "🔍" },
   pendingSettlement: { icon: BadgeCheck, className: "text-cyan-600", mark: "💸" },
   exception: { icon: ClipboardCheck, className: "text-red-600", mark: "⚠️" },
 };

@@ -3,10 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
-import {
-  createInboundInventoryLot,
-  createInboundItemUnit,
-} from "@/lib/application/inventory";
+import { createInboundInventoryLot, createInboundItemUnit } from "@/lib/application/inventory";
 import { isUsedCondition } from "@/lib/quick-entry-utils";
 
 type DecimalLike = { toString: () => string };
@@ -418,7 +415,8 @@ export async function receivePurchaseOrder(data: ReceivePurchaseOrderInput) {
             unitCost: line.unitPrice.toString(),
             costCurrency: order.currency,
             conditionGrade: conditionType,
-            notes: [quickEntry?.batchNote, quickEntry?.note].filter(Boolean).join(" / ") || undefined,
+            notes:
+              [quickEntry?.batchNote, quickEntry?.note].filter(Boolean).join(" / ") || undefined,
             batchLabel: quickEntry?.batchNote ?? undefined,
             sourceType: "PURCHASE",
             sourceId: line.id,

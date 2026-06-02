@@ -4,6 +4,8 @@ import { LocationStatsChart } from "@/components/inventory/location-stats-chart"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Box, Layers, CheckCircle, Send } from "lucide-react";
 import { notFound } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
+import { formatLocationRegion } from "@/lib/inventory/location-regions";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +29,14 @@ export default async function LocationDetailPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">仓库详情</h1>
-        <p className="text-muted-foreground">查看和编辑仓库信息</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-3xl font-bold">{location.name}</h1>
+          <Badge variant="outline" className="font-mono">
+            {location.code}
+          </Badge>
+          <Badge variant="secondary">{formatLocationRegion(location.region)}</Badge>
+        </div>
+        <p className="text-muted-foreground">查看和编辑仓库位置信息</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -86,6 +94,7 @@ export default async function LocationDetailPage({
           code: location.code,
           name: location.name,
           type: location.type as "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT",
+          region: location.region,
           isSellableDefault: location.isSellableDefault,
         }}
       />

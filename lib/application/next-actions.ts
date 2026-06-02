@@ -12,6 +12,7 @@ export type WorkQueue =
   | "pendingShipment"
   | "shipped"
   | "pendingSettlement"
+  | "returnInspection"
   | "completed"
   | "exception";
 
@@ -36,6 +37,10 @@ export type PrimaryAction =
   | "inbound"
   | "createListing"
   | "shipOrder"
+  | "confirmDelivery"
+  | "registerReturn"
+  | "cancelOrder"
+  | "approveReturnInspection"
   | "settleOrder"
   | "resolveException"
   | "confirmOrder"
@@ -104,6 +109,7 @@ export interface QueueCounts {
   pendingShipment: number;
   shipped: number;
   pendingSettlement: number;
+  returnInspection: number;
   completed: number;
   exception: number;
   total: number;
@@ -139,11 +145,12 @@ export const QUEUE_LABELS: Record<WorkQueue, string> = {
   pendingDisposition: "待分流",
   inspectionException: "检查异常",
   inStock: "库存中",
-  pendingListing: "待创建 Listing",
-  listed: "平台运营中",
+  pendingListing: "待上架检查",
+  listed: "已有上架记录",
   pendingShipment: "待发货",
   shipped: "已发货",
   pendingSettlement: "待结算",
+  returnInspection: "退货待检",
   completed: "已完成",
   exception: "异常商品",
 };
@@ -171,7 +178,7 @@ export function deriveLifecycleStageFromQueue(
   ) {
     return "PROCURING";
   }
-  if (queue === "pendingListing" || queue === "listed" || queue === "inStock") {
+  if (queue === "pendingListing" || queue === "listed" || queue === "inStock" || queue === "returnInspection") {
     return "IN_STOCK";
   }
   if (queue === "pendingShipment" || queue === "shipped" || queue === "pendingSettlement") {
@@ -201,6 +208,7 @@ export function deriveSubProcesses(queue: WorkQueue): SubProcessState[] {
     return [active("INSPECTION", QUEUE_LABELS[queue], true)];
   }
   if (queue === "pendingListing" || queue === "listed") return [active("LISTING", QUEUE_LABELS[queue])];
+  if (queue === "returnInspection") return [active("INSPECTION", QUEUE_LABELS[queue])];
   if (queue === "pendingShipment" || queue === "shipped") return [active("FULFILLMENT", QUEUE_LABELS[queue])];
   if (queue === "pendingSettlement") return [active("SETTLEMENT", QUEUE_LABELS[queue])];
   if (queue === "exception") return [active("LOGISTICS", "异常处理", true)];
@@ -212,8 +220,12 @@ export const ACTION_LABELS: Record<PrimaryAction, string> = {
   confirmArrival: "确认到货",
   disposition: "分流处理",
   inbound: "确认入库",
-  createListing: "创建 Listing",
+  createListing: "添加上架记录",
   shipOrder: "确认发货",
+  confirmDelivery: "确认妥投",
+  registerReturn: "登记退货",
+  cancelOrder: "取消订单",
+  approveReturnInspection: "检验放行",
   settleOrder: "录入结算",
   resolveException: "处理异常",
   confirmOrder: "确认订单",
@@ -228,11 +240,10 @@ export const WORKFLOW_STAGES: Array<{ key: WorkQueue; label: string }> = [
   { key: "pendingArrival", label: "待确认收货" },
   { key: "pendingDisposition", label: "待分流" },
   { key: "inspectionException", label: "检查异常" },
-  { key: "pendingListing", label: "待创建 Listing" },
-  { key: "listed", label: "平台运营中" },
   { key: "pendingShipment", label: "待发货" },
   { key: "shipped", label: "已发货" },
   { key: "pendingSettlement", label: "待结算" },
+  { key: "returnInspection", label: "退货待检" },
   { key: "completed", label: "已完成" },
 ];
 
@@ -316,6 +327,7 @@ export function emptyQueueCounts(): QueueCounts {
     pendingShipment: 0,
     shipped: 0,
     pendingSettlement: 0,
+    returnInspection: 0,
     completed: 0,
     exception: 0,
     total: 0,
@@ -349,7 +361,7 @@ export function buildLifecycleEvents(input: {
     { id: "disposition", stage: "disposition", label: "待分流", timestamp: undefined, description: "决定入库、集运、换仓或其他后续处理" },
     { id: "inspection", stage: "inspection", label: "到货检查", timestamp: input.inspectedAt ?? undefined, description: "记录新品或中古质检结果" },
     { id: "stock", stage: "stock", label: "入库可售", timestamp: input.arrivedAt ?? undefined, description: "商品成为可运营库存" },
-    { id: "listing", stage: "listing", label: "平台运营", timestamp: input.listedAt ?? undefined, description: "创建 Listing 或同步平台库存" },
+    { id: "listing", stage: "listing", label: "上架记录", timestamp: input.listedAt ?? undefined, description: "添加上架记录或同步库存" },
     { id: "sold", stage: "sold", label: "售出", timestamp: input.soldAt ?? undefined, description: "商品已产生销售订单" },
     { id: "fulfillment", stage: "fulfillment", label: "发货履约", timestamp: input.orderShippedAt ?? undefined, description: "确认发货并扣减库存" },
     { id: "settlement", stage: "settlement", label: "结算记账", timestamp: input.settledAt ?? undefined, description: "录入费用并确认利润" },
@@ -364,6 +376,7 @@ export function buildLifecycleEvents(input: {
     inStock: 5,
     pendingListing: 6,
     listed: 6,
+    returnInspection: 5,
     pendingShipment: 8,
     shipped: 8,
     pendingSettlement: 9,

@@ -5,6 +5,7 @@ import { ResponsiveTable, type Column } from "@/components/shared/responsive-tab
 import { Plus, Globe } from "lucide-react";
 import Link from "next/link";
 import { COUNTRIES, CURRENCIES } from "@/lib/i18n";
+import { PlatformRowActions } from "@/components/listing/platform-row-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -92,11 +93,7 @@ const columns: Column<PlatformRow>[] = [
     header: "操作",
     className: "text-right",
     cell: (row) => (
-      <Link href={`/listing/platforms/${row.id}`}>
-        <Button variant="ghost" size="sm">
-          查看
-        </Button>
-      </Link>
+      <PlatformRowActions id={row.id} name={row.name} storeId={STORE_ID} />
     ),
   },
 ];

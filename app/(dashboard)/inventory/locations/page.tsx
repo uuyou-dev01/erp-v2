@@ -5,6 +5,7 @@ import { Warehouse, Truck, User, Navigation } from "lucide-react";
 import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
 import { LocationCreateDialog } from "@/components/inventory/location-create-dialog";
 import { LocationRowActions } from "@/components/inventory/location-row-actions";
+import { formatLocationRegion } from "@/lib/inventory/location-regions";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,13 @@ export default async function LocationsPage() {
       key: "name",
       header: "名称",
       cell: (row) => row.name,
+    },
+    {
+      key: "region",
+      header: "地区",
+      cell: (row) => (
+        <span className="text-sm">{formatLocationRegion(row.region)}</span>
+      ),
     },
     {
       key: "type",

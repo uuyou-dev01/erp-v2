@@ -313,14 +313,14 @@ export default async function DashboardPage({
               <span>管理 SKU</span>
             </Link>
             <Link
-              href="/listing"
+              href="/inventory/sellable"
               className={cn(
                 buttonVariants({ variant: "outline" }),
                 "h-auto flex-col gap-2 py-4",
               )}
             >
               <Store className="h-5 w-5" />
-              <span>管理上架</span>
+              <span>可售库存</span>
             </Link>
           </div>
         </CardContent>

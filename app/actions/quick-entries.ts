@@ -277,7 +277,8 @@ function revalidatePaths() {
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
   revalidatePath("/procurement");
-  revalidatePath("/listing");
+  revalidatePath("/inventory/coverage");
+  revalidatePath("/inventory/coverage/pending");
   revalidatePath("/sales");
   revalidatePath("/reports");
 }

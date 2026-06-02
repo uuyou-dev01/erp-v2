@@ -19,7 +19,10 @@ import { Calculator, CheckCircle, Truck, AlertTriangle } from "lucide-react";
 interface ListingFormProps {
   storeId: string;
   initialSkuId?: string;
+  initialItemUnitId?: string;
   initialPlatformId?: string;
+  initialListingType?: "SKU" | "ITEM_UNIT";
+  returnHref?: string;
 }
 
 interface PlatformData {
@@ -50,7 +53,10 @@ interface ItemUnit {
 export function ListingForm({
   storeId,
   initialSkuId = "",
+  initialItemUnitId = "",
   initialPlatformId = "",
+  initialListingType,
+  returnHref = "/inventory/sellable",
 }: ListingFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -58,11 +64,13 @@ export function ListingForm({
   const [skus, setSkus] = useState<SKU[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [stockMap, setStockMap] = useState<Record<string, SkuStockBreakdown>>({});
+  const resolvedListingType =
+    initialListingType ?? (initialItemUnitId ? "ITEM_UNIT" : "SKU");
   const [formData, setFormData] = useState({
     platformId: initialPlatformId,
-    listingType: "SKU" as "SKU" | "ITEM_UNIT",
+    listingType: resolvedListingType,
     skuId: initialSkuId,
-    itemUnitId: "",
+    itemUnitId: initialItemUnitId,
     listedPrice: "",
     currency: "CNY",
     feeRateOverride: "",
@@ -148,10 +156,10 @@ export function ListingForm({
         estimatedNet: estimatedNet != null ? estimatedNet.toFixed(4) : undefined,
       });
 
-      router.push("/listing");
+      router.push(returnHref);
     } catch (error) {
       console.error("Failed to create listing:", error);
-      alert("创建上架失败");
+      alert("添加上架记录失败");
     } finally {
       setLoading(false);
     }
@@ -195,13 +203,16 @@ export function ListingForm({
         </Select>
         {platforms.length === 0 && (
           <p className="text-xs text-muted-foreground">
-            请先在&quot;管理平台&quot;中添加销售平台
+            请先在「库存设置 → 销售平台配置」中添加销售平台
           </p>
         )}
+        <p className="text-xs text-muted-foreground">
+          上架负责人字段将在后续版本支持；当前仅记录平台、价格与上架时间。
+        </p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="listingType">上架类型</Label>
+        <Label htmlFor="listingType">商品类型</Label>
         <Select
           id="listingType"
           value={formData.listingType}
@@ -271,19 +282,19 @@ export function ListingForm({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="listedPrice">上架价格（选填）</Label>
+          <Label htmlFor="listedPrice">Listing 价格（选填）</Label>
           <Input
             id="listedPrice"
             type="number"
             step="0.01"
-            placeholder="留空自动使用 SKU 基础参照价"
+            placeholder="留空自动使用 SKU 参考价"
             value={formData.listedPrice}
             onChange={(e) =>
               setFormData({ ...formData, listedPrice: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">
-            不填写时将自动使用该 SKU 的基础参照价，最终成交价在售出时再填写。
+            不填写时将自动使用该 SKU 的参考价，最终成交价在登记售出时再填写。
           </p>
         </div>
 
@@ -378,10 +389,10 @@ export function ListingForm({
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-3">
               <Calculator className="h-4 w-4 text-brand-blue" />
-              <span className="text-sm font-medium">到手价估算</span>
+              <span className="text-sm font-medium">平台到手价估算</span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-              <span className="text-muted-foreground">上架价格</span>
+              <span className="text-muted-foreground">Listing 价格</span>
               <span className="text-right font-medium">
                 {formData.currency} {parseFloat(formData.listedPrice).toFixed(2)}
               </span>
@@ -423,12 +434,12 @@ export function ListingForm({
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading || platforms.length === 0}>
-          {loading ? "创建中..." : "创建上架"}
+          {loading ? "保存中..." : "添加上架记录"}
         </Button>
         <Button
           type="button"
           variant="outline"
-          onClick={() => router.back()}
+          onClick={() => router.push(returnHref)}
           disabled={loading}
         >
           取消
@@ -447,7 +458,7 @@ function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
       <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
         <p className="text-muted-foreground">
-          该 SKU 暂无任何库存。Listing 仍可创建（仅做平台占位/提醒），售出前请确保到货。
+          该 SKU 暂无任何库存。Listing 仍可创建（仅做平台占位/提醒），登记售出前请确保到货。
         </p>
       </div>
     );

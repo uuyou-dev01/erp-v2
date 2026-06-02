@@ -60,20 +60,36 @@ async function main() {
 
   // Create default locations
   const locations = [
-    { code: "WH-CN-01", name: "中国主仓", type: "WAREHOUSE" },
-    { code: "WH-JP-01", name: "日本仓库", type: "WAREHOUSE" },
-    { code: "FWD-01", name: "集运仓", type: "FORWARDER" },
+    {
+      code: "WH-CN-01",
+      name: "中国主仓",
+      type: "WAREHOUSE",
+      region: "CN_SHANGHAI",
+    },
+    {
+      code: "WH-JP-01",
+      name: "日本仓库",
+      type: "WAREHOUSE",
+      region: "JP_TOKYO",
+    },
+    {
+      code: "FWD-01",
+      name: "集运仓",
+      type: "FORWARDER",
+      region: "JP_OSAKA",
+    },
   ];
 
   for (const loc of locations) {
     await prisma.location.upsert({
       where: { storeId_code: { storeId: store.id, code: loc.code } },
-      update: { name: loc.name, type: loc.type },
+      update: { name: loc.name, type: loc.type, region: loc.region },
       create: {
         storeId: store.id,
         code: loc.code,
         name: loc.name,
         type: loc.type,
+        region: loc.region,
       },
     });
   }

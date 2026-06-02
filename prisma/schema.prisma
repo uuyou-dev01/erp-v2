@@ -101,6 +101,7 @@ model Location {
   storeId           String
   code              String
   name              String
+  region            String? // CN_SHANGHAI, JP_TOKYO, JP_OSAKA, ...
   type              String // WAREHOUSE, FORWARDER, PERSON, TRANSIT
   isSellableDefault Boolean  @default(true)
   createdAt         DateTime @default(now())

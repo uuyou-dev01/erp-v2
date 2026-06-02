@@ -13,6 +13,7 @@ import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal } from "@/lib/decimal";
 import { AlertCircle, Plus, X } from "lucide-react";
 import { t, CURRENCIES } from "@/lib/i18n";
+import { formatLocationRegion } from "@/lib/inventory/location-regions";
 
 interface ItemUnitFormProps {
   storeId: string;
@@ -31,7 +32,9 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string }>>([]);
-  const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [locations, setLocations] = useState<
+    Array<{ id: string; code: string; name: string; region: string | null }>
+  >([]);
   const [formData, setFormData] = useState({
     skuId: "",
     locationId: "",
@@ -113,7 +116,13 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
       }
     } catch (error) {
       console.error("Failed to save item unit:", error);
-      alert("保存单品失败，请重试");
+      const message =
+        error instanceof Error
+          ? error.message
+          : mode === "create"
+            ? "创建单品失败，请重试"
+            : "保存单品失败，请重试";
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -153,7 +162,10 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
             >
               <option value="">{t("inventory.select_location")}</option>
               {locations.map((location) => (
-                <option key={location.id} value={location.id}>{location.code} - {location.name}</option>
+                <option key={location.id} value={location.id}>
+                  {location.code} - {location.name}
+                  {location.region ? ` · ${formatLocationRegion(location.region)}` : ""}
+                </option>
               ))}
             </Select>
             {errors.locationId && (

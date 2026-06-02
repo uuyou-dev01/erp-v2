@@ -50,6 +50,11 @@ export async function getItemUnitById(id: string) {
 
   if (!item) return null;
 
+  const unitCost =
+    typeof item.unitCost === "object" && item.unitCost !== null && "toString" in item.unitCost
+      ? item.unitCost.toString()
+      : String(item.unitCost);
+
   // Get ledger entries separately
   const ledgerEntries = await prisma.stockLedger.findMany({
     where: {
@@ -61,7 +66,18 @@ export async function getItemUnitById(id: string) {
 
   return {
     ...item,
-    ledgerEntries,
+    unitCost,
+    listings: item.listings.map((listing) => ({
+      ...listing,
+      listedPrice: listing.listedPrice?.toString() ?? null,
+      feeRateOverride: listing.feeRateOverride?.toString() ?? null,
+      shippingFeeOverride: listing.shippingFeeOverride?.toString() ?? null,
+      estimatedNet: listing.estimatedNet?.toString() ?? null,
+    })),
+    ledgerEntries: ledgerEntries.map((entry) => ({
+      ...entry,
+      deltaQty: entry.deltaQty.toString(),
+    })),
   };
 }
 
@@ -137,6 +153,23 @@ export async function updateItemUnit(
     notes?: string;
   }
 ) {
+  const existing = await prisma.itemUnit.findUnique({
+    where: { id },
+    include: {
+      allocations: {
+        where: { status: { in: ["PENDING", "ALLOCATED", "SHIPPED"] } },
+      },
+    },
+  });
+
+  if (!existing) {
+    throw new Error("单品不存在");
+  }
+
+  if (existing.status !== "AVAILABLE" || existing.allocations.length > 0) {
+    throw new Error("仅可用且未分配订单的单品可以编辑");
+  }
+
   const item = await prisma.itemUnit.update({
     where: { id },
     data: {
@@ -154,16 +187,46 @@ export async function updateItemUnit(
 }
 
 /**
- * Delete item unit (soft delete by setting status to CONSUMED)
+ * Delete item unit when it has no blocking relations.
  */
-export async function deleteItemUnit(id: string) {
-  const item = await prisma.itemUnit.update({
-    where: { id },
-    data: { status: "CONSUMED" },
+export async function deleteItemUnit(id: string, storeId: string) {
+  const item = await prisma.itemUnit.findFirst({
+    where: { id, storeId },
+    include: {
+      allocations: {
+        where: { status: { in: ["PENDING", "ALLOCATED", "SHIPPED"] } },
+      },
+      listings: { where: { status: "ACTIVE" } },
+    },
+  });
+
+  if (!item) {
+    throw new Error("单品不存在或无权删除");
+  }
+
+  if (item.status === "ALLOCATED") {
+    throw new Error("该单品状态为已分配，无法删除。请先解除订单分配。");
+  }
+
+  if (item.allocations.length > 0) {
+    throw new Error("该单品仍有关联订单分配，无法删除。");
+  }
+
+  if (item.listings.length > 0) {
+    throw new Error("该单品仍有上架中的记录，请先下架后再删除。");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.listing.deleteMany({ where: { itemUnitId: id, storeId } });
+    await tx.stockLedger.deleteMany({
+      where: { storeId, entityType: "ITEM_UNIT", entityId: id },
+    });
+    await tx.itemUnit.delete({ where: { id } });
   });
 
   revalidatePath("/inventory/items");
-  return item;
+  revalidatePath(`/inventory/items/${id}`);
+  revalidatePath("/inventory/sellable");
 }
 
 /**
@@ -188,4 +251,30 @@ export async function isItemUnitAvailable(id: string): Promise<boolean> {
   if (item.allocations.length > 0) return false;
 
   return true;
+}
+
+export async function approveReturnInspection(itemUnitId: string, note?: string) {
+  const item = await prisma.itemUnit.findUnique({ where: { id: itemUnitId } });
+  if (!item) throw new Error("单品不存在");
+  if (item.status !== "RETURN_CHECK") {
+    throw new Error("只有退货待检单品可以检验放行");
+  }
+
+  const inspectionNote = note?.trim();
+  const mergedNotes = [item.notes, inspectionNote ? `检验放行：${inspectionNote}` : "检验放行"]
+    .filter(Boolean)
+    .join("\n");
+
+  await prisma.itemUnit.update({
+    where: { id: itemUnitId },
+    data: {
+      status: "AVAILABLE",
+      notes: mergedNotes || undefined,
+    },
+  });
+
+  revalidatePath("/inventory/items");
+  revalidatePath(`/inventory/items/${itemUnitId}`);
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/workbench");
 }

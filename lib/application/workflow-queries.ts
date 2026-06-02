@@ -25,9 +25,10 @@ const ACTIVE_QUEUES: WorkQueue[] = [
   "pendingArrival",
   "pendingDisposition",
   "inspectionException",
-  "pendingListing",
   "pendingShipment",
+  "shipped",
   "pendingSettlement",
+  "returnInspection",
   "exception",
 ];
 
@@ -243,6 +244,20 @@ function deriveCustomerOrderItem(order: {
   if (order.orderStatus === "SHIPPED" && !order.settledAt) {
     return {
       ...base,
+      id: `co-${order.id}-shipped`,
+      queue: "shipped",
+      currentStatus: order.orderStatus,
+      currentStatusLabel: "已发货",
+      primaryAction: "confirmDelivery",
+      primaryActionLabel: ACTION_LABELS.confirmDelivery,
+      priority: "normal",
+      metadata: { trackingNo: order.trackingNo },
+    };
+  }
+
+  if (order.orderStatus === "DELIVERED" && !order.settledAt) {
+    return {
+      ...base,
       id: `co-${order.id}-settle`,
       queue: "pendingSettlement",
       currentStatus: order.orderStatus,
@@ -253,7 +268,10 @@ function deriveCustomerOrderItem(order: {
     };
   }
 
-  if (order.orderStatus === "SHIPPED" && order.settledAt) {
+  if (
+    (order.orderStatus === "DELIVERED" || order.orderStatus === "SHIPPED") &&
+    order.settledAt
+  ) {
     return {
       ...base,
       id: `co-${order.id}-done`,
@@ -262,6 +280,32 @@ function deriveCustomerOrderItem(order: {
       currentStatusLabel: "已完成",
       primaryAction: "settleOrder",
       primaryActionLabel: "查看详情",
+      priority: "normal",
+    };
+  }
+
+  if (order.orderStatus === "RETURNED") {
+    return {
+      ...base,
+      id: `co-${order.id}-returned`,
+      queue: "completed",
+      currentStatus: order.orderStatus,
+      currentStatusLabel: "已退货",
+      primaryAction: "viewDetails",
+      primaryActionLabel: ACTION_LABELS.viewDetails,
+      priority: "normal",
+    };
+  }
+
+  if (order.orderStatus === "CANCELLED") {
+    return {
+      ...base,
+      id: `co-${order.id}-cancelled`,
+      queue: "completed",
+      currentStatus: order.orderStatus,
+      currentStatusLabel: "已取消",
+      primaryAction: "viewDetails",
+      primaryActionLabel: ACTION_LABELS.viewDetails,
       priority: "normal",
     };
   }
@@ -393,6 +437,37 @@ function deriveItemUnitListingItem(item: {
   };
 }
 
+function deriveReturnInspectionItem(item: {
+  id: string;
+  status: string;
+  updatedAt: Date;
+  createdAt: Date;
+  conditionGrade: string | null;
+  notes: string | null;
+  sku: { code: string; name: string };
+  location: { name: string };
+}): WorkItem | null {
+  if (item.status !== "RETURN_CHECK") return null;
+
+  return {
+    id: `iu-${item.id}-return-check`,
+    entityType: "itemUnit",
+    entityId: item.id,
+    queue: "returnInspection",
+    title: `${item.sku.code} · ${item.sku.name}`,
+    subtitle: `${item.conditionGrade ?? "单品"} · ${item.location.name}`,
+    skuCode: item.sku.code,
+    currentStatus: item.status,
+    currentStatusLabel: "退货待检",
+    primaryAction: "approveReturnInspection",
+    primaryActionLabel: ACTION_LABELS.approveReturnInspection,
+    priority: "warning",
+    waitingSince: (item.updatedAt ?? item.createdAt).toISOString(),
+    detailHref: `/inventory/items/${item.id}`,
+    metadata: { conditionGrade: item.conditionGrade },
+  };
+}
+
 function deriveInventoryLotItem(lot: {
   id: string;
   status: string;
@@ -447,7 +522,7 @@ function deriveInventoryLotItem(lot: {
       id: `lot-${lot.id}-listing`,
       queue: "pendingListing",
       currentStatus: lot.status,
-      currentStatusLabel: "待创建 Listing",
+      currentStatusLabel: "待上架检查",
       primaryAction: "createListing",
       primaryActionLabel: ACTION_LABELS.createListing,
       priority: "normal",
@@ -506,6 +581,7 @@ function withRiskSignals(item: WorkItem): WorkItem {
     pendingDisposition: { days: 2, message: "收货后待分流" },
     pendingListing: { days: 7, message: "长期未上架" },
     pendingShipment: { days: 1, message: "已售未发" },
+    returnInspection: { days: 2, message: "退货待检超时" },
     pendingSettlement: { days: 7, message: "待结算超时" },
     inStock: { days: 30, message: "长期库存" },
   };
@@ -533,6 +609,7 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
     shipments,
     inventoryLots,
     pendingListingUnits,
+    returnInspectionUnits,
   ] = await Promise.all([
     prisma.quickEntry.findMany({
       where: {
@@ -559,6 +636,7 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
           { orderStatus: "CONFIRMED" },
           { orderStatus: "DRAFT" },
           { orderStatus: "SHIPPED", settledAt: null },
+          { orderStatus: "DELIVERED", settledAt: null },
         ],
       },
       include: {
@@ -600,6 +678,15 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
       },
       orderBy: { updatedAt: "asc" },
       take: 30,
+    }),
+    prisma.itemUnit.findMany({
+      where: { storeId, status: "RETURN_CHECK" },
+      include: {
+        sku: { select: { code: true, name: true } },
+        location: { select: { name: true } },
+      },
+      orderBy: { updatedAt: "asc" },
+      take: 40,
     }),
   ]);
 
@@ -779,6 +866,10 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
       ...unit,
       inspection: resolveInspection(unit),
     });
+    if (item) items.push(withRiskSignals(item));
+  }
+  for (const unit of returnInspectionUnits) {
+    const item = deriveReturnInspectionItem(unit);
     if (item) items.push(withRiskSignals(item));
   }
 
@@ -980,6 +1071,10 @@ export async function getWorkItemDetail(
         currency: order.currency,
         platformFee: order.platformFee.toString(),
         shippingFee: order.shippingFee.toString(),
+        shippedAt: order.shippedAt?.toISOString() ?? null,
+        shippingProofJson: order.shippingProof
+          ? JSON.stringify(order.shippingProof)
+          : null,
       },
     };
   }
@@ -1244,6 +1339,32 @@ export async function getWorkItemDetail(
       sourceType: unit.sourceType,
       sourceId: unit.sourceId,
     });
+    const returnInspectionItem = deriveReturnInspectionItem({
+      id: unit.id,
+      status: unit.status,
+      updatedAt: unit.updatedAt,
+      createdAt: unit.createdAt,
+      conditionGrade: unit.conditionGrade,
+      notes: unit.notes,
+      sku: unit.sku,
+      location: unit.location,
+    });
+    if (returnInspectionItem) {
+      return {
+        ...returnInspectionItem,
+        lifecycle: buildLifecycleEvents({
+          arrivedAt: iso(unit.createdAt),
+          currentQueue: returnInspectionItem.queue,
+        }),
+        shipments: [],
+        actionContext: {
+          location: unit.location.name,
+          status: unit.status,
+          conditionGrade: unit.conditionGrade,
+          notes: unit.notes,
+        },
+      };
+    }
     const hasActiveListing = unit.listings.some((listing) => listing.status === "ACTIVE");
     const item = deriveItemUnitListingItem({
       id: unit.id,

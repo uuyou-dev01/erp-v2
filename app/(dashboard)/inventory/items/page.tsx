@@ -6,6 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/decimal";
 import { Plus, Package, CheckCircle, Clock, XCircle } from "lucide-react";
 import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
+import { EntityId } from "@/components/shared/entity-id";
+import { ItemUnitRowActions } from "@/components/inventory/item-unit-row-actions";
+import {
+  formatItemUnitCondition,
+  itemUnitStatusLabels,
+} from "@/lib/inventory/item-unit-display";
 
 export const dynamic = "force-dynamic";
 
@@ -16,23 +22,6 @@ const statusColors = {
   ALLOCATED: "secondary",
   CONSUMED: "outline",
   RETURN_CHECK: "secondary",
-} as const;
-
-const statusLabels = {
-  AVAILABLE: "可用",
-  ALLOCATED: "已分配",
-  CONSUMED: "已消耗",
-  RETURN_CHECK: "退货检查",
-} as const;
-
-const conditionLabels = {
-  NEW: "全新",
-  LIKE_NEW: "准新",
-  EXCELLENT: "优秀",
-  GOOD: "良好",
-  FAIR: "一般",
-  POOR: "较差",
-  DEFECTIVE: "有缺陷",
 } as const;
 
 type ItemRow = Awaited<ReturnType<typeof getItemUnits>>[number];
@@ -50,9 +39,9 @@ export default async function ItemUnitsPage() {
   const columns: Column<ItemRow>[] = [
     {
       key: "id",
-      header: "ID",
+      header: "单品编号",
       hideOnMobile: true,
-      cell: (row) => <span className="font-mono text-xs">{row.id.slice(0, 8)}</span>,
+      cell: (row) => <EntityId id={row.id} />,
     },
     {
       key: "sku",
@@ -74,9 +63,7 @@ export default async function ItemUnitsPage() {
       header: "成色",
       cell: (row) =>
         row.conditionGrade ? (
-          <Badge variant="outline">
-            {conditionLabels[row.conditionGrade as keyof typeof conditionLabels] || row.conditionGrade}
-          </Badge>
+          <Badge variant="outline">{formatItemUnitCondition(row.conditionGrade)}</Badge>
         ) : (
           <span className="text-muted-foreground">-</span>
         ),
@@ -91,7 +78,7 @@ export default async function ItemUnitsPage() {
       header: "状态",
       cell: (row) => (
         <Badge variant={statusColors[row.status as keyof typeof statusColors]}>
-          {statusLabels[row.status as keyof typeof statusLabels] || row.status}
+          {itemUnitStatusLabels[row.status] || row.status}
         </Badge>
       ),
     },
@@ -104,12 +91,9 @@ export default async function ItemUnitsPage() {
     {
       key: "actions",
       header: "操作",
+      className: "text-right",
       cell: (row) => (
-        <Link href={`/inventory/items/${row.id}`}>
-          <Button variant="ghost" size="sm">
-            查看
-          </Button>
-        </Link>
+        <ItemUnitRowActions id={row.id} skuCode={row.sku.code} storeId={STORE_ID} />
       ),
     },
   ];
@@ -120,7 +104,7 @@ export default async function ItemUnitsPage() {
         <div>
           <h1 className="text-3xl font-bold">单品管理</h1>
           <p className="text-muted-foreground">
-            管理二手、有缺陷或独特的单个商品
+            管理二手、有缺陷或独特的单个商品。列表显示 ID 末 8 位，悬停可查看完整编号。
           </p>
         </div>
         <Link href="/inventory/items/new">

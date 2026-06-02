@@ -102,6 +102,7 @@ export default async function WorkbenchPage() {
     code: location.code,
     name: location.name,
     type: location.type,
+    region: location.region,
   }));
   const consolidationOptions = consolidationBatches
     .filter((batch) => batch.status === "OPEN")

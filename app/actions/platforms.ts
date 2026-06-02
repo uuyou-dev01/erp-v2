@@ -71,22 +71,28 @@ export async function createPlatform(data: {
   defaultCurrency?: string;
   notes?: string;
 }) {
-  const platform = await prisma.platform.create({
-    data: {
-      storeId: data.storeId,
-      code: data.code,
-      name: data.name,
-      country: data.country || null,
-      defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
-      defaultShippingFee: data.defaultShippingFee ? new Decimal(data.defaultShippingFee) : null,
-      shippingRules: normalizeShippingRules(data.shippingRules),
-      defaultCurrency: data.defaultCurrency || null,
-      notes: data.notes || null,
-    },
-  });
+  try {
+    const platform = await prisma.platform.create({
+      data: {
+        storeId: data.storeId,
+        code: data.code,
+        name: data.name,
+        country: data.country || null,
+        defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
+        defaultShippingFee: data.defaultShippingFee
+          ? new Decimal(data.defaultShippingFee)
+          : null,
+        shippingRules: normalizeShippingRules(data.shippingRules),
+        defaultCurrency: data.defaultCurrency || null,
+        notes: data.notes || null,
+      },
+    });
 
-  revalidatePath("/listing/platforms");
-  return { id: platform.id };
+    revalidatePath("/listing/platforms");
+    return { id: platform.id };
+  } catch (error) {
+    throw mapPlatformWriteError(error, data.code);
+  }
 }
 
 export async function updatePlatform(
@@ -102,31 +108,77 @@ export async function updatePlatform(
     notes?: string;
   }
 ) {
-  const platform = await prisma.platform.update({
-    where: { id },
-    data: {
-      code: data.code,
-      name: data.name,
-      country: data.country || null,
-      defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
-      defaultShippingFee: data.defaultShippingFee ? new Decimal(data.defaultShippingFee) : null,
-      shippingRules: normalizeShippingRules(data.shippingRules),
-      defaultCurrency: data.defaultCurrency || null,
-      notes: data.notes || null,
-    },
-  });
+  try {
+    const platform = await prisma.platform.update({
+      where: { id },
+      data: {
+        code: data.code,
+        name: data.name,
+        country: data.country || null,
+        defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
+        defaultShippingFee: data.defaultShippingFee
+          ? new Decimal(data.defaultShippingFee)
+          : null,
+        shippingRules: normalizeShippingRules(data.shippingRules),
+        defaultCurrency: data.defaultCurrency || null,
+        notes: data.notes || null,
+      },
+    });
 
-  revalidatePath("/listing/platforms");
-  revalidatePath(`/listing/platforms/${id}`);
-  return { id: platform.id };
+    revalidatePath("/listing/platforms");
+    revalidatePath(`/listing/platforms/${id}`);
+    return { id: platform.id };
+  } catch (error) {
+    throw mapPlatformWriteError(error, data.code);
+  }
 }
 
-export async function deletePlatform(id: string) {
+export async function deletePlatform(id: string, storeId: string) {
+  const platform = await prisma.platform.findFirst({
+    where: { id, storeId },
+  });
+
+  if (!platform) {
+    throw new Error("平台不存在或无权删除");
+  }
+
+  const [listingCount, orderCount] = await Promise.all([
+    prisma.listing.count({ where: { platformId: id, storeId } }),
+    prisma.customerOrder.count({ where: { platformId: id, storeId } }),
+  ]);
+
+  if (listingCount > 0) {
+    throw new Error(
+      `该平台仍有 ${listingCount} 条上架记录，无法删除。请先下架或删除相关上架。`
+    );
+  }
+
+  if (orderCount > 0) {
+    throw new Error(`该平台仍有关联订单 ${orderCount} 笔，无法删除。`);
+  }
+
   await prisma.platform.delete({
     where: { id },
   });
 
   revalidatePath("/listing/platforms");
+}
+
+function mapPlatformWriteError(error: unknown, code: string): Error {
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code: string }).code === "P2002"
+  ) {
+    return new Error(`平台代码「${code}」已存在，请使用其他代码`);
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error("保存平台失败，请重试");
 }
 
 function normalizeShippingRules(rules?: PlatformShippingRuleInput[]) {

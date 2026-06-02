@@ -3,6 +3,12 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import {
+  mergeSkuCatalogAttributes,
+  parseSkuCatalogMeta,
+  resolveCoverImageUrl,
+  type CatalogStatus,
+} from "@/lib/application/sku-catalog";
 
 export interface CreateSKUInput {
   storeId: string;
@@ -371,7 +377,32 @@ export async function getSKUById(id: string) {
   };
 }
 
+export async function setSkuCatalogStatus(id: string, status: CatalogStatus) {
+  const existing = await prisma.sKU.findUnique({
+    where: { id },
+    select: { attributes: true },
+  });
+  if (!existing) throw new Error("SKU不存在");
+
+  await prisma.sKU.update({
+    where: { id },
+    data: {
+      attributes: mergeSkuCatalogAttributes(existing.attributes, {
+        catalogStatus: status,
+      }) as never,
+    },
+  });
+
+  revalidatePath("/inventory/skus");
+  revalidatePath(`/inventory/skus/${id}`);
+  revalidatePath("/inventory/sellable");
+}
+
 export async function createSKU(data: CreateSKUInput) {
+  const attributes = data.attributes ?? {};
+  const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
+  const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
+
   const sku = await prisma.sKU.create({
     data: {
       storeId: data.storeId,
@@ -380,17 +411,22 @@ export async function createSKU(data: CreateSKUInput) {
       parentSkuId: data.parentSkuId || null,
       category: data.category,
       brand: data.brand,
-      attributes: data.attributes ? (data.attributes as never) : {},
+      attributes: attributes as never,
       description: data.description,
-      imageUrl: data.imageUrl,
+      imageUrl,
     },
   });
 
   revalidatePath("/inventory/skus");
+  revalidatePath("/inventory/sellable");
   return sku;
 }
 
 export async function updateSKU(data: UpdateSKUInput) {
+  const attributes = data.attributes ?? {};
+  const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
+  const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
+
   const sku = await prisma.sKU.update({
     where: { id: data.id },
     data: {
@@ -399,14 +435,15 @@ export async function updateSKU(data: UpdateSKUInput) {
       parentSkuId: data.parentSkuId === data.id ? null : data.parentSkuId || null,
       category: data.category,
       brand: data.brand,
-      attributes: data.attributes ? (data.attributes as never) : {},
+      attributes: attributes as never,
       description: data.description,
-      imageUrl: data.imageUrl,
+      imageUrl,
     },
   });
 
   revalidatePath("/inventory/skus");
   revalidatePath(`/inventory/skus/${data.id}`);
+  revalidatePath("/inventory/sellable");
   return sku;
 }
 
@@ -416,6 +453,7 @@ export async function deleteSKU(id: string) {
     select: {
       _count: {
         select: {
+          childSkus: true,
           inventoryLots: true,
           itemUnits: true,
           listings: true,
@@ -428,6 +466,10 @@ export async function deleteSKU(id: string) {
 
   if (!related) {
     throw new Error("SKU不存在或已被删除");
+  }
+
+  if (related._count.childSkus > 0) {
+    throw new Error("该 SKU 下仍有子 SKU，请先删除或迁移子款后再删除父 SKU。");
   }
 
   const relationCount =

@@ -23,6 +23,7 @@ import {
   addPurchaseOrdersToConsolidation,
   createConsolidationForPurchaseOrders,
 } from "@/app/actions/consolidations";
+import { getListingPendingItems } from "@/lib/application/listing-pending";
 
 const STORE_ID = "store_1";
 
@@ -37,7 +38,16 @@ function optionalInputDate(value?: string) {
 }
 
 export async function getWorkbenchQueueCounts(storeId = STORE_ID): Promise<QueueCounts> {
-  return getQueueCounts(storeId);
+  const [counts, pendingListingItems] = await Promise.all([
+    getQueueCounts(storeId),
+    getListingPendingItems(storeId),
+  ]);
+  const pendingListing = pendingListingItems.length;
+  return {
+    ...counts,
+    total: counts.total - counts.pendingListing + pendingListing,
+    pendingListing,
+  };
 }
 
 export async function getWorkbenchWorkItems(
@@ -74,11 +84,22 @@ export async function bulkUpdatePurchaseOrderLogistics(
   payload: {
     purchaseTrackingNo?: string;
     carrier?: string;
+    etaDate?: string;
+    destinationLocationId?: string;
     note?: string;
   }
 ) {
   const ids = Array.from(new Set(purchaseOrderIds)).filter(Boolean);
   if (ids.length === 0) return { success: 0, failed: 0 };
+
+  const destinationLocationId = payload.destinationLocationId?.trim();
+  if (!destinationLocationId) {
+    throw new Error("请选择预计到货位置");
+  }
+
+  const etaDate = payload.etaDate?.trim()
+    ? new Date(payload.etaDate)
+    : undefined;
 
   let success = 0;
   let failed = 0;
@@ -87,9 +108,11 @@ export async function bulkUpdatePurchaseOrderLogistics(
       await markPurchaseAsShipped({
         purchaseOrderId: id,
         shippedAt: new Date(),
-        trackingNo: payload.purchaseTrackingNo,
-        carrier: payload.carrier,
-        shipmentNote: payload.note,
+        trackingNo: payload.purchaseTrackingNo?.trim() || undefined,
+        carrier: payload.carrier?.trim() || undefined,
+        etaDate: etaDate && !Number.isNaN(etaDate.getTime()) ? etaDate : undefined,
+        destinationLocationId,
+        shipmentNote: payload.note?.trim() || undefined,
         shipmentMode: "purchase_only",
       });
       success += 1;

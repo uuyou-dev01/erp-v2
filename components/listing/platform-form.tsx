@@ -113,8 +113,14 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
       router.push("/listing/platforms");
       router.refresh();
     } catch (error) {
-      console.error("Failed to create platform:", error);
-      alert("创建平台失败");
+      console.error("Failed to save platform:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : initialData
+            ? "保存平台失败"
+            : "创建平台失败";
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -239,7 +245,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             }
           />
           <p className="text-xs text-muted-foreground">
-            工作台创建 Listing 时会自动带出；未填写则使用下方首条有金额的配送规则。
+            工作台记录已上架时会自动带出；未填写则使用下方首条有金额的配送规则。
           </p>
         </div>
       </div>

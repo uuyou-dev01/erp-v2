@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createLocation, updateLocation, type LocationType } from "@/app/actions/locations";
+import { LOCATION_REGIONS } from "@/lib/inventory/location-regions";
 import { t } from "@/lib/i18n";
 
 interface LocationFormProps {
@@ -21,6 +22,7 @@ interface LocationFormProps {
     code: string;
     name: string;
     type: LocationType;
+    region: string | null;
     isSellableDefault: boolean;
   };
 }
@@ -51,6 +53,7 @@ export function LocationForm({
     code: initialData?.code || "",
     name: initialData?.name || "",
     type: (initialData?.type || "WAREHOUSE") as LocationType,
+    region: initialData?.region ?? (isCreateMode ? "CN_SHANGHAI" : ""),
     isSellableDefault: initialData?.isSellableDefault ?? true,
   });
 
@@ -97,7 +100,9 @@ export function LocationForm({
       handleSaved();
     } catch (error) {
       console.error("Failed to save location:", error);
-      alert("保存仓库位置失败，请重试");
+      const message =
+        error instanceof Error ? error.message : "保存仓库位置失败，请重试";
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -145,6 +150,26 @@ export function LocationForm({
           placeholder="例如：中国主仓库"
           required
         />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="region">地区 *</Label>
+        <Select
+          id="region"
+          value={formData.region}
+          onChange={(e) => setFormData({ ...formData, region: e.target.value })}
+          required
+        >
+          <option value="">选择地区</option>
+          {LOCATION_REGIONS.map((region) => (
+            <option key={region.value} value={region.value}>
+              {region.label}
+            </option>
+          ))}
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          标识仓库所在国家与城市，便于跨境库存与物流区分
+        </p>
       </div>
 
       <div className="space-y-2">

@@ -17,11 +17,15 @@ import {
 } from "@/app/actions/workbench";
 import { Loader2, PackageCheck, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  WorkbenchLocationSelect,
+  type WorkbenchLocationOption,
+} from "@/components/workbench/location-select";
 
 interface BulkActionToolbarProps {
   queue: WorkQueue | "all";
   items: WorkItem[];
-  locations: Array<{ id: string; code: string; name: string; type: string }>;
+  locations: WorkbenchLocationOption[];
   consolidationBatches: Array<{ id: string; label: string; fromLocationId: string | null; toLocationId: string | null }>;
   selectedIds: string[];
   onClear: () => void;
@@ -37,8 +41,9 @@ export function BulkActionToolbar({
 }: BulkActionToolbarProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [tracking, setTracking] = useState("");
-  const [location, setLocation] = useState("");
+  const [purchaseTrackingNo, setPurchaseTrackingNo] = useState("");
+  const [destinationLocationId, setDestinationLocationId] = useState("");
+  const [logisticsNote, setLogisticsNote] = useState("");
   const [bulkInboundLocationId, setBulkInboundLocationId] = useState("");
   const [bulkBatchMode, setBulkBatchMode] = useState<"existing" | "new">(
     consolidationBatches.length > 0 ? "existing" : "new"
@@ -85,26 +90,78 @@ export function BulkActionToolbar({
       </div>
 
       {queue === "missingLogistics" && (
-        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-          <div className="space-y-1">
-            <Label className="text-xs">物流单号/批次备注</Label>
-            <Input value={tracking} onChange={(e) => setTracking(e.target.value)} />
+        <div className="mt-3 space-y-3 rounded-md border border-dashed bg-background/80 p-3">
+          <div>
+            <p className="text-sm font-medium">登记卖家发货 · 进入在途</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              为所选采购单填写<strong>采购物流单号</strong>，并选择<strong>预计到货的仓库/集运仓</strong>。
+              保存后采购单变为「已发货」，进入待确认收货；与单条「填写物流」操作一致。
+            </p>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">当前位置/目的地</Label>
-            <Input value={location} onChange={(e) => setLocation(e.target.value)} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="bulk-purchase-tracking">
+                采购物流单号
+              </Label>
+              <Input
+                id="bulk-purchase-tracking"
+                value={purchaseTrackingNo}
+                onChange={(e) => setPurchaseTrackingNo(e.target.value)}
+                placeholder="卖家/平台发出的快递单号"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="bulk-destination-location">
+                预计到货位置 *
+              </Label>
+              <WorkbenchLocationSelect
+                id="bulk-destination-location"
+                value={destinationLocationId}
+                locations={locations}
+                onChange={setDestinationLocationId}
+                placeholder="请选择到货仓库或集运仓"
+                required
+              />
+              <p className="text-[11px] text-muted-foreground">
+                货物将送达的位置（含地区），可在「设置 → 仓库位置」维护
+              </p>
+            </div>
           </div>
-          <Button
-            className="self-end"
-            disabled={pending || purchaseOrderIds.length === 0}
-            onClick={() => run(() => bulkUpdatePurchaseOrderLogistics(purchaseOrderIds, {
-              purchaseTrackingNo: tracking,
-              note: location,
-            }))}
-          >
-            {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
-            批量补物流
-          </Button>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="bulk-logistics-note">
+                备注（选填）
+              </Label>
+              <Input
+                id="bulk-logistics-note"
+                value={logisticsNote}
+                onChange={(e) => setLogisticsNote(e.target.value)}
+                placeholder="如：合箱发货、代签收人"
+              />
+            </div>
+            <Button
+              className="self-end"
+              disabled={
+                pending || purchaseOrderIds.length === 0 || !destinationLocationId
+              }
+              onClick={() =>
+                run(() =>
+                  bulkUpdatePurchaseOrderLogistics(purchaseOrderIds, {
+                    purchaseTrackingNo,
+                    destinationLocationId,
+                    note: logisticsNote,
+                  })
+                )
+              }
+            >
+              {pending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Truck className="h-4 w-4" />
+              )}
+              批量补物流
+            </Button>
+          </div>
         </div>
       )}
 
@@ -320,7 +377,9 @@ export function BulkActionToolbar({
 
       {queue === "pendingListing" && (
         <div className="mt-3">
-          <Button onClick={() => router.push("/listing")}>进入批量上架入口</Button>
+          <Button onClick={() => router.push("/inventory/sellable?unlisted=1")}>
+            进入可售库存
+          </Button>
         </div>
       )}
     </div>

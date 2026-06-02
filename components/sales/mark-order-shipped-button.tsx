@@ -27,7 +27,7 @@ export function MarkOrderShippedButton({
     e.preventDefault();
     setLoading(true);
     try {
-      await markOrderShipped(orderId, trackingNo || undefined);
+      await markOrderShipped(orderId, { trackingNo: trackingNo || undefined });
       setOpen(false);
       router.refresh();
     } catch (error) {
