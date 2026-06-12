@@ -9,6 +9,8 @@ import {
 } from "@/lib/application/order-fees";
 import { resolveFifoShipFromLocation } from "@/lib/application/inventory";
 import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
+import { requireUserContext } from "@/lib/auth/user-context";
+import { createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -231,7 +233,7 @@ export async function quickSellListing(data: {
       return { success: false, error: "售出数量必须大于 0" };
     }
 
-    const orderId = await prisma.$transaction(async (tx) => {
+    const saleResult = await prisma.$transaction(async (tx) => {
     const listing = await tx.listing.findUnique({
       where: { id: data.listingId },
       include: {
@@ -447,15 +449,31 @@ export async function quickSellListing(data: {
       data: { netRevenue: feeStrings.netRevenue },
     });
 
-    return customerOrder.id;
+    return {
+      orderId: customerOrder.id,
+      orderNumber: customerOrder.orderNumber,
+      storeId: customerOrder.storeId,
+    };
+    });
+
+    const context = await requireUserContext({ storeId: saleResult.storeId });
+    await createTaskIfMissing({
+      organizationId: context.organizationId,
+      storeId: saleResult.storeId,
+      type: TASK_TYPE.SHIP_ORDER,
+      title: `发货订单 ${saleResult.orderNumber}`,
+      description: "Listing 快速售出后自动生成的打包/发货任务。",
+      refType: "CUSTOMER_ORDER",
+      refId: saleResult.orderId,
+      createdById: context.userId,
     });
 
     revalidateListingSurfaces();
     revalidatePath("/sales");
-    revalidatePath(`/sales/${orderId}`);
+    revalidatePath(`/sales/${saleResult.orderId}`);
     revalidatePath("/inventory/lots");
     revalidatePath("/inventory/items");
-    return { success: true, orderId };
+    return { success: true, orderId: saleResult.orderId };
   } catch (error) {
     return {
       success: false,
