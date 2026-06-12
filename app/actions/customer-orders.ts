@@ -27,6 +27,21 @@ export type OrderStatus =
   | "RETURNED"
   | "CANCELLED";
 
+const ORDER_ALLOCATION_STATUS = {
+  PENDING: "PENDING",
+  ALLOCATED: "ALLOCATED",
+  SHIPPED: "SHIPPED",
+  DELIVERED: "DELIVERED",
+  CANCELLED: "CANCELLED",
+  RETURNED: "RETURNED",
+} as const;
+
+const CLOSED_ALLOCATION_STATUSES = new Set<string>([
+  ORDER_ALLOCATION_STATUS.SHIPPED,
+  ORDER_ALLOCATION_STATUS.DELIVERED,
+  ORDER_ALLOCATION_STATUS.RETURNED,
+]);
+
 export interface CreateCustomerOrderInput {
   storeId: string;
   orderNumber: string;
@@ -157,35 +172,68 @@ export async function addOrderLine(data: CreateOrderLineInput) {
 export async function allocateInventory(data: AllocateInventoryInput) {
   const quantity = new Decimal(data.quantity);
 
-  // Get lot to get unit cost
-  const lot = await prisma.inventoryLot.findUnique({
-    where: { id: data.lotId },
-  });
+  const allocation = await prisma.$transaction(async (tx) => {
+    const lot = await tx.inventoryLot.findUnique({
+      where: { id: data.lotId },
+    });
 
-  if (!lot) {
-    throw new Error("Inventory lot not found");
-  }
+    if (!lot) {
+      throw new Error("库存批次不存在");
+    }
 
-  const unitCost = new Decimal(lot.unitCost.toString());
-  const costAmount = quantity.times(unitCost);
+    const ledgers = await tx.stockLedger.findMany({
+      where: { entityType: "LOT", entityId: data.lotId },
+      select: { deltaQty: true },
+    });
+    const onHand = ledgers.reduce(
+      (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
+      new Decimal(0)
+    );
 
-  const allocation = await prisma.orderAllocation.create({
-    data: {
-      orderLineId: data.orderLineId,
-      allocationType: "LOT",
-      lotId: data.lotId,
-      quantity: quantity.toFixed(4),
-      unitCost: unitCost.toFixed(4),
-      costAmount: costAmount.toFixed(4),
-    },
-  });
+    const activeAllocations = await tx.orderAllocation.findMany({
+      where: {
+        lotId: data.lotId,
+        status: {
+          in: [
+            ORDER_ALLOCATION_STATUS.PENDING,
+            ORDER_ALLOCATION_STATUS.ALLOCATED,
+          ],
+        },
+      },
+      select: { quantity: true },
+    });
+    const reserved = activeAllocations.reduce(
+      (sum, item) => sum.plus(new Decimal(item.quantity.toString())),
+      new Decimal(0)
+    );
 
-  // Update order line supply status
-  await prisma.orderLine.update({
-    where: { id: data.orderLineId },
-    data: {
-      supplyStatus: "ALLOCATED_FROM_STOCK",
-    },
+    if (onHand.minus(reserved).lt(quantity)) {
+      throw new Error("可用库存不足，无法分配");
+    }
+
+    const unitCost = new Decimal(lot.unitCost.toString());
+    const costAmount = quantity.times(unitCost);
+
+    const created = await tx.orderAllocation.create({
+      data: {
+        orderLineId: data.orderLineId,
+        allocationType: "LOT",
+        lotId: data.lotId,
+        quantity: quantity.toFixed(4),
+        unitCost: unitCost.toFixed(4),
+        costAmount: costAmount.toFixed(4),
+        status: ORDER_ALLOCATION_STATUS.ALLOCATED,
+      },
+    });
+
+    await tx.orderLine.update({
+      where: { id: data.orderLineId },
+      data: {
+        supplyStatus: "ALLOCATED_FROM_STOCK",
+      },
+    });
+
+    return created;
   });
 
   revalidatePath(`/sales/${data.orderLineId}`);
@@ -382,7 +430,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
   await prisma.$transaction(async (tx) => {
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
-        if (["SHIPPED", "DELIVERED", "RETURNED"].includes(allocation.status)) {
+        if (CLOSED_ALLOCATION_STATUSES.has(allocation.status)) {
           continue;
         }
 
@@ -423,7 +471,10 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
           }
         }
 
-        await tx.orderAllocation.delete({ where: { id: allocation.id } });
+        await tx.orderAllocation.update({
+          where: { id: allocation.id },
+          data: { status: ORDER_ALLOCATION_STATUS.CANCELLED },
+        });
       }
 
       await tx.orderLine.update({
@@ -497,7 +548,10 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
   await prisma.$transaction(async (tx) => {
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
-        if (allocation.status !== "SHIPPED" && allocation.status !== "DELIVERED") {
+        if (
+          allocation.status !== ORDER_ALLOCATION_STATUS.SHIPPED &&
+          allocation.status !== ORDER_ALLOCATION_STATUS.DELIVERED
+        ) {
           continue;
         }
 
@@ -567,7 +621,7 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
 
         await tx.orderAllocation.update({
           where: { id: allocation.id },
-          data: { status: "RETURNED" },
+          data: { status: ORDER_ALLOCATION_STATUS.RETURNED },
         });
       }
 
@@ -640,7 +694,10 @@ export async function markOrderShipped(
   await prisma.$transaction(async (tx) => {
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
-        if (allocation.status === "SHIPPED" || allocation.status === "DELIVERED") continue;
+        if (
+          allocation.status === ORDER_ALLOCATION_STATUS.SHIPPED ||
+          allocation.status === ORDER_ALLOCATION_STATUS.DELIVERED
+        ) continue;
 
         if (allocation.itemUnitId) {
           const item = await tx.itemUnit.findUnique({
@@ -695,7 +752,7 @@ export async function markOrderShipped(
             (sum, l) => sum.plus(new Decimal(l.deltaQty.toString())),
             new Decimal(0)
           );
-          if (remaining.minus(allocation.quantity).lte(0)) {
+          if (remaining.lte(0)) {
             await tx.inventoryLot.update({
               where: { id: lot.id },
               data: { status: "CONSUMED" },
@@ -705,7 +762,7 @@ export async function markOrderShipped(
 
         await tx.orderAllocation.update({
           where: { id: allocation.id },
-          data: { status: "SHIPPED" },
+          data: { status: ORDER_ALLOCATION_STATUS.SHIPPED },
         });
       }
 
