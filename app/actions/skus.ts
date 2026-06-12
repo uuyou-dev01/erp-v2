@@ -9,6 +9,7 @@ import {
   resolveCoverImageUrl,
   type CatalogStatus,
 } from "@/lib/application/sku-catalog";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 export interface CreateSKUInput {
   storeId: string;
@@ -27,9 +28,10 @@ export interface UpdateSKUInput extends CreateSKUInput {
 }
 
 export async function getSKUParentOptions(storeId: string, excludeId?: string) {
+  const context = await requireUserContext({ storeId });
   return await prisma.sKU.findMany({
     where: {
-      storeId,
+      storeId: context.activeStoreId,
       id: excludeId ? { not: excludeId } : undefined,
       parentSkuId: null,
     },
@@ -46,8 +48,9 @@ export async function getSKUParentOptions(storeId: string, excludeId?: string) {
 }
 
 export async function getSKUs(storeId: string) {
+  const context = await requireUserContext({ storeId });
   const skus = await prisma.sKU.findMany({
-    where: { storeId },
+    where: { storeId: context.activeStoreId },
     include: {
       parentSku: {
         select: {
@@ -221,6 +224,17 @@ function computeSalesMetrics(
   };
 }
 
+async function assertParentSkuInStore(parentSkuId: string | null | undefined, storeId: string) {
+  if (!parentSkuId) return;
+  const parent = await prisma.sKU.findFirst({
+    where: { id: parentSkuId, storeId },
+    select: { id: true },
+  });
+  if (!parent) {
+    throw new Error("父 SKU 不存在或不属于当前店铺");
+  }
+}
+
 export async function getSKUById(id: string) {
   const sku = await prisma.sKU.findUnique({
     where: { id },
@@ -281,6 +295,7 @@ export async function getSKUById(id: string) {
   });
 
   if (!sku) return null;
+  await requireUserContext({ storeId: sku.storeId });
 
   const lotIds = sku.inventoryLots.map((lot) => lot.id);
   const lotLedgers =
@@ -380,9 +395,10 @@ export async function getSKUById(id: string) {
 export async function setSkuCatalogStatus(id: string, status: CatalogStatus) {
   const existing = await prisma.sKU.findUnique({
     where: { id },
-    select: { attributes: true },
+    select: { attributes: true, storeId: true },
   });
   if (!existing) throw new Error("SKU不存在");
+  await requireUserContext({ storeId: existing.storeId });
 
   await prisma.sKU.update({
     where: { id },
@@ -399,13 +415,15 @@ export async function setSkuCatalogStatus(id: string, status: CatalogStatus) {
 }
 
 export async function createSKU(data: CreateSKUInput) {
+  const context = await requireUserContext({ storeId: data.storeId });
+  await assertParentSkuInStore(data.parentSkuId, context.activeStoreId);
   const attributes = data.attributes ?? {};
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
 
   const sku = await prisma.sKU.create({
     data: {
-      storeId: data.storeId,
+      storeId: context.activeStoreId,
       code: data.code,
       name: data.name,
       parentSkuId: data.parentSkuId || null,
@@ -423,6 +441,15 @@ export async function createSKU(data: CreateSKUInput) {
 }
 
 export async function updateSKU(data: UpdateSKUInput) {
+  const existing = await prisma.sKU.findUnique({
+    where: { id: data.id },
+    select: { storeId: true },
+  });
+  if (!existing) throw new Error("SKU不存在");
+  await requireUserContext({ storeId: existing.storeId });
+  const parentSkuId = data.parentSkuId === data.id ? null : data.parentSkuId || null;
+  await assertParentSkuInStore(parentSkuId, existing.storeId);
+
   const attributes = data.attributes ?? {};
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
@@ -432,7 +459,7 @@ export async function updateSKU(data: UpdateSKUInput) {
     data: {
       code: data.code,
       name: data.name,
-      parentSkuId: data.parentSkuId === data.id ? null : data.parentSkuId || null,
+      parentSkuId,
       category: data.category,
       brand: data.brand,
       attributes: attributes as never,
@@ -451,6 +478,7 @@ export async function deleteSKU(id: string) {
   const related = await prisma.sKU.findUnique({
     where: { id },
     select: {
+      storeId: true,
       _count: {
         select: {
           childSkus: true,
@@ -467,6 +495,7 @@ export async function deleteSKU(id: string) {
   if (!related) {
     throw new Error("SKU不存在或已被删除");
   }
+  await requireUserContext({ storeId: related.storeId });
 
   if (related._count.childSkus > 0) {
     throw new Error("该 SKU 下仍有子 SKU，请先删除或迁移子款后再删除父 SKU。");

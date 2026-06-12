@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { isValidLocationRegion } from "@/lib/inventory/location-regions";
 import { revalidatePath } from "next/cache";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 export type LocationType = "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT";
 
@@ -31,24 +32,29 @@ export interface UpdateLocationInput extends CreateLocationInput {
 }
 
 export async function getLocations(storeId: string) {
+  const context = await requireUserContext({ storeId });
   return await prisma.location.findMany({
-    where: { storeId },
+    where: { storeId: context.activeStoreId },
     orderBy: { createdAt: "desc" },
   });
 }
 
 export async function getLocationById(id: string) {
-  return await prisma.location.findUnique({
+  const location = await prisma.location.findUnique({
     where: { id },
   });
+  if (!location) return null;
+  await requireUserContext({ storeId: location.storeId });
+  return location;
 }
 
 export async function createLocation(data: CreateLocationInput) {
-  const code = data.code?.trim() || (await generateLocationCode(data.storeId, data.type));
+  const context = await requireUserContext({ storeId: data.storeId });
+  const code = data.code?.trim() || (await generateLocationCode(context.activeStoreId, data.type));
 
   const location = await prisma.location.create({
     data: {
-      storeId: data.storeId,
+      storeId: context.activeStoreId,
       code,
       name: data.name,
       region: normalizeRegion(data.region),
@@ -97,6 +103,13 @@ async function generateLocationCode(storeId: string, type: LocationType) {
 }
 
 export async function updateLocation(data: UpdateLocationInput) {
+  const existing = await prisma.location.findUnique({
+    where: { id: data.id },
+    select: { storeId: true },
+  });
+  if (!existing) throw new Error("位置不存在或无权修改");
+  await requireUserContext({ storeId: existing.storeId });
+
   const location = await prisma.location.update({
     where: { id: data.id },
     data: {
@@ -114,13 +127,20 @@ export async function updateLocation(data: UpdateLocationInput) {
 }
 
 export async function getLocationStats(locationId: string) {
+  const location = await prisma.location.findUnique({
+    where: { id: locationId },
+    select: { storeId: true },
+  });
+  if (!location) throw new Error("位置不存在或无权查看");
+  const context = await requireUserContext({ storeId: location.storeId });
+
   const [lots, items] = await Promise.all([
     prisma.inventoryLot.findMany({
-      where: { locationId },
+      where: { locationId, storeId: context.activeStoreId },
       include: { sku: true },
     }),
     prisma.itemUnit.findMany({
-      where: { locationId },
+      where: { locationId, storeId: context.activeStoreId },
       include: { sku: true },
     }),
   ]);
@@ -185,19 +205,21 @@ export async function getLocationStats(locationId: string) {
 }
 
 export async function deleteLocation(id: string, storeId: string) {
+  const context = await requireUserContext({ storeId });
   const [lotCount, itemCount, ledgerCount] = await Promise.all([
-    prisma.inventoryLot.count({ where: { locationId: id, storeId } }),
-    prisma.itemUnit.count({ where: { locationId: id, storeId } }),
-    prisma.stockLedger.count({ where: { locationId: id, storeId } }),
+    prisma.inventoryLot.count({ where: { locationId: id, storeId: context.activeStoreId } }),
+    prisma.itemUnit.count({ where: { locationId: id, storeId: context.activeStoreId } }),
+    prisma.stockLedger.count({ where: { locationId: id, storeId: context.activeStoreId } }),
   ]);
 
   if (lotCount > 0 || itemCount > 0 || ledgerCount > 0) {
     throw new Error("该位置下仍有关联库存/流水，无法删除。请先清空库存并处理相关记录。");
   }
 
-  await prisma.location.delete({
-    where: { id },
+  const deleted = await prisma.location.deleteMany({
+    where: { id, storeId: context.activeStoreId },
   });
+  if (deleted.count === 0) throw new Error("位置不存在或无权删除");
 
   revalidatePath("/inventory/locations");
 }
