@@ -23,6 +23,13 @@ export const TASK_TYPE = {
   RESOLVE_EXCEPTION: "RESOLVE_EXCEPTION",
 } as const;
 
+export const INCOMPLETE_TASK_STATUSES = [
+  TASK_STATUS.OPEN,
+  TASK_STATUS.ASSIGNED,
+  TASK_STATUS.IN_PROGRESS,
+  TASK_STATUS.OVERDUE,
+] as const;
+
 export async function createTask(input: {
   organizationId: string;
   storeId: string;
@@ -74,6 +81,38 @@ export async function createTask(input: {
   }
 
   return task;
+}
+
+export async function createTaskIfMissing(input: {
+  organizationId: string;
+  storeId: string;
+  type: string;
+  title: string;
+  description?: string | null;
+  refType: string;
+  refId: string;
+  createdById: string;
+  assignedToId?: string | null;
+  dueAt?: Date | null;
+  metadata?: unknown;
+}) {
+  const existing = await prisma.task.findFirst({
+    where: {
+      organizationId: input.organizationId,
+      storeId: input.storeId,
+      type: input.type,
+      refType: input.refType,
+      refId: input.refId,
+      status: {
+        in: [...INCOMPLETE_TASK_STATUSES],
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (existing) return existing;
+
+  return createTask(input);
 }
 
 export async function assignTask(input: {
@@ -157,6 +196,41 @@ export async function completeTask(input: {
   });
 
   return task;
+}
+
+export async function completeTasksForRef(input: {
+  organizationId: string;
+  storeId: string;
+  type: string;
+  refType: string;
+  refId: string;
+  completedById: string;
+}) {
+  const tasks = await prisma.task.findMany({
+    where: {
+      organizationId: input.organizationId,
+      storeId: input.storeId,
+      type: input.type,
+      refType: input.refType,
+      refId: input.refId,
+      status: {
+        in: [...INCOMPLETE_TASK_STATUSES],
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const completed = [];
+  for (const task of tasks) {
+    completed.push(
+      await completeTask({
+        taskId: task.id,
+        completedById: input.completedById,
+      })
+    );
+  }
+
+  return completed;
 }
 
 export async function cancelTask(input: {

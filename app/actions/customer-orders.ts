@@ -23,6 +23,12 @@ import {
   ORDER_ALLOCATION_STATUS,
   RESERVING_ALLOCATION_STATUSES,
 } from "@/lib/application/order-allocation";
+import { requireUserContext } from "@/lib/auth/user-context";
+import {
+  completeTasksForRef,
+  createTaskIfMissing,
+  TASK_TYPE,
+} from "@/lib/application/tasks";
 
 export type OrderStatus =
   | "DRAFT"
@@ -244,6 +250,7 @@ export async function confirmOrder(data: ConfirmOrderInput) {
   if (!order) {
     throw new Error("Order not found");
   }
+  const context = await requireUserContext({ storeId: order.storeId });
 
   // Check all lines have allocations
   for (const line of order.lines) {
@@ -299,6 +306,19 @@ export async function confirmOrder(data: ConfirmOrderInput) {
         },
       });
     }
+  });
+
+  await createTaskIfMissing({
+    organizationId: context.organizationId,
+    storeId: order.storeId,
+    type: TASK_TYPE.SHIP_ORDER,
+    title: `发货订单 ${order.orderNumber}`,
+    description: order.platformId
+      ? "订单已确认，等待打包/发货。"
+      : "手工订单已确认，等待打包/发货。",
+    refType: "CUSTOMER_ORDER",
+    refId: order.id,
+    createdById: context.userId,
   });
 
   revalidatePath("/sales");
@@ -679,6 +699,7 @@ export async function markOrderShipped(
   if (order.orderStatus !== "CONFIRMED") {
     throw new Error("只有已确认订单可以标记发货");
   }
+  const context = await requireUserContext({ storeId: order.storeId });
 
   await prisma.$transaction(async (tx) => {
     for (const line of order.lines) {
@@ -780,6 +801,15 @@ export async function markOrderShipped(
   });
 
   await syncQuickEntryFromOrder(orderId, "SHIPPED");
+
+  await completeTasksForRef({
+    organizationId: context.organizationId,
+    storeId: order.storeId,
+    type: TASK_TYPE.SHIP_ORDER,
+    refType: "CUSTOMER_ORDER",
+    refId: order.id,
+    completedById: context.userId,
+  });
 
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
