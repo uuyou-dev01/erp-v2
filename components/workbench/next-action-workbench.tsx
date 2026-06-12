@@ -78,6 +78,7 @@ interface RecentEntry {
 
 interface NextActionWorkbenchProps {
   storeId: string;
+  currentUserId: string;
   initialCounts: QueueCounts;
   initialItems: WorkItem[];
   recentActivity: ActivityFeedItem[];
@@ -100,6 +101,7 @@ function parseQueue(value: string | null): WorkQueue | "all" {
 
 export function NextActionWorkbench({
   storeId,
+  currentUserId,
   initialCounts,
   initialItems,
   recentActivity,
@@ -118,6 +120,7 @@ export function NextActionWorkbench({
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<WorkItemDetail | null>(null);
   const [showQuickEntry, setShowQuickEntry] = useState(false);
+  const [taskScope, setTaskScope] = useState<"all" | "mine" | "delegated">("all");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
 
@@ -125,6 +128,12 @@ export function NextActionWorkbench({
     let items = initialItems;
     if (selectedQueue !== "all") {
       items = items.filter((i) => i.queue === selectedQueue);
+    }
+    if (taskScope === "mine") {
+      items = items.filter((i) => i.taskAssignedToId === currentUserId);
+    }
+    if (taskScope === "delegated") {
+      items = items.filter((i) => i.taskCreatedById === currentUserId);
     }
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -136,7 +145,7 @@ export function NextActionWorkbench({
       );
     }
     return items;
-  }, [initialItems, selectedQueue, search]);
+  }, [currentUserId, initialItems, selectedQueue, search, taskScope]);
 
   const exceptionItems = useMemo(
     () => initialItems.filter((i) => i.queue === "exception" || i.queue === "inspectionException"),
@@ -261,6 +270,25 @@ export function NextActionWorkbench({
         <Panel
           title={selectedQueue === "all" ? `全部待办 · ${filteredItems.length}` : `待处理 · ${filteredItems.length}`}
         >
+          <div className="mb-2 flex flex-wrap gap-1">
+            {[
+              ["all", "全部任务"],
+              ["mine", "我的任务"],
+              ["delegated", "我委托的"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted",
+                  taskScope === value && "border-primary/40 bg-primary/5 text-primary"
+                )}
+                onClick={() => setTaskScope(value as "all" | "mine" | "delegated")}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <BulkActionToolbar
             queue={selectedQueue}
             items={filteredItems}

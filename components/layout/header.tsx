@@ -1,7 +1,11 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Bell, Menu, Search, User } from "lucide-react";
+import { getMyNotificationSummary } from "@/app/actions/notifications";
+import { cn } from "@/lib/utils";
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -9,6 +13,22 @@ interface HeaderProps {
 }
 
 export function Header({ onMenuClick, onCommandOpen }: HeaderProps) {
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyNotificationSummary()
+      .then((summary) => {
+        if (!cancelled) setUnreadCount(summary.unreadCount);
+      })
+      .catch(() => {
+        if (!cancelled) setUnreadCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <header className="flex h-12 shrink-0 items-center gap-4 border-b bg-background px-4">
       <button
@@ -32,9 +52,18 @@ export function Header({ onMenuClick, onCommandOpen }: HeaderProps) {
       </button>
 
       <div className="ml-auto flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+        <Link
+          href="/notifications"
+          aria-label="通知"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "relative h-8 w-8 text-muted-foreground")}
+        >
           <Bell className="h-4 w-4" />
-        </Button>
+          {unreadCount > 0 ? (
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          ) : null}
+        </Link>
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
           <User className="h-4 w-4" />
         </Button>

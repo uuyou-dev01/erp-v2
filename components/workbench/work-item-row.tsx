@@ -182,6 +182,11 @@ export function WorkItemRow({
               {LIFECYCLE_LABELS[item.lifecycleStage]}
             </Badge>
           )}
+          {item.taskId && (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-emerald-700">
+              {item.taskAssignedToName ? `负责人 ${item.taskAssignedToName}` : "待指派"}
+            </Badge>
+          )}
           {item.exceptionMessage && <ExceptionBadge message={item.exceptionMessage} />}
           <span className="text-xs text-muted-foreground">
             {[item.subtitle ?? QUEUE_LABELS[item.queue], tracking, waitingLabel(item.waitingSince)]
@@ -224,7 +229,7 @@ export function WorkItemRow({
           </button>
         )}
         <span className="text-xs text-muted-foreground group-hover:text-primary">
-          {item.primaryActionLabel}
+          {item.taskStatusLabel ?? item.primaryActionLabel}
         </span>
       </div>
     </div>

@@ -73,6 +73,14 @@ export interface WorkItem {
   priority: "normal" | "warning" | "critical";
   waitingSince: string;
   assigneeId?: string;
+  taskId?: string;
+  taskStatus?: string;
+  taskStatusLabel?: string;
+  taskAssignedToId?: string | null;
+  taskAssignedToName?: string | null;
+  taskCreatedById?: string | null;
+  taskCreatedByName?: string | null;
+  taskDueAt?: string | null;
   exceptionType?: string;
   exceptionMessage?: string;
   detailHref?: string;

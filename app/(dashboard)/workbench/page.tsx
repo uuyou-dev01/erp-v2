@@ -140,6 +140,7 @@ export default async function WorkbenchPage() {
       <Suspense fallback={<div className="text-sm text-muted-foreground">加载工作台...</div>}>
         <NextActionWorkbench
           storeId={storeId}
+          currentUserId={context.userId}
           initialCounts={counts}
           initialItems={items}
           recentActivity={recentActivity}

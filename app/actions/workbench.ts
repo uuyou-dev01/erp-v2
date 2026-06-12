@@ -25,6 +25,7 @@ import {
 } from "@/app/actions/consolidations";
 import { getListingPendingItems } from "@/lib/application/listing-pending";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { INCOMPLETE_TASK_STATUSES } from "@/lib/application/tasks";
 
 function clean(value?: string | null) {
   return value?.trim() || undefined;
@@ -34,6 +35,93 @@ function optionalInputDate(value?: string) {
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+const TASK_STATUS_LABELS: Record<string, string> = {
+  OPEN: "未指派",
+  ASSIGNED: "已指派",
+  IN_PROGRESS: "处理中",
+  DONE: "已完成",
+  CANCELLED: "已取消",
+  OVERDUE: "已逾期",
+};
+
+function workItemRef(item: WorkItem) {
+  if (item.entityType === "customerOrder") {
+    return { refType: "CUSTOMER_ORDER", refId: item.entityId };
+  }
+  if (item.entityType === "listing") {
+    return { refType: "LISTING", refId: item.entityId };
+  }
+  if (item.entityType === "purchaseOrder") {
+    return { refType: "PURCHASE_ORDER", refId: item.entityId };
+  }
+  if (item.entityType === "shipment") {
+    return { refType: "INBOUND_SHIPMENT", refId: item.entityId };
+  }
+  if (item.entityType === "itemUnit") {
+    return { refType: "ITEM_UNIT", refId: item.entityId };
+  }
+  if (item.entityType === "inventoryLot") {
+    return { refType: "INVENTORY_LOT", refId: item.entityId };
+  }
+  return { refType: "QUICK_ENTRY", refId: item.entityId };
+}
+
+async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<WorkItem[]> {
+  if (items.length === 0) return items;
+
+  const refs = items.map(workItemRef);
+  const tasks = await prisma.task.findMany({
+    where: {
+      storeId,
+      status: { in: [...INCOMPLETE_TASK_STATUSES] },
+      OR: refs.map((ref) => ({ refType: ref.refType, refId: ref.refId })),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const userIds = Array.from(
+    new Set(
+      tasks
+        .flatMap((task) => [task.assignedToId, task.createdById])
+        .filter(Boolean) as string[]
+    )
+  );
+  const users = userIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, name: true, email: true },
+      })
+    : [];
+  const userNameById = new Map(
+    users.map((user) => [user.id, user.name || user.email])
+  );
+
+  const taskByRef = new Map<string, (typeof tasks)[number]>();
+  for (const task of tasks) {
+    const key = `${task.refType}:${task.refId}`;
+    if (!taskByRef.has(key)) taskByRef.set(key, task);
+  }
+
+  return items.map((item) => {
+    const ref = workItemRef(item);
+    const task = taskByRef.get(`${ref.refType}:${ref.refId}`);
+    if (!task) return item;
+    return {
+      ...item,
+      taskId: task.id,
+      taskStatus: task.status,
+      taskStatusLabel: TASK_STATUS_LABELS[task.status] ?? task.status,
+      taskAssignedToId: task.assignedToId,
+      taskAssignedToName: task.assignedToId
+        ? userNameById.get(task.assignedToId) ?? "未命名成员"
+        : null,
+      taskCreatedById: task.createdById,
+      taskCreatedByName: userNameById.get(task.createdById) ?? "系统",
+      taskDueAt: task.dueAt?.toISOString() ?? null,
+    };
+  });
 }
 
 export async function getWorkbenchQueueCounts(storeId?: string): Promise<QueueCounts> {
@@ -58,7 +146,8 @@ export async function getWorkbenchWorkItems(
 ): Promise<WorkItem[]> {
   const context = await requireUserContext({ storeId });
   storeId = context.activeStoreId;
-  return collectWorkItems(storeId, queue, limit);
+  const items = await collectWorkItems(storeId, queue, limit);
+  return attachTaskMetadata(storeId, items);
 }
 
 export async function getWorkbenchRecentActivity(
