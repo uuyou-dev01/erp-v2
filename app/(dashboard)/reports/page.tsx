@@ -16,7 +16,9 @@ import {
   DollarSign,
   Globe,
   CheckCircle,
+  Users,
 } from "lucide-react";
+import Link from "next/link";
 import { InventoryChart } from "@/components/reports/inventory-chart";
 import { SalesChart } from "@/components/reports/sales-chart";
 import { DateRangePicker } from "@/components/reports/date-range-picker";
@@ -25,6 +27,7 @@ import { PlatformPieChart } from "@/components/reports/platform-pie-chart";
 import { FeeDetailTable } from "@/components/reports/fee-detail-table";
 import { CsvExportButton } from "@/components/reports/csv-export-button";
 import { ChartCard } from "@/components/shared/chart-card";
+import { buttonVariants } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +93,10 @@ export default async function ReportsPage({
           <p className="text-muted-foreground">业务数据分析和可视化报表</p>
         </div>
         <div className="flex items-center gap-3">
+          <Link href="/reports/team" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <Users className="h-4 w-4" />
+            团队工作量
+          </Link>
           <DateRangePicker />
           <CsvExportButton overview={overview} pnl={monthlyPnL} />
         </div>
