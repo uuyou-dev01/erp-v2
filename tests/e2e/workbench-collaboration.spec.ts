@@ -13,6 +13,13 @@ test("collaboration surfaces render without app errors", async ({ page }) => {
   await page.goto("/workbench");
   await expect(page.locator("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible();
+  const sidebar = page.getByRole("complementary");
+  await expect(sidebar.getByRole("link", { name: "通知" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "采购单据" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "销售平台" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "团队工作量" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "团队成员" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "店铺管理" })).toBeVisible();
 
   await page.goto("/notifications");
   await expect(page.locator("main")).toBeVisible();

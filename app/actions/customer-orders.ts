@@ -953,7 +953,6 @@ export async function settleCustomerOrder(
   revalidatePath(`/sales/${orderId}`);
   revalidatePath("/reports");
   revalidatePath("/reports/team");
-  revalidatePath("/dashboard");
   revalidatePath("/workbench");
 }
 

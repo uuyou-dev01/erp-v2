@@ -4,85 +4,23 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
-  LayoutDashboard,
-  Package,
-  ShoppingCart,
-  Warehouse,
-  FileText,
-  MapPin,
   Box,
-  PackageOpen,
-  PackageCheck,
-  Globe,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   X,
-  ClipboardList,
-  TriangleAlert,
-  Store,
   Plus,
-  Settings,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
-import type { QueueCounts, WorkQueue } from "@/lib/application/next-actions";
+import type { QueueCounts } from "@/lib/application/next-actions";
+import {
+  operationsNavigation,
+  settingsNavigation,
+  type NavItem,
+} from "@/config/navigation";
 
 const STORE_ID = "store_1";
-
-type NavItem = {
-  name: string;
-  href: string;
-  icon: typeof ClipboardList;
-  queue?: WorkQueue;
-  badgeKey?: keyof QueueCounts;
-  submenu?: NavItem[];
-};
-
-type NavGroup = {
-  title: string;
-  items: NavItem[];
-};
-
-const workflowGroups: NavGroup[] = [
-  {
-    title: "运营",
-    items: [
-      { name: "工作台", href: "/workbench", icon: ClipboardList, badgeKey: "total" },
-      {
-        name: "库存",
-        href: "/inventory/sellable",
-        icon: Warehouse,
-        submenu: [
-          { name: "可售库存", href: "/inventory/sellable", icon: PackageCheck },
-          { name: "库存盘点", href: "/inventory/stocktake", icon: Box },
-          { name: "Listing 分类", href: "/listing", icon: Globe },
-          { name: "已售库存", href: "/inventory/sold", icon: Package },
-          { name: "商品档案", href: "/inventory/skus", icon: Store },
-        ],
-      },
-      { name: "销售", href: "/sales", icon: Package },
-      { name: "异常中心", href: "/workbench?queue=exception", icon: TriangleAlert, queue: "exception", badgeKey: "exception" },
-      { name: "报表", href: "/reports", icon: FileText },
-    ],
-  },
-];
-
-const adminNavigation = [
-  { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard },
-  { name: "采购单据", href: "/procurement", icon: ShoppingCart },
-  {
-    name: "库存设置",
-    href: "/inventory",
-    icon: Settings,
-    submenu: [
-      { name: "仓库位置", href: "/inventory/locations", icon: MapPin },
-      { name: "入库库存", href: "/inventory/lots", icon: Package },
-      { name: "单件商品", href: "/inventory/items", icon: PackageOpen },
-      { name: "销售平台配置", href: "/listing/platforms", icon: Globe },
-    ],
-  },
-];
 
 interface SidebarProps {
   mobileOpen?: boolean;
@@ -102,6 +40,15 @@ function CountBadge({ count, critical }: { count: number; critical?: boolean }) 
     </span>
   );
 }
+
+function flattenNavItems(items: NavItem[]): NavItem[] {
+  return items.flatMap((item) => [item, ...(item.submenu ? flattenNavItems(item.submenu) : [])]);
+}
+
+const allNavItems = [
+  ...operationsNavigation.flatMap((group) => flattenNavItems(group.items)),
+  ...flattenNavItems(settingsNavigation),
+];
 
 function NavLink({
   item,
@@ -146,7 +93,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>(["库存", "设置"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["设置"]);
   const [counts, setCounts] = useState<QueueCounts | null>(null);
 
   useEffect(() => {
@@ -174,7 +121,14 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
   const isWorkflowActive = (item: NavItem) => {
     if (!item.queue && item.href !== "/workbench") {
-      return pathname === item.href || pathname.startsWith(`${item.href}/`);
+      const matches = pathname === item.href || pathname.startsWith(`${item.href}/`);
+      if (!matches) return false;
+      return !allNavItems.some(
+        (other) =>
+          other.href !== item.href &&
+          other.href.startsWith(`${item.href}/`) &&
+          (pathname === other.href || pathname.startsWith(`${other.href}/`))
+      );
     }
     if (item.href === "/workbench" && pathname === "/workbench" && !item.queue) {
       return !searchParams.get("queue");
@@ -221,7 +175,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       )}
 
       <nav className="flex-1 space-y-4 overflow-y-auto p-2">
-        {workflowGroups.map((group) => (
+        {operationsNavigation.map((group) => (
           <div key={group.title}>
             {!collapsed && (
               <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -303,7 +257,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           )}
           {(collapsed || expandedItems.includes("设置")) && (
             <div className="space-y-0.5">
-              {adminNavigation.map((item) => {
+              {settingsNavigation.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 const hasSubmenu = "submenu" in item && item.submenu;
                 if (hasSubmenu && !collapsed) {

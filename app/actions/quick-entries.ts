@@ -272,7 +272,6 @@ export async function parsePasteRows(
 
 function revalidatePaths() {
   revalidatePath("/workbench");
-  revalidatePath("/dashboard");
   revalidatePath("/inventory/skus");
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");

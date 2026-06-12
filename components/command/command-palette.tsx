@@ -6,15 +6,7 @@ import { searchProductTickets, type CommandSearchResult } from "@/app/actions/wo
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X } from "lucide-react";
-
-const QUICK_ACTIONS: CommandSearchResult[] = [
-  { id: "qa-workbench", title: "打开工作台", subtitle: "今日待办", href: "/workbench" },
-  { id: "qa-quick-entry", title: "快速录入", subtitle: "采购 / 物流 / 上架 / 售出", href: "/workbench?action=quickEntry" },
-  { id: "qa-exception", title: "异常队列", subtitle: "优先处理风险商品", href: "/workbench?queue=exception" },
-  { id: "qa-ship", title: "待发货", subtitle: "销售履约", href: "/workbench?queue=pendingShipment" },
-  { id: "qa-settle", title: "待结算", subtitle: "财务收尾", href: "/workbench?queue=pendingSettlement" },
-  { id: "qa-consolidation", title: "集运批次", subtitle: "合包 / 发出 / 到货", href: "/logistics/consolidations" },
-];
+import { commandQuickActions } from "@/config/navigation";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -46,7 +38,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     });
   }, [open, query]);
 
-  const items = useMemo(() => (query.trim() ? results : QUICK_ACTIONS), [query, results]);
+  const items = useMemo<CommandSearchResult[]>(
+    () => (query.trim() ? results : commandQuickActions),
+    [query, results]
+  );
   if (!open) return null;
 
   const go = (href: string) => {
