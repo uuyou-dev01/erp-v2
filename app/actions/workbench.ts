@@ -159,6 +159,32 @@ export async function getWorkbenchRecentActivity(
   return getRecentActivity(storeId, limit);
 }
 
+export async function getWorkbenchAssignableMembers(storeId: string | undefined) {
+  const context = await requireUserContext({ storeId });
+  return prisma.user.findMany({
+    where: {
+      memberships: {
+        some: {
+          organizationId: context.organizationId,
+          status: "ACTIVE",
+        },
+      },
+      storeAccesses: {
+        some: {
+          storeId: context.activeStoreId,
+        },
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+    },
+    orderBy: [{ name: "asc" }, { email: "asc" }],
+  });
+}
+
 export async function getWorkbenchWorkItemDetail(
   entityType: WorkItem["entityType"],
   entityId: string

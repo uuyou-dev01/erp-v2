@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { BulkActionToolbar } from "./bulk-action-toolbar";
 import { PendingActionPanel } from "./pending-action-panel";
 import type { WorkbenchPlatformOption } from "./action-drawer-forms";
+import type { AssignableMemberOption } from "./task-assignment-card";
 
 function Panel({
   title,
@@ -84,6 +85,7 @@ interface NextActionWorkbenchProps {
   recentActivity: ActivityFeedItem[];
   recentEntries: RecentEntry[];
   platforms: WorkbenchPlatformOption[];
+  assignableMembers: AssignableMemberOption[];
   locations: Array<{ id: string; code: string; name: string; type: string }>;
   consolidationBatches: Array<{
     id: string;
@@ -107,6 +109,7 @@ export function NextActionWorkbench({
   recentActivity,
   recentEntries,
   platforms,
+  assignableMembers,
   locations,
   consolidationBatches,
   suggestions,
@@ -325,6 +328,8 @@ export function NextActionWorkbench({
         {selectedDetail && (
           <PendingActionPanel
             detail={selectedDetail}
+            taskItem={selectedItem}
+            assignableMembers={assignableMembers}
             platforms={platforms}
             locations={locations}
             consolidationBatches={consolidationBatches}

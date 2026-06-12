@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
+import type { WorkItem } from "@/lib/application/next-actions";
 import type { WorkbenchPlatformOption } from "./action-drawer-forms";
 import {
   ConfirmArrivalForm,
@@ -29,9 +30,15 @@ import {
   SmartSuggestionPanel,
 } from "./action-drawer-layout";
 import { getWorkflowActionSpec } from "@/lib/application/workflow-actions";
+import {
+  TaskAssignmentCard,
+  type AssignableMemberOption,
+} from "./task-assignment-card";
 
 interface PendingActionPanelProps {
   detail: WorkItemDetail;
+  taskItem?: WorkItem | null;
+  assignableMembers?: AssignableMemberOption[];
   platforms?: WorkbenchPlatformOption[];
   locations?: Array<{ id: string; code: string; name: string; type: string }>;
   consolidationBatches?: Array<{
@@ -46,6 +53,8 @@ interface PendingActionPanelProps {
 
 export function PendingActionPanel({
   detail,
+  taskItem = null,
+  assignableMembers = [],
   platforms = [],
   locations = [],
   consolidationBatches = [],
@@ -195,6 +204,11 @@ export function PendingActionPanel({
       }
       context={
         <>
+          <TaskAssignmentCard
+            item={taskItem}
+            members={assignableMembers}
+            onAssigned={onComplete}
+          />
           <ContextSummaryCard detail={detail} />
           <PurchaseLinesCard detail={detail} />
         </>

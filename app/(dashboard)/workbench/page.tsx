@@ -3,6 +3,7 @@ import {
   getWorkbenchQueueCounts,
   getWorkbenchWorkItems,
   getWorkbenchRecentActivity,
+  getWorkbenchAssignableMembers,
 } from "@/app/actions/workbench";
 import { getQuickEntries } from "@/app/actions/quick-entries";
 import { getSKUs } from "@/app/actions/skus";
@@ -19,7 +20,17 @@ export const dynamic = "force-dynamic";
 export default async function WorkbenchPage() {
   const context = await requireUserContext();
   const storeId = context.activeStoreId;
-  const [counts, items, recentActivity, entries, skus, locations, platforms, consolidationBatches] = await Promise.all([
+  const [
+    counts,
+    items,
+    recentActivity,
+    entries,
+    skus,
+    locations,
+    platforms,
+    consolidationBatches,
+    assignableMembers,
+  ] = await Promise.all([
     getWorkbenchQueueCounts(storeId),
     getWorkbenchWorkItems(storeId, undefined, 120),
     getWorkbenchRecentActivity(storeId),
@@ -28,6 +39,7 @@ export default async function WorkbenchPage() {
     getLocations(storeId),
     getPlatforms(storeId),
     getConsolidationBatches(storeId),
+    getWorkbenchAssignableMembers(storeId),
   ]);
 
   const recentEntries = entries.map((entry) => ({
@@ -146,6 +158,12 @@ export default async function WorkbenchPage() {
           recentActivity={recentActivity}
           recentEntries={recentEntries}
           platforms={platformOptions}
+          assignableMembers={assignableMembers.map((member) => ({
+            id: member.id,
+            name: member.name || member.email,
+            email: member.email,
+            role: member.role,
+          }))}
           locations={locationOptions}
           consolidationBatches={consolidationOptions}
           suggestions={{
