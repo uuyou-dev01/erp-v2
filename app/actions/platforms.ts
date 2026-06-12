@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 export interface PlatformShippingRuleInput {
   name: string;
@@ -15,8 +16,9 @@ export interface PlatformShippingRuleInput {
 }
 
 export async function getPlatforms(storeId: string) {
+  const context = await requireUserContext({ storeId });
   const platforms = await prisma.platform.findMany({
-    where: { storeId },
+    where: { storeId: context.activeStoreId },
     orderBy: { createdAt: "desc" },
   });
 
@@ -45,6 +47,7 @@ export async function getPlatformById(id: string) {
   });
 
   if (!platform) return null;
+  await requireUserContext({ storeId: platform.storeId });
 
   return {
     ...platform,
@@ -71,10 +74,11 @@ export async function createPlatform(data: {
   defaultCurrency?: string;
   notes?: string;
 }) {
+  const context = await requireUserContext({ storeId: data.storeId });
   try {
     const platform = await prisma.platform.create({
       data: {
-        storeId: data.storeId,
+        storeId: context.activeStoreId,
         code: data.code,
         name: data.name,
         country: data.country || null,
@@ -108,6 +112,15 @@ export async function updatePlatform(
     notes?: string;
   }
 ) {
+  const existing = await prisma.platform.findUnique({
+    where: { id },
+    select: { storeId: true },
+  });
+  if (!existing) {
+    throw new Error("平台不存在或无权修改");
+  }
+  await requireUserContext({ storeId: existing.storeId });
+
   try {
     const platform = await prisma.platform.update({
       where: { id },
@@ -134,8 +147,9 @@ export async function updatePlatform(
 }
 
 export async function deletePlatform(id: string, storeId: string) {
+  const context = await requireUserContext({ storeId });
   const platform = await prisma.platform.findFirst({
-    where: { id, storeId },
+    where: { id, storeId: context.activeStoreId },
   });
 
   if (!platform) {
@@ -143,8 +157,8 @@ export async function deletePlatform(id: string, storeId: string) {
   }
 
   const [listingCount, orderCount] = await Promise.all([
-    prisma.listing.count({ where: { platformId: id, storeId } }),
-    prisma.customerOrder.count({ where: { platformId: id, storeId } }),
+    prisma.listing.count({ where: { platformId: id, storeId: context.activeStoreId } }),
+    prisma.customerOrder.count({ where: { platformId: id, storeId: context.activeStoreId } }),
   ]);
 
   if (listingCount > 0) {
