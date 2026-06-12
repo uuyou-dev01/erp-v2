@@ -1132,16 +1132,16 @@ git commit -m "test: add collaboration smoke coverage"
 
 ## Completion Checklist
 
-- [ ] Current framework decision is documented and no migration is started without spike evidence.
-- [ ] Inventory allocation reserves stock before shipment.
-- [ ] Shipment ledger no longer double subtracts lot quantity.
-- [ ] User context exists and at least workbench uses it.
-- [ ] Organization, membership, and store access seed data exist.
-- [ ] Tasks can be created, assigned, transferred, and completed.
-- [ ] Shipping tasks are generated from order flow and completed by actual operator.
-- [ ] Notifications are generated for assignment and completion.
-- [ ] Header and notifications page show unread notifications.
-- [ ] Team metrics report shows listing, shipment, settlement, and task counts by user.
-- [ ] Vitest covers core business helpers.
-- [ ] Playwright smoke test covers workbench and notifications.
-- [ ] `npx prisma validate`, `npm run test`, `npm run build`, and `npm run test:e2e` pass.
+- [x] Current framework decision is documented and no migration is started without spike evidence.
+- [x] Inventory allocation reserves stock before shipment.
+- [x] Shipment ledger no longer double subtracts lot quantity.
+- [x] User context exists and at least workbench uses it.
+- [x] Organization, membership, and store access seed data exist.
+- [x] Tasks can be created, assigned, transferred, and completed.
+- [x] Shipping tasks are generated from order flow and completed by actual operator.
+- [x] Notifications are generated for assignment and completion.
+- [x] Header and notifications page show unread notifications.
+- [x] Team metrics report shows listing, shipment, settlement, and task counts by user.
+- [x] Vitest covers core business helpers.
+- [x] Playwright smoke test covers workbench, login, notifications, reports, team settings, and store settings.
+- [x] `npx prisma validate`, `npm run test`, `npm run build`, and `npm run test:e2e` pass.
