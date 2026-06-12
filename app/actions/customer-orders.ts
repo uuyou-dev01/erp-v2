@@ -72,9 +72,10 @@ export interface ConfirmOrderInput {
 }
 
 export async function getCustomerOrders(storeId: string, platformId?: string) {
+  const context = await requireUserContext({ storeId });
   return await prisma.customerOrder.findMany({
     where: {
-      storeId,
+      storeId: context.activeStoreId,
       ...(platformId ? { platformId } : {}),
     },
     include: {
@@ -90,7 +91,7 @@ export async function getCustomerOrders(storeId: string, platformId?: string) {
 }
 
 export async function getCustomerOrderById(id: string) {
-  return await prisma.customerOrder.findUnique({
+  const order = await prisma.customerOrder.findUnique({
     where: { id },
     include: {
       platform: true,
@@ -110,9 +111,19 @@ export async function getCustomerOrderById(id: string) {
       },
     },
   });
+  if (!order) return null;
+  await requireUserContext({ storeId: order.storeId });
+  return order;
 }
 
 export async function updateOrderNetRevenue(orderId: string, netRevenue: string) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    select: { storeId: true },
+  });
+  if (!order) throw new Error("订单不存在或无权修改");
+  await requireUserContext({ storeId: order.storeId });
+
   await prisma.customerOrder.update({
     where: { id: orderId },
     data: { netRevenue },
@@ -120,9 +131,18 @@ export async function updateOrderNetRevenue(orderId: string, netRevenue: string)
 }
 
 export async function createCustomerOrder(data: CreateCustomerOrderInput) {
+  const context = await requireUserContext({ storeId: data.storeId });
+  if (data.platformId) {
+    const platform = await prisma.platform.findFirst({
+      where: { id: data.platformId, storeId: context.activeStoreId },
+      select: { id: true },
+    });
+    if (!platform) throw new Error("平台不存在或无权操作");
+  }
+
   const order = await prisma.customerOrder.create({
     data: {
-      storeId: data.storeId,
+      storeId: context.activeStoreId,
       orderNumber: data.orderNumber,
       platformId: data.platformId,
       externalOrderNo: data.externalOrderNo,
@@ -144,6 +164,18 @@ export async function createCustomerOrder(data: CreateCustomerOrderInput) {
 }
 
 export async function addOrderLine(data: CreateOrderLineInput) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: data.orderId },
+    select: { storeId: true },
+  });
+  if (!order) throw new Error("订单不存在或无权修改");
+  const context = await requireUserContext({ storeId: order.storeId });
+  const sku = await prisma.sKU.findFirst({
+    where: { id: data.skuId, storeId: context.activeStoreId },
+    select: { id: true },
+  });
+  if (!sku) throw new Error("SKU 不存在或不属于当前店铺");
+
   const quantity = new Decimal(data.quantity);
   const unitPrice = data.unitPrice ? new Decimal(data.unitPrice) : new Decimal(0);
   const lineAmount = quantity.times(unitPrice);
@@ -169,6 +201,14 @@ export async function addOrderLine(data: CreateOrderLineInput) {
 
 export async function allocateInventory(data: AllocateInventoryInput) {
   const quantity = new Decimal(data.quantity);
+  const orderLine = await prisma.orderLine.findUnique({
+    where: { id: data.orderLineId },
+    include: { order: { select: { storeId: true } } },
+  });
+  if (!orderLine) {
+    throw new Error("订单行不存在或无权分配");
+  }
+  await requireUserContext({ storeId: orderLine.order.storeId });
 
   const allocation = await prisma.$transaction(async (tx) => {
     const lot = await tx.inventoryLot.findUnique({
@@ -177,6 +217,9 @@ export async function allocateInventory(data: AllocateInventoryInput) {
 
     if (!lot) {
       throw new Error("库存批次不存在");
+    }
+    if (lot.storeId !== orderLine.order.storeId) {
+      throw new Error("库存批次不属于该订单店铺");
     }
 
     const ledgers = await tx.stockLedger.findMany({

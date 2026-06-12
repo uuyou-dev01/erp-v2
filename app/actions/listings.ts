@@ -111,9 +111,10 @@ async function getSkuReferencePrice(skuId: string) {
 }
 
 export async function getListings(storeId: string, platformId?: string) {
+  const context = await requireUserContext({ storeId });
   return await prisma.listing.findMany({
     where: {
-      storeId,
+      storeId: context.activeStoreId,
       ...(platformId ? { platformId } : {}),
     },
     include: {
@@ -130,7 +131,7 @@ export async function getListings(storeId: string, platformId?: string) {
 }
 
 export async function getListingById(id: string) {
-  return await prisma.listing.findUnique({
+  const listing = await prisma.listing.findUnique({
     where: { id },
     include: {
       platform: true,
@@ -143,6 +144,9 @@ export async function getListingById(id: string) {
       },
     },
   });
+  if (!listing) return null;
+  await requireUserContext({ storeId: listing.storeId });
+  return listing;
 }
 
 export async function createListing(data: {
@@ -158,8 +162,8 @@ export async function createListing(data: {
   estimatedNet?: string;
 }) {
   const context = await requireUserContext({ storeId: data.storeId });
-  const platform = await prisma.platform.findUnique({
-    where: { id: data.platformId },
+  const platform = await prisma.platform.findFirst({
+    where: { id: data.platformId, storeId: context.activeStoreId },
     select: {
       defaultFeeRate: true,
       defaultCurrency: true,
@@ -167,6 +171,9 @@ export async function createListing(data: {
       shippingRules: true,
     },
   });
+  if (!platform) {
+    throw new Error("平台不存在或无权操作");
+  }
   const platformDefaults = platform ? resolvePlatformListingDefaults(platform) : null;
 
   let pricingSkuId = data.skuId;
@@ -532,6 +539,9 @@ export async function batchCreateListings(data: {
   const platform = await prisma.platform.findUnique({
     where: { id: data.platformId },
   });
+  if (!platform || platform.storeId !== context.activeStoreId) {
+    throw new Error("平台不存在或无权操作");
+  }
 
   const referenceBySku = new Map<
     string,
@@ -600,6 +610,13 @@ export async function updateListing(
     status?: string;
   }
 ) {
+  const existing = await prisma.listing.findUnique({
+    where: { id },
+    select: { storeId: true },
+  });
+  if (!existing) throw new Error("上架记录不存在或无权修改");
+  await requireUserContext({ storeId: existing.storeId });
+
   const updateData: Record<string, unknown> = {
     status: data.status,
     currency: data.currency,
@@ -623,6 +640,13 @@ export async function updateListing(
 }
 
 export async function delistListing(id: string) {
+  const existing = await prisma.listing.findUnique({
+    where: { id },
+    select: { storeId: true },
+  });
+  if (!existing) throw new Error("上架记录不存在或无权下架");
+  await requireUserContext({ storeId: existing.storeId });
+
   const listing = await prisma.listing.update({
     where: { id },
     data: {
@@ -636,9 +660,17 @@ export async function delistListing(id: string) {
 }
 
 export async function deleteListing(id: string) {
-  await prisma.listing.delete({
+  const existing = await prisma.listing.findUnique({
     where: { id },
+    select: { storeId: true },
   });
+  if (!existing) throw new Error("上架记录不存在或无权删除");
+  const context = await requireUserContext({ storeId: existing.storeId });
+
+  const deleted = await prisma.listing.deleteMany({
+    where: { id, storeId: context.activeStoreId },
+  });
+  if (deleted.count === 0) throw new Error("上架记录不存在或无权删除");
 
   revalidateListingSurfaces();
 }
