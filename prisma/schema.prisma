@@ -110,6 +110,87 @@ model StoreAccess {
   @@map("store_accesses")
 }
 
+model Task {
+  id             String    @id @default(cuid())
+  organizationId String
+  storeId        String
+  type           String
+  status         String    @default("OPEN")
+  priority       String    @default("NORMAL")
+  title          String
+  description    String?   @db.Text
+  refType        String
+  refId          String
+  createdById    String
+  assignedToId   String?
+  delegatedToId  String?
+  completedById  String?
+  assignedAt     DateTime?
+  dueAt          DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([organizationId])
+  @@index([storeId])
+  @@index([type])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([completedById])
+  @@index([refType, refId])
+  @@map("tasks")
+}
+
+model Notification {
+  id             String    @id @default(cuid())
+  organizationId String
+  storeId        String?
+  recipientId    String
+  actorId        String?
+  taskId         String?
+  refType        String?
+  refId          String?
+  type           String
+  title          String
+  body           String?   @db.Text
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId])
+  @@index([storeId])
+  @@index([recipientId])
+  @@index([actorId])
+  @@index([taskId])
+  @@index([readAt])
+  @@map("notifications")
+}
+
+model ActivityLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  storeId        String?
+  actorId        String?
+  action         String
+  refType        String
+  refId          String
+  taskId         String?
+  before         Json?
+  after          Json?
+  message        String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([storeId])
+  @@index([actorId])
+  @@index([action])
+  @@index([refType, refId])
+  @@index([taskId])
+  @@map("activity_logs")
+}
+
 // ============================================
 // PRODUCT: SKU
 // ============================================
