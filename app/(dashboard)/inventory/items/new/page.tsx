@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ItemUnitForm } from "@/components/inventory/item-unit-form";
 
+export const dynamic = "force-dynamic";
+
 // Temporary hardcoded storeId
 const STORE_ID = "store_1";
 

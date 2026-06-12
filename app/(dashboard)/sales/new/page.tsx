@@ -1,5 +1,7 @@
 import { CustomerOrderForm } from "@/components/sales/customer-order-form";
 
+export const dynamic = "force-dynamic";
+
 const STORE_ID = "store_1";
 
 export default function NewCustomerOrderPage() {

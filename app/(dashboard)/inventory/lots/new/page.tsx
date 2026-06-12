@@ -1,5 +1,7 @@
 import { InventoryLotForm } from "@/components/inventory/inventory-lot-form";
 
+export const dynamic = "force-dynamic";
+
 // Temporary hardcoded storeId - will be replaced with auth context
 const STORE_ID = "store_1";
 

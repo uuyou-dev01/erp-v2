@@ -4,6 +4,8 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
+export const dynamic = "force-dynamic";
+
 // Temporary hardcoded storeId
 const STORE_ID = "store_1";
 

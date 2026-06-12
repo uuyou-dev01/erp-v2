@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 const STORE_ID = "store_1";
 
 export default async function NewSKUPage() {

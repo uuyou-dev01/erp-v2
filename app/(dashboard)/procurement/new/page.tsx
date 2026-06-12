@@ -1,5 +1,7 @@
 import { PurchaseWizard } from "@/components/procurement/purchase-wizard";
 
+export const dynamic = "force-dynamic";
+
 const STORE_ID = "store_1";
 
 export default function NewPurchaseOrderPage() {
