@@ -5,12 +5,25 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("开始初始化数据...");
 
+  const organization = await prisma.organization.upsert({
+    where: { code: "main" },
+    update: { name: "默认经营主体" },
+    create: {
+      name: "默认经营主体",
+      code: "main",
+    },
+  });
+
   // Create default store
   const store = await prisma.store.upsert({
     where: { code: "STORE_1" },
-    update: {},
+    update: {
+      currency: "CNY",
+      organizationId: organization.id,
+    },
     create: {
       id: "store_1",
+      organizationId: organization.id,
       name: "默认店铺",
       code: "STORE_1",
       currency: "CNY",
@@ -18,24 +31,68 @@ async function main() {
   });
 
   // Create default user
-  await prisma.user.upsert({
+  const adminUser = await prisma.user.upsert({
     where: { email: "admin@example.com" },
-    update: {},
+    update: {
+      role: "OWNER",
+      storeId: store.id,
+    },
     create: {
       email: "admin@example.com",
       name: "管理员",
       password: "hashed_password_placeholder",
-      role: "ADMIN",
+      role: "OWNER",
       storeId: store.id,
     },
   });
 
-  // Create default platforms (Japan marketplaces)
+  await prisma.membership.upsert({
+    where: {
+      organizationId_userId: {
+        organizationId: organization.id,
+        userId: adminUser.id,
+      },
+    },
+    update: { role: "OWNER", status: "ACTIVE" },
+    create: {
+      organizationId: organization.id,
+      userId: adminUser.id,
+      role: "OWNER",
+      status: "ACTIVE",
+    },
+  });
+
+  await prisma.storeAccess.upsert({
+    where: {
+      storeId_userId: {
+        storeId: store.id,
+        userId: adminUser.id,
+      },
+    },
+    update: { role: "OWNER" },
+    create: {
+      storeId: store.id,
+      userId: adminUser.id,
+      role: "OWNER",
+    },
+  });
+
+  // Create default platforms (China and Japan marketplaces)
   const platforms = [
+    { code: "TAOBAO", name: "淘宝（Taobao）", country: "CN", defaultFeeRate: 0, defaultCurrency: "CNY" },
+    { code: "TMALL", name: "天猫（Tmall）", country: "CN", defaultFeeRate: 0.05, defaultCurrency: "CNY" },
+    { code: "JD", name: "京东（JD.com）", country: "CN", defaultFeeRate: 0.06, defaultCurrency: "CNY" },
+    { code: "PINDUODUO", name: "拼多多（Pinduoduo）", country: "CN", defaultFeeRate: 0.006, defaultCurrency: "CNY" },
+    { code: "XIAN_YU", name: "闲鱼（Xianyu）", country: "CN", defaultFeeRate: 0, defaultCurrency: "CNY" },
+    { code: "DOUYIN", name: "抖音电商（Douyin）", country: "CN", defaultFeeRate: 0.05, defaultCurrency: "CNY" },
+    { code: "XIAOHONGSHU", name: "小红书（Xiaohongshu）", country: "CN", defaultFeeRate: 0.05, defaultCurrency: "CNY" },
+    { code: "ALIBABA_1688", name: "1688", country: "CN", defaultFeeRate: 0, defaultCurrency: "CNY" },
     { code: "MERCARI", name: "Mercari（メルカリ）", country: "JP", defaultFeeRate: 0.1, defaultCurrency: "JPY" },
     { code: "YAHOO_AUCTION", name: "Yahoo拍卖（ヤフオク）", country: "JP", defaultFeeRate: 0.088, defaultCurrency: "JPY" },
+    { code: "YAHOO_SHOPPING", name: "Yahoo购物（Yahoo!ショッピング）", country: "JP", defaultFeeRate: 0.08, defaultCurrency: "JPY" },
     { code: "RAKUTEN", name: "乐天（楽天）", country: "JP", defaultFeeRate: 0.065, defaultCurrency: "JPY" },
     { code: "AMAZON_JP", name: "亚马逊日本（Amazon.co.jp）", country: "JP", defaultFeeRate: 0.15, defaultCurrency: "JPY" },
+    { code: "ZOZOTOWN", name: "ZOZOTOWN", country: "JP", defaultFeeRate: 0.1, defaultCurrency: "JPY" },
   ];
 
   for (const p of platforms) {

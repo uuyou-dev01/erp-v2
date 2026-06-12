@@ -13,31 +13,48 @@ datasource db {
 // CORE: Store & Multi-tenancy
 // ============================================
 
-model Store {
+model Organization {
   id        String   @id @default(cuid())
   name      String
   code      String   @unique
-  currency  String   @default("USD")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users            User[]
-  skus             SKU[]
-  locations        Location[]
-  inventoryLots    InventoryLot[]
-  itemUnits        ItemUnit[]
-  stockLedgers     StockLedger[]
-  purchaseOrders   PurchaseOrder[]
-  customerOrders   CustomerOrder[]
-  inventorySplits  InventorySplit[]
-  platforms        Platform[]
-  listings         Listing[]
+  stores      Store[]
+  memberships Membership[]
+
+  @@map("organizations")
+}
+
+model Store {
+  id             String   @id @default(cuid())
+  organizationId String?
+  name           String
+  code           String   @unique
+  currency       String   @default("CNY")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  users                User[]
+  storeAccesses        StoreAccess[]
+  skus                 SKU[]
+  locations            Location[]
+  inventoryLots        InventoryLot[]
+  itemUnits            ItemUnit[]
+  stockLedgers         StockLedger[]
+  purchaseOrders       PurchaseOrder[]
+  customerOrders       CustomerOrder[]
+  inventorySplits      InventorySplit[]
+  platforms            Platform[]
+  listings             Listing[]
   importJobs           ImportJob[]
   quickEntries         QuickEntry[]
   inboundShipments     InboundShipment[]
   consolidationBatches ConsolidationBatch[]
   inspectionEvents     InspectionEvent[]
 
+  @@index([organizationId])
   @@map("stores")
 }
 
@@ -51,10 +68,46 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store         Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  memberships   Membership[]
+  storeAccesses StoreAccess[]
 
   @@index([storeId])
   @@map("users")
+}
+
+model Membership {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String   @default("VIEWER")
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model StoreAccess {
+  id          String   @id @default(cuid())
+  storeId     String
+  userId      String
+  role        String   @default("VIEWER")
+  permissions Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, userId])
+  @@index([userId])
+  @@map("store_accesses")
 }
 
 // ============================================
@@ -62,18 +115,18 @@ model User {
 // ============================================
 
 model SKU {
-  id          String   @id @default(cuid())
-  storeId     String
-  code        String
-  name        String
-  parentSkuId String?
-  category    String?
-  brand       String?
-  attributes  Json?
-  description String?
+  id            String   @id @default(cuid())
+  storeId       String
+  code          String
+  name          String
+  parentSkuId   String?
+  category      String?
+  brand         String?
+  attributes    Json?
+  description   String?
   imageUrl      String?
   isAutoCreated Boolean  @default(false)
-  mergeStatus   String?  // PENDING, CONFIRMED, MERGED
+  mergeStatus   String? // PENDING, CONFIRMED, MERGED
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -107,7 +160,7 @@ model Location {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  store        Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store                Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   inventoryLots        InventoryLot[]
   itemUnits            ItemUnit[]
   stockLedgers         StockLedger[]
@@ -212,16 +265,16 @@ model StockLedger {
 // ============================================
 
 model InventorySplit {
-  id              String   @id @default(cuid())
-  storeId         String
-  splitType       String // UNBOX, DISASSEMBLE, CUSTOM
-  sourceType      String // LOT, ITEM_UNIT
-  sourceId        String
-  occurredAt      DateTime @default(now())
-  totalSourceCost Decimal  @db.Decimal(19, 4)
-  allocationMethod String  @default("PROPORTIONAL_BY_QTY")
-  createdById     String?
-  createdAt       DateTime @default(now())
+  id               String   @id @default(cuid())
+  storeId          String
+  splitType        String // UNBOX, DISASSEMBLE, CUSTOM
+  sourceType       String // LOT, ITEM_UNIT
+  sourceId         String
+  occurredAt       DateTime @default(now())
+  totalSourceCost  Decimal  @db.Decimal(19, 4)
+  allocationMethod String   @default("PROPORTIONAL_BY_QTY")
+  createdById      String?
+  createdAt        DateTime @default(now())
 
   store Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   lines InventorySplitLine[]
@@ -250,31 +303,31 @@ model InventorySplitLine {
 // ============================================
 
 model PurchaseOrder {
-  id              String   @id @default(cuid())
-  storeId         String
-  orderNo         String
-  supplierId      String?
-  supplierName    String?
-  currency        String
-  fxRate          Decimal? @db.Decimal(19, 8)
-  subtotal        Decimal  @db.Decimal(19, 4)
-  totalAmount     Decimal  @db.Decimal(19, 4)
-  status          String   @default("DRAFT") // DRAFT, ORDERED, SHIPPED, RECEIVED, CANCELLED
-  orderedAt       DateTime?
-  shippedAt       DateTime?
-  etaDate         DateTime?
-  receivedAt      DateTime?
-  trackingNo      String?
-  carrier         String?
-  shipmentNote    String?  @db.Text
+  id                    String    @id @default(cuid())
+  storeId               String
+  orderNo               String
+  supplierId            String?
+  supplierName          String?
+  currency              String
+  fxRate                Decimal?  @db.Decimal(19, 8)
+  subtotal              Decimal   @db.Decimal(19, 4)
+  totalAmount           Decimal   @db.Decimal(19, 4)
+  status                String    @default("DRAFT") // DRAFT, ORDERED, SHIPPED, RECEIVED, CANCELLED
+  orderedAt             DateTime?
+  shippedAt             DateTime?
+  etaDate               DateTime?
+  receivedAt            DateTime?
+  trackingNo            String?
+  carrier               String?
+  shipmentNote          String?   @db.Text
   destinationLocationId String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  store                 Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  destinationLocation   Location?          @relation(fields: [destinationLocationId], references: [id], onDelete: SetNull)
-  lines                 PurchaseLine[]
-  inboundShipments      InboundShipment[]
+  store               Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  destinationLocation Location?         @relation(fields: [destinationLocationId], references: [id], onDelete: SetNull)
+  lines               PurchaseLine[]
+  inboundShipments    InboundShipment[]
 
   @@unique([storeId, orderNo])
   @@index([storeId])
@@ -308,35 +361,35 @@ model PurchaseLine {
 // ============================================
 
 model CustomerOrder {
-  id              String   @id @default(cuid())
-  storeId         String
-  orderNumber     String   @unique
-  platformId      String?
-  externalOrderNo String?
-  customerName    String
-  customerEmail   String?
-  customerPhone   String?
-  shippingAddress String?  @db.Text
-  orderDate       DateTime
-  currency        String
-  subtotal        Decimal  @db.Decimal(19, 4)
-  discountTotal   Decimal  @default(0) @db.Decimal(19, 4)
-  shippingCharged Decimal  @default(0) @db.Decimal(19, 4)
-  totalPaid       Decimal  @db.Decimal(19, 4)
-  platformFee     Decimal  @default(0) @db.Decimal(19, 4)
-  shippingFee     Decimal  @default(0) @db.Decimal(19, 4)
-  shippingProvider String?
-  shippingProviderFeeRate Decimal? @db.Decimal(8, 4)
-  netRevenue      Decimal? @db.Decimal(19, 4)
-  countryFlow     String?
-  orderStatus     String   @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
-  shippedAt       DateTime?
-  trackingNo      String?
-  shippingProof   Json?
-  settledAt       DateTime?
-  createdAt       DateTime @default(now())
-  confirmedAt     DateTime?
-  updatedAt       DateTime @updatedAt
+  id                      String    @id @default(cuid())
+  storeId                 String
+  orderNumber             String    @unique
+  platformId              String?
+  externalOrderNo         String?
+  customerName            String
+  customerEmail           String?
+  customerPhone           String?
+  shippingAddress         String?   @db.Text
+  orderDate               DateTime
+  currency                String
+  subtotal                Decimal   @db.Decimal(19, 4)
+  discountTotal           Decimal   @default(0) @db.Decimal(19, 4)
+  shippingCharged         Decimal   @default(0) @db.Decimal(19, 4)
+  totalPaid               Decimal   @db.Decimal(19, 4)
+  platformFee             Decimal   @default(0) @db.Decimal(19, 4)
+  shippingFee             Decimal   @default(0) @db.Decimal(19, 4)
+  shippingProvider        String?
+  shippingProviderFeeRate Decimal?  @db.Decimal(8, 4)
+  netRevenue              Decimal?  @db.Decimal(19, 4)
+  countryFlow             String?
+  orderStatus             String    @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
+  shippedAt               DateTime?
+  trackingNo              String?
+  shippingProof           Json?
+  settledAt               DateTime?
+  createdAt               DateTime  @default(now())
+  confirmedAt             DateTime?
+  updatedAt               DateTime  @updatedAt
 
   store    Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
   platform Platform?   @relation(fields: [platformId], references: [id])
@@ -417,18 +470,18 @@ model Fee {
 // ============================================
 
 model Platform {
-  id              String   @id @default(cuid())
-  storeId         String
-  code            String
-  name            String
-  country         String?
+  id                 String   @id @default(cuid())
+  storeId            String
+  code               String
+  name               String
+  country            String?
   defaultFeeRate     Decimal? @db.Decimal(8, 4)
   defaultCurrency    String?
   defaultShippingFee Decimal? @db.Decimal(19, 4)
   shippingRules      Json?
-  notes           String?  @db.Text
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  notes              String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   store          Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
   listings       Listing[]
@@ -440,22 +493,22 @@ model Platform {
 }
 
 model Listing {
-  id                String    @id @default(cuid())
-  storeId           String
-  platformId        String
-  skuId             String?
-  itemUnitId        String?
-  listingType       String // SKU, ITEM_UNIT
-  listedPrice       Decimal?  @db.Decimal(19, 4)
-  currency          String?
-  feeRateOverride   Decimal?  @db.Decimal(8, 4)
-  shippingFeeOverride Decimal? @db.Decimal(19, 4)
-  estimatedNet      Decimal?  @db.Decimal(19, 4)
-  status            String    @default("ACTIVE") // ACTIVE, DELISTED
-  listedAt          DateTime  @default(now())
-  delistedAt        DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  storeId             String
+  platformId          String
+  skuId               String?
+  itemUnitId          String?
+  listingType         String // SKU, ITEM_UNIT
+  listedPrice         Decimal?  @db.Decimal(19, 4)
+  currency            String?
+  feeRateOverride     Decimal?  @db.Decimal(8, 4)
+  shippingFeeOverride Decimal?  @db.Decimal(19, 4)
+  estimatedNet        Decimal?  @db.Decimal(19, 4)
+  status              String    @default("ACTIVE") // ACTIVE, DELISTED
+  listedAt            DateTime  @default(now())
+  delistedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
   platform Platform  @relation(fields: [platformId], references: [id], onDelete: Cascade)
@@ -555,9 +608,9 @@ model ConsolidationBatch {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  store        Store                     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  fromLocation Location?                 @relation("ConsolidationFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
-  toLocation   Location?                 @relation("ConsolidationTo", fields: [toLocationId], references: [id], onDelete: SetNull)
+  store        Store                    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  fromLocation Location?                @relation("ConsolidationFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation   Location?                @relation("ConsolidationTo", fields: [toLocationId], references: [id], onDelete: SetNull)
   lines        ConsolidationBatchLine[]
 
   @@index([storeId])
@@ -603,53 +656,53 @@ model InspectionEvent {
 // ============================================
 
 model QuickEntry {
-  id        String   @id @default(cuid())
-  storeId   String
-  sourceType String  @default("MANUAL") // MANUAL, PASTE, IMPORT
+  id         String @id @default(cuid())
+  storeId    String
+  sourceType String @default("MANUAL") // MANUAL, PASTE, IMPORT
 
-  rawBrand              String?
-  rawProductName        String
-  rawVariant            String?
-  rawCategory           String?
-  conditionType         String?  // 新品, 中古
-  quantity              Decimal  @default(1) @db.Decimal(19, 4)
-  purchasePrice         Decimal? @db.Decimal(19, 4)
-  purchaseCurrency      String?
-  purchasePlatformText  String?
-  purchaseDate          DateTime?
-  purchaseTrackingNo    String?
-  purchaseShippingFee   Decimal? @db.Decimal(19, 4)
-  currentLocationText   String?
-  transitTrackingNo     String?
-  transitShippingFee    Decimal? @db.Decimal(19, 4)
-  listingPlatformsText  String?
-  salePlatformText      String?
-  saleCurrency          String?
-  salePrice             Decimal? @db.Decimal(19, 4)
-  saleShippingFee       Decimal? @db.Decimal(19, 4)
-  saleMiscFee           Decimal? @db.Decimal(19, 4)
-  salePlatformFeeText   String?
-  saleDate              DateTime?
-  note                  String?  @db.Text
-  batchNote             String?
+  rawBrand             String?
+  rawProductName       String
+  rawVariant           String?
+  rawCategory          String?
+  conditionType        String? // 新品, 中古
+  quantity             Decimal   @default(1) @db.Decimal(19, 4)
+  purchasePrice        Decimal?  @db.Decimal(19, 4)
+  purchaseCurrency     String?
+  purchasePlatformText String?
+  purchaseDate         DateTime?
+  purchaseTrackingNo   String?
+  purchaseShippingFee  Decimal?  @db.Decimal(19, 4)
+  currentLocationText  String?
+  transitTrackingNo    String?
+  transitShippingFee   Decimal?  @db.Decimal(19, 4)
+  listingPlatformsText String?
+  salePlatformText     String?
+  saleCurrency         String?
+  salePrice            Decimal?  @db.Decimal(19, 4)
+  saleShippingFee      Decimal?  @db.Decimal(19, 4)
+  saleMiscFee          Decimal?  @db.Decimal(19, 4)
+  salePlatformFeeText  String?
+  saleDate             DateTime?
+  note                 String?   @db.Text
+  batchNote            String?
 
-  workflowStage   String   @default("PURCHASE") // PURCHASE, LOGISTICS, INSPECTION, LISTING, SOLD, SHIPPED, SETTLED, CLOSED
+  workflowStage    String    @default("PURCHASE") // PURCHASE, LOGISTICS, INSPECTION, LISTING, SOLD, SHIPPED, SETTLED, CLOSED
   inspectionResult String? // PASSED, FAILED, PENDING
-  inspectionNote   String? @db.Text
+  inspectionNote   String?   @db.Text
   inspectedAt      DateTime?
 
-  processedStatus String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, PARTIAL, FAILED
+  processedStatus String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, PARTIAL, FAILED
   processedAt     DateTime?
-  errorMessage    String?  @db.Text
+  errorMessage    String?   @db.Text
 
-  generatedSkuId            String?
-  generatedLotId            String?
-  generatedItemUnitIds      Json?
-  generatedPurchaseOrderId  String?
-  generatedPurchaseLineId   String?
-  generatedListingIds       Json?
-  generatedCustomerOrderId  String?
-  generatedOrderLineId      String?
+  generatedSkuId           String?
+  generatedLotId           String?
+  generatedItemUnitIds     Json?
+  generatedPurchaseOrderId String?
+  generatedPurchaseLineId  String?
+  generatedListingIds      Json?
+  generatedCustomerOrderId String?
+  generatedOrderLineId     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
