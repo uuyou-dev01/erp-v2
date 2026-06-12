@@ -24,8 +24,7 @@ import {
   createConsolidationForPurchaseOrders,
 } from "@/app/actions/consolidations";
 import { getListingPendingItems } from "@/lib/application/listing-pending";
-
-const STORE_ID = "store_1";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 function clean(value?: string | null) {
   return value?.trim() || undefined;
@@ -37,7 +36,9 @@ function optionalInputDate(value?: string) {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-export async function getWorkbenchQueueCounts(storeId = STORE_ID): Promise<QueueCounts> {
+export async function getWorkbenchQueueCounts(storeId?: string): Promise<QueueCounts> {
+  const context = await requireUserContext({ storeId });
+  storeId = context.activeStoreId;
   const [counts, pendingListingItems] = await Promise.all([
     getQueueCounts(storeId),
     getListingPendingItems(storeId),
@@ -51,17 +52,21 @@ export async function getWorkbenchQueueCounts(storeId = STORE_ID): Promise<Queue
 }
 
 export async function getWorkbenchWorkItems(
-  storeId = STORE_ID,
+  storeId: string | undefined,
   queue?: WorkQueue,
   limit = 80
 ): Promise<WorkItem[]> {
+  const context = await requireUserContext({ storeId });
+  storeId = context.activeStoreId;
   return collectWorkItems(storeId, queue, limit);
 }
 
 export async function getWorkbenchRecentActivity(
-  storeId = STORE_ID,
+  storeId: string | undefined,
   limit = 20
 ): Promise<RecentActivityItem[]> {
+  const context = await requireUserContext({ storeId });
+  storeId = context.activeStoreId;
   return getRecentActivity(storeId, limit);
 }
 
@@ -69,6 +74,7 @@ export async function getWorkbenchWorkItemDetail(
   entityType: WorkItem["entityType"],
   entityId: string
 ): Promise<WorkItemDetail | null> {
+  await requireUserContext();
   return getWorkItemDetail(entityType, entityId);
 }
 
@@ -76,6 +82,7 @@ export async function getWorkbenchProductTicket(
   entityType: WorkItem["entityType"],
   entityId: string
 ): Promise<ProductTicket | null> {
+  await requireUserContext();
   return getProductTicketByEntity(entityType, entityId);
 }
 
@@ -230,12 +237,13 @@ export async function bulkConsolidatePurchases(input: {
   if (ids.length === 0) return { success: 0, failed: 0 };
 
   if (input.batchMode === "new") {
+    const context = await requireUserContext();
     const firstOrder = await prisma.purchaseOrder.findFirst({
       where: { id: { in: ids }, destinationLocationId: { not: null } },
       select: { destinationLocationId: true },
     });
     return createConsolidationForPurchaseOrders({
-      storeId: STORE_ID,
+      storeId: context.activeStoreId,
       purchaseOrderIds: ids,
       fromLocationId: input.fromLocationId ?? firstOrder?.destinationLocationId ?? undefined,
       toLocationId: input.toLocationId,
@@ -365,7 +373,12 @@ export interface CommandSearchResult {
   href: string;
 }
 
-export async function searchProductTickets(query: string, storeId = STORE_ID): Promise<CommandSearchResult[]> {
+export async function searchProductTickets(
+  query: string,
+  storeId?: string
+): Promise<CommandSearchResult[]> {
+  const context = await requireUserContext({ storeId });
+  storeId = context.activeStoreId;
   const q = query.trim();
   if (!q) return [];
 

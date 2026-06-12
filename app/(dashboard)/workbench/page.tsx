@@ -12,21 +12,22 @@ import { getConsolidationBatches } from "@/app/actions/consolidations";
 import { NextActionWorkbench } from "@/components/workbench/next-action-workbench";
 import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
-
 export default async function WorkbenchPage() {
+  const context = await requireUserContext();
+  const storeId = context.activeStoreId;
   const [counts, items, recentActivity, entries, skus, locations, platforms, consolidationBatches] = await Promise.all([
-    getWorkbenchQueueCounts(STORE_ID),
-    getWorkbenchWorkItems(STORE_ID, undefined, 120),
-    getWorkbenchRecentActivity(STORE_ID),
-    getQuickEntries(STORE_ID, 20),
-    getSKUs(STORE_ID),
-    getLocations(STORE_ID),
-    getPlatforms(STORE_ID),
-    getConsolidationBatches(STORE_ID),
+    getWorkbenchQueueCounts(storeId),
+    getWorkbenchWorkItems(storeId, undefined, 120),
+    getWorkbenchRecentActivity(storeId),
+    getQuickEntries(storeId, 20),
+    getSKUs(storeId),
+    getLocations(storeId),
+    getPlatforms(storeId),
+    getConsolidationBatches(storeId),
   ]);
 
   const recentEntries = entries.map((entry) => ({
@@ -138,7 +139,7 @@ export default async function WorkbenchPage() {
       />
       <Suspense fallback={<div className="text-sm text-muted-foreground">加载工作台...</div>}>
         <NextActionWorkbench
-          storeId={STORE_ID}
+          storeId={storeId}
           initialCounts={counts}
           initialItems={items}
           recentActivity={recentActivity}
