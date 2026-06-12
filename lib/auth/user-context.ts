@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { cookies } from "next/headers";
 
 export interface UserContext {
   userId: string;
@@ -8,13 +9,24 @@ export interface UserContext {
   storeIds: string[];
 }
 
-const DEV_USER_EMAIL = "admin@example.com";
+export const USER_CONTEXT_COOKIE = "erp_current_user_email";
+const DEFAULT_USER_EMAIL = "admin@example.com";
+
+async function getCurrentUserEmail() {
+  const cookieStore = await cookies();
+  return (
+    cookieStore.get(USER_CONTEXT_COOKIE)?.value ||
+    process.env.ERP_DEV_USER_EMAIL ||
+    DEFAULT_USER_EMAIL
+  );
+}
 
 export async function requireUserContext(input?: {
   storeId?: string;
 }): Promise<UserContext> {
+  const email = await getCurrentUserEmail();
   const user = await prisma.user.findUnique({
-    where: { email: DEV_USER_EMAIL },
+    where: { email },
     include: {
       memberships: true,
       storeAccesses: true,

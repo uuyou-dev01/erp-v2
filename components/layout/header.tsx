@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Bell, Menu, Search, User } from "lucide-react";
 import { getMyNotificationSummary } from "@/app/actions/notifications";
 import { cn } from "@/lib/utils";
@@ -64,9 +64,13 @@ export function Header({ onMenuClick, onCommandOpen }: HeaderProps) {
             </span>
           ) : null}
         </Link>
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+        <Link
+          href="/login"
+          aria-label="切换操作人"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 text-muted-foreground")}
+        >
           <User className="h-4 w-4" />
-        </Button>
+        </Link>
       </div>
     </header>
   );

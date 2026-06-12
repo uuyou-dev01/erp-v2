@@ -7,6 +7,9 @@ test("collaboration surfaces render without app errors", async ({ page }) => {
   });
   page.on("pageerror", (error) => errors.push(error.message));
 
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: "选择操作人" })).toBeVisible();
+
   await page.goto("/workbench");
   await expect(page.locator("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible();
