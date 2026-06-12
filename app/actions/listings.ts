@@ -10,7 +10,11 @@ import {
 import { resolveFifoShipFromLocation } from "@/lib/application/inventory";
 import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
 import { requireUserContext } from "@/lib/auth/user-context";
-import { createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
+import {
+  completeTasksForRef,
+  createTaskIfMissing,
+  TASK_TYPE,
+} from "@/lib/application/tasks";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -21,7 +25,34 @@ function revalidateListingSurfaces(listingId?: string) {
   revalidatePath("/inventory/coverage/pending");
   revalidatePath("/inventory/sellable");
   revalidatePath("/inventory/sold");
+  revalidatePath("/reports/team");
   if (listingId) revalidatePath(`/listing/${listingId}`);
+}
+
+async function recordListingCreateTask(input: {
+  organizationId: string;
+  storeId: string;
+  userId: string;
+  listingId: string;
+}) {
+  await createTaskIfMissing({
+    organizationId: input.organizationId,
+    storeId: input.storeId,
+    type: TASK_TYPE.LISTING_CREATE,
+    title: "创建上架记录",
+    description: "上架动作完成后自动记录，用于团队上架统计。",
+    refType: "LISTING",
+    refId: input.listingId,
+    createdById: input.userId,
+  });
+  await completeTasksForRef({
+    organizationId: input.organizationId,
+    storeId: input.storeId,
+    type: TASK_TYPE.LISTING_CREATE,
+    refType: "LISTING",
+    refId: input.listingId,
+    completedById: input.userId,
+  });
 }
 
 async function getSkuReferencePrice(skuId: string) {
@@ -126,6 +157,7 @@ export async function createListing(data: {
   shippingFeeOverride?: string;
   estimatedNet?: string;
 }) {
+  const context = await requireUserContext({ storeId: data.storeId });
   const platform = await prisma.platform.findUnique({
     where: { id: data.platformId },
     select: {
@@ -176,7 +208,7 @@ export async function createListing(data: {
 
   const listing = await prisma.listing.create({
     data: {
-      storeId: data.storeId,
+      storeId: context.activeStoreId,
       platformId: data.platformId,
       listingType: data.listingType,
       skuId: data.skuId,
@@ -189,6 +221,13 @@ export async function createListing(data: {
       status: "ACTIVE",
       listedAt: new Date(),
     },
+  });
+
+  await recordListingCreateTask({
+    organizationId: context.organizationId,
+    storeId: context.activeStoreId,
+    userId: context.userId,
+    listingId: listing.id,
   });
 
   revalidateListingSurfaces();
@@ -489,6 +528,7 @@ export async function batchCreateListings(data: {
   listedPrice?: string;
   currency?: string;
 }) {
+  const context = await requireUserContext({ storeId: data.storeId });
   const platform = await prisma.platform.findUnique({
     where: { id: data.platformId },
   });
@@ -525,7 +565,7 @@ export async function batchCreateListings(data: {
 
       return prisma.listing.create({
         data: {
-          storeId: data.storeId,
+          storeId: context.activeStoreId,
           platformId: data.platformId,
           listingType: "SKU",
           skuId,
@@ -538,6 +578,15 @@ export async function batchCreateListings(data: {
       });
     })
   );
+
+  for (const listing of listings) {
+    await recordListingCreateTask({
+      organizationId: context.organizationId,
+      storeId: context.activeStoreId,
+      userId: context.userId,
+      listingId: listing.id,
+    });
+  }
 
   revalidateListingSurfaces();
   return { count: listings.length };

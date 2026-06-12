@@ -17,6 +17,7 @@ describe("task constants", () => {
   it("contains the shipment and listing task types needed by the workbench", () => {
     expect(TASK_TYPE.SHIP_ORDER).toBe("SHIP_ORDER");
     expect(TASK_TYPE.LISTING_CREATE).toBe("LISTING_CREATE");
+    expect(TASK_TYPE.SETTLE_ORDER).toBe("SETTLE_ORDER");
   });
 
   it("treats open assigned in-progress and overdue tasks as incomplete", () => {

@@ -360,14 +360,27 @@ export async function markOrderDelivered(orderId: string) {
   if (order.orderStatus !== "SHIPPED") {
     throw new Error("只有已发货订单可以确认妥投");
   }
+  const context = await requireUserContext({ storeId: order.storeId });
 
   await prisma.customerOrder.update({
     where: { id: orderId },
     data: { orderStatus: "DELIVERED" },
   });
 
+  await createTaskIfMissing({
+    organizationId: context.organizationId,
+    storeId: order.storeId,
+    type: TASK_TYPE.SETTLE_ORDER,
+    title: `结算订单 ${order.orderNumber}`,
+    description: "订单已妥投，等待核对平台费用、运费和利润。",
+    refType: "CUSTOMER_ORDER",
+    refId: order.id,
+    createdById: context.userId,
+  });
+
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
+  revalidatePath("/reports/team");
   revalidatePath("/workbench");
 }
 
@@ -837,6 +850,7 @@ export async function settleCustomerOrder(
   });
 
   if (!order) throw new Error("订单不存在");
+  const context = await requireUserContext({ storeId: order.storeId });
 
   const subtotal = new Decimal(order.subtotal.toString());
   const inventoryCost = order.lines.reduce((sum, line) => {
@@ -873,9 +887,29 @@ export async function settleCustomerOrder(
 
   await syncQuickEntryFromOrder(orderId, "SETTLED");
 
+  await createTaskIfMissing({
+    organizationId: context.organizationId,
+    storeId: order.storeId,
+    type: TASK_TYPE.SETTLE_ORDER,
+    title: `结算订单 ${order.orderNumber}`,
+    description: "订单结算时自动补齐的结算任务事实。",
+    refType: "CUSTOMER_ORDER",
+    refId: order.id,
+    createdById: context.userId,
+  });
+  await completeTasksForRef({
+    organizationId: context.organizationId,
+    storeId: order.storeId,
+    type: TASK_TYPE.SETTLE_ORDER,
+    refType: "CUSTOMER_ORDER",
+    refId: order.id,
+    completedById: context.userId,
+  });
+
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
   revalidatePath("/reports");
+  revalidatePath("/reports/team");
   revalidatePath("/dashboard");
   revalidatePath("/workbench");
 }
