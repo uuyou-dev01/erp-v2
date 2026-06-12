@@ -16,6 +16,13 @@ import {
   type ReturnFinancials,
   type ShippingProof,
 } from "@/lib/application/shipping-proof";
+import {
+  canReserveQuantity,
+  CLOSED_ALLOCATION_STATUSES,
+  isLotConsumedAfterShipment,
+  ORDER_ALLOCATION_STATUS,
+  RESERVING_ALLOCATION_STATUSES,
+} from "@/lib/application/order-allocation";
 
 export type OrderStatus =
   | "DRAFT"
@@ -26,21 +33,6 @@ export type OrderStatus =
   | "DELIVERED"
   | "RETURNED"
   | "CANCELLED";
-
-const ORDER_ALLOCATION_STATUS = {
-  PENDING: "PENDING",
-  ALLOCATED: "ALLOCATED",
-  SHIPPED: "SHIPPED",
-  DELIVERED: "DELIVERED",
-  CANCELLED: "CANCELLED",
-  RETURNED: "RETURNED",
-} as const;
-
-const CLOSED_ALLOCATION_STATUSES = new Set<string>([
-  ORDER_ALLOCATION_STATUS.SHIPPED,
-  ORDER_ALLOCATION_STATUS.DELIVERED,
-  ORDER_ALLOCATION_STATUS.RETURNED,
-]);
 
 export interface CreateCustomerOrderInput {
   storeId: string;
@@ -194,10 +186,7 @@ export async function allocateInventory(data: AllocateInventoryInput) {
       where: {
         lotId: data.lotId,
         status: {
-          in: [
-            ORDER_ALLOCATION_STATUS.PENDING,
-            ORDER_ALLOCATION_STATUS.ALLOCATED,
-          ],
+          in: [...RESERVING_ALLOCATION_STATUSES],
         },
       },
       select: { quantity: true },
@@ -207,7 +196,7 @@ export async function allocateInventory(data: AllocateInventoryInput) {
       new Decimal(0)
     );
 
-    if (onHand.minus(reserved).lt(quantity)) {
+    if (!canReserveQuantity({ onHand, reserved, requested: quantity })) {
       throw new Error("可用库存不足，无法分配");
     }
 
@@ -752,7 +741,7 @@ export async function markOrderShipped(
             (sum, l) => sum.plus(new Decimal(l.deltaQty.toString())),
             new Decimal(0)
           );
-          if (remaining.lte(0)) {
+          if (isLotConsumedAfterShipment(remaining)) {
             await tx.inventoryLot.update({
               where: { id: lot.id },
               data: { status: "CONSUMED" },
