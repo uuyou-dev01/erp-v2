@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
 import { createInboundInventoryLot, createInboundItemUnit } from "@/lib/application/inventory";
 import { isUsedCondition } from "@/lib/quick-entry-utils";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 
 type DecimalLike = { toString: () => string };
 
@@ -154,6 +156,28 @@ export async function createPurchaseOrder(data: CreatePurchaseOrderInput) {
   return { id: order.id };
 }
 
+export async function createPurchaseOrderAction(data: CreatePurchaseOrderInput) {
+  try {
+    const existing = await prisma.purchaseOrder.findUnique({
+      where: {
+        storeId_orderNo: {
+          storeId: data.storeId,
+          orderNo: data.orderNo,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new Error("采购单号已存在，请换一个单号");
+    }
+
+    const order = await createPurchaseOrder(data);
+    return actionSuccess(order);
+  } catch (error) {
+    return toActionFailure(error, "创建采购订单失败，请重试");
+  }
+}
+
 export async function markPurchaseAsShipped(data: MarkPurchaseShippedInput) {
   const existing = await prisma.purchaseOrder.findUnique({
     where: { id: data.purchaseOrderId },
@@ -234,7 +258,29 @@ export async function markPurchaseAsShipped(data: MarkPurchaseShippedInput) {
   revalidatePath("/workbench");
 }
 
+export async function markPurchaseAsShippedAction(data: MarkPurchaseShippedInput) {
+  try {
+    await markPurchaseAsShipped(data);
+    return actionSuccess({ purchaseOrderId: data.purchaseOrderId });
+  } catch (error) {
+    return toActionFailure(error, "标记发货失败，请重试");
+  }
+}
+
 export async function addPurchaseLine(data: CreatePurchaseLineInput) {
+  const order = await prisma.purchaseOrder.findUnique({
+    where: { id: data.purchaseOrderId },
+    select: { storeId: true },
+  });
+  if (!order) {
+    throw new Error("采购单不存在");
+  }
+  await assertOperationalSku(prisma, {
+    storeId: order.storeId,
+    skuId: data.skuId,
+    actionLabel: "采购",
+  });
+
   const quantity = new Decimal(data.quantity);
   const unitPrice = new Decimal(data.unitPrice);
   const lineAmount = quantity.times(unitPrice);
@@ -258,6 +304,15 @@ export async function addPurchaseLine(data: CreatePurchaseLineInput) {
   return { id: line.id };
 }
 
+export async function addPurchaseLineAction(data: CreatePurchaseLineInput) {
+  try {
+    const line = await addPurchaseLine(data);
+    return actionSuccess(line);
+  } catch (error) {
+    return toActionFailure(error, "添加商品失败，请重试");
+  }
+}
+
 export async function deletePurchaseLine(lineId: string, orderId: string) {
   await prisma.purchaseLine.delete({
     where: { id: lineId },
@@ -269,22 +324,51 @@ export async function deletePurchaseLine(lineId: string, orderId: string) {
   revalidatePath(`/procurement/${orderId}`);
 }
 
+export async function deletePurchaseLineAction(lineId: string, orderId: string) {
+  try {
+    const line = await prisma.purchaseLine.findUnique({
+      where: { id: lineId },
+      select: { purchaseOrderId: true },
+    });
+    if (!line || line.purchaseOrderId !== orderId) {
+      throw new Error("采购明细不存在");
+    }
+
+    await deletePurchaseLine(lineId, orderId);
+    return actionSuccess({ purchaseOrderId: orderId });
+  } catch (error) {
+    return toActionFailure(error, "删除商品失败，请重试");
+  }
+}
+
 export async function updatePurchaseOrderStatus(
   id: string,
   status: PurchaseOrderStatus,
   orderedAt?: Date
 ) {
-  const order = await prisma.purchaseOrder.update({
-    where: { id },
-    data: {
-      status,
-      orderedAt: orderedAt || undefined,
-    },
-  });
+  try {
+    const existing = await prisma.purchaseOrder.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new Error("采购单不存在");
+    }
 
-  revalidatePath("/procurement");
-  revalidatePath(`/procurement/${id}`);
-  return { id: order.id, status: order.status };
+    const order = await prisma.purchaseOrder.update({
+      where: { id },
+      data: {
+        status,
+        orderedAt: orderedAt || undefined,
+      },
+    });
+
+    revalidatePath("/procurement");
+    revalidatePath(`/procurement/${id}`);
+    return actionSuccess({ id: order.id, status: order.status });
+  } catch (error) {
+    return toActionFailure(error, "更新采购状态失败，请重试");
+  }
 }
 
 export async function cancelPurchaseOrder(id: string) {
@@ -311,6 +395,15 @@ export async function cancelPurchaseOrder(id: string) {
   revalidatePath(`/procurement/${id}`);
   revalidatePath("/workbench");
   return { id: updated.id, status: updated.status };
+}
+
+export async function cancelPurchaseOrderAction(id: string) {
+  try {
+    const order = await cancelPurchaseOrder(id);
+    return actionSuccess(order);
+  } catch (error) {
+    return toActionFailure(error, "取消采购失败，请重试");
+  }
 }
 
 export async function markPurchaseOrderArrived(data: MarkPurchaseArrivedInput) {
@@ -352,7 +445,7 @@ export async function receivePurchaseOrder(data: ReceivePurchaseOrderInput) {
   });
 
   if (!order) {
-    throw new Error("Purchase order not found");
+    throw new Error("采购单不存在");
   }
 
   if (!["ORDERED", "SHIPPED", "RECEIVED"].includes(order.status)) {
@@ -453,6 +546,15 @@ export async function receivePurchaseOrder(data: ReceivePurchaseOrderInput) {
   revalidatePath(`/procurement/${data.purchaseOrderId}`);
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
+}
+
+export async function receivePurchaseOrderAction(data: ReceivePurchaseOrderInput) {
+  try {
+    await receivePurchaseOrder(data);
+    return actionSuccess({ purchaseOrderId: data.purchaseOrderId });
+  } catch (error) {
+    return toActionFailure(error, "收货失败，请重试");
+  }
 }
 
 async function recalculateOrderTotals(orderId: string) {

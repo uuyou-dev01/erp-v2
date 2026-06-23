@@ -6,10 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { ResponsiveTable, type Column } from "@/components/shared/responsive-table";
 import { StatCard } from "@/components/shared/stat-card";
 import { SalesImportButton } from "@/components/sales/sales-import-button";
-import { Plus, Package, ShoppingBag, CheckCircle, Truck } from "lucide-react";
+import { Plus, Package, ShoppingBag, CheckCircle, Truck, CircleDollarSign } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/lib/decimal";
-import Decimal from "decimal.js";
+import { summarizeSalesOrders } from "@/lib/application/sales-metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -54,15 +54,11 @@ export default async function SalesPage({
     ? allOrders.filter((o) => o.platformId === platformFilter)
     : allOrders;
 
+  const allOrderSummary = summarizeSalesOrders(allOrders);
+  const filteredOrderSummary = summarizeSalesOrders(orders);
   const platformSales = platforms.map((p) => {
-    const total = allOrders
-      .filter(
-        (o) =>
-          o.platformId === p.id &&
-          o.orderStatus !== "CANCELLED" &&
-          o.orderStatus !== "RETURNED"
-      )
-      .reduce((sum, o) => sum.plus(new Decimal(o.totalPaid.toString())), new Decimal(0));
+    const total =
+      allOrderSummary.platformSales.find((row) => row.platformId === p.id)?.total ?? "0.00";
     return { id: p.id, name: p.name, total };
   });
 
@@ -71,9 +67,7 @@ export default async function SalesPage({
     draft: orders.filter((o) => o.orderStatus === "DRAFT").length,
     confirmed: orders.filter((o) => o.orderStatus === "CONFIRMED").length,
     shipped: orders.filter((o) => o.orderStatus === "SHIPPED").length,
-    totalRevenue: orders
-      .filter((o) => o.orderStatus !== "CANCELLED" && o.orderStatus !== "RETURNED")
-      .reduce((sum, o) => sum.plus(new Decimal(o.totalPaid.toString())), new Decimal(0)),
+    totalRevenue: filteredOrderSummary.totalRevenue,
   };
 
   const columns: Column<OrderRow>[] = [
@@ -155,7 +149,7 @@ export default async function SalesPage({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <StatCard
           title="总订单数"
           value={stats.total}
@@ -183,6 +177,13 @@ export default async function SalesPage({
           icon={Truck}
           iconColor="text-blue-500"
         />
+        <StatCard
+          title="有效销售额"
+          value={`¥${stats.totalRevenue.toFixed(2)}`}
+          subtitle="已确认/已发货/已送达"
+          icon={CircleDollarSign}
+          iconColor="text-emerald-500"
+        />
       </div>
 
       {/* 平台 Tab 筛选 */}
@@ -207,9 +208,9 @@ export default async function SalesPage({
                 size="sm"
               >
                 {p.name}
-                {ps && ps.total.gt(0) && (
+                {ps && Number(ps.total) > 0 && (
                   <span className="ml-2 text-[10px] opacity-70">
-                    ¥{ps.total.toFixed(0)}
+                    ¥{Number(ps.total).toFixed(0)}
                   </span>
                 )}
               </Button>

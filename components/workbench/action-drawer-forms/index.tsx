@@ -6,6 +6,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -733,6 +734,7 @@ function proofFromDetail(detail: WorkItemDetail) {
 export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
   const initialProof = proofFromDetail(detail);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [confirmStep, setConfirmStep] = useState(false);
   const [draftHint, setDraftHint] = useState(
     initialProof.updatedAt ? "已加载暂存内容" : ""
@@ -757,16 +759,19 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
 
     const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
     if (!validTypes.includes(file.type)) {
-      alert("不支持的文件类型。仅支持 JPEG、PNG、GIF 和 WebP。");
+      setUploadError("不支持的文件类型。仅支持 JPEG、PNG、GIF 和 WebP。");
+      event.target.value = "";
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      alert("文件过大，最大 5MB。");
+      setUploadError("文件过大，最大 5MB。");
+      event.target.value = "";
       return;
     }
 
     setUploading(true);
+    setUploadError(null);
     try {
       const uploadFormData = new FormData();
       uploadFormData.append("file", file);
@@ -781,7 +786,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
       const { url } = await response.json();
       setForm((value) => ({ ...value, imageUrls: [...value.imageUrls, url] }));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "图片上传失败");
+      setUploadError(error instanceof Error ? error.message : "图片上传失败");
     } finally {
       setUploading(false);
       event.target.value = "";
@@ -963,6 +968,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
           <div className="flex flex-wrap gap-2">
             {form.imageUrls.map((url) => (
               <div key={url} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={url}
                   alt="发货凭证"
@@ -991,6 +997,11 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
         />
         {uploading ? (
           <p className="text-xs text-muted-foreground">图片上传中...</p>
+        ) : null}
+        {uploadError ? (
+          <p role="alert" className="text-xs text-destructive">
+            {uploadError}
+          </p>
         ) : null}
       </div>
       <div className="space-y-2">
@@ -1026,15 +1037,13 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
 
 export function ShippedOrderForm({ detail, pending, run }: ActionFormProps) {
   const proof = proofFromDetail(detail);
+  const [confirmDeliveryOpen, setConfirmDeliveryOpen] = useState(false);
   const shippedAt = detail.actionContext.shippedAt
     ? new Date(detail.actionContext.shippedAt).toLocaleString("zh-CN")
     : null;
 
   const handleConfirmDelivery = () => {
-    const ok = confirm(
-      "确认买家已收到货物？\n\n确认后将进入「待结算」，用于录入实际手续费和利润。\n如发生退货，请先登记退货。"
-    );
-    if (!ok) return;
+    setConfirmDeliveryOpen(false);
     run(() => submitConfirmDelivery(detail.entityId));
   };
 
@@ -1053,6 +1062,7 @@ export function ShippedOrderForm({ detail, pending, run }: ActionFormProps) {
           <div className="flex flex-wrap gap-2 pt-1">
             {proof.imageUrls.map((url) => (
               <a key={url} href={url} target="_blank" rel="noreferrer">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={url}
                   alt="发货凭证"
@@ -1068,16 +1078,28 @@ export function ShippedOrderForm({ detail, pending, run }: ActionFormProps) {
         「已发货」用于在途跟进：等待妥投，或在此登记退货。确认妥投后再进入待结算。
       </p>
 
-      <Button type="button" disabled={pending} onClick={handleConfirmDelivery}>
+      <Button type="button" disabled={pending} onClick={() => setConfirmDeliveryOpen(true)}>
         确认妥投，进入待结算
       </Button>
 
       <OrderReturnSection detail={detail} pending={pending} run={run} />
+      <ConfirmDialog
+        open={confirmDeliveryOpen}
+        title="确认妥投"
+        description="确认买家已收到货物？确认后将进入待结算，用于录入实际手续费和利润。如发生退货，请先登记退货。"
+        confirmText="确认妥投"
+        cancelText="返回"
+        loading={pending}
+        onConfirm={handleConfirmDelivery}
+        onCancel={() => setConfirmDeliveryOpen(false)}
+      />
     </div>
   );
 }
 
 function OrderReturnSection({ detail, pending, run }: ActionFormProps) {
+  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [returnForm, setReturnForm] = useState({
     note: "",
     returnTrackingNo: "",
@@ -1089,20 +1111,25 @@ function OrderReturnSection({ detail, pending, run }: ActionFormProps) {
 
   const handleRegisterReturn = () => {
     if (!returnForm.note.trim()) {
-      alert("请填写退货说明");
+      setError("请填写退货说明");
       return;
     }
+    setError(null);
+    setConfirmOpen(true);
+  };
 
+  const confirmRegisterReturn = () => {
+    setConfirmOpen(false);
+    setError(null);
+    run(() => submitRegisterReturn(detail.entityId, returnForm));
+  };
+
+  const returnConfirmDescription = () => {
     const restockHint =
       returnForm.restockMode === "AVAILABLE"
         ? "单品将直接回到可售库存。"
         : "单品将进入「退货检查」，需检验后再上架。";
-    const ok = confirm(
-      `确认登记退货？\n\n${restockHint}\n批次库存将按原分配数量回滚到对应批次。`
-    );
-    if (!ok) return;
-
-    run(() => submitRegisterReturn(detail.entityId, returnForm));
+    return `确认登记退货？${restockHint}批次库存将按原分配数量回滚到对应批次。`;
   };
 
   return (
@@ -1118,12 +1145,18 @@ function OrderReturnSection({ detail, pending, run }: ActionFormProps) {
         <Label>退货说明 *</Label>
         <Textarea
           value={returnForm.note}
-          onChange={(event) =>
-            setReturnForm((value) => ({ ...value, note: event.target.value }))
-          }
+          onChange={(event) => {
+            setError(null);
+            setReturnForm((value) => ({ ...value, note: event.target.value }));
+          }}
           placeholder="如：买家拒收、平台退款、发错货等"
           disabled={pending}
         />
+        {error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-2">
@@ -1224,12 +1257,25 @@ function OrderReturnSection({ detail, pending, run }: ActionFormProps) {
       >
         登记退货并回滚库存
       </Button>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="确认登记退货"
+        description={returnConfirmDescription()}
+        confirmText="登记退货"
+        cancelText="返回"
+        tone="danger"
+        loading={pending}
+        onConfirm={confirmRegisterReturn}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }
 
 export function CancelOrderSection({ detail, pending, run }: ActionFormProps) {
   const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   if (detail.primaryAction !== "shipOrder" && detail.primaryAction !== "confirmOrder") {
     return null;
@@ -1237,13 +1283,16 @@ export function CancelOrderSection({ detail, pending, run }: ActionFormProps) {
 
   const handleCancel = () => {
     if (!reason.trim()) {
-      alert("请填写取消原因");
+      setError("请填写取消原因");
       return;
     }
-    const ok = confirm(
-      "确认取消订单？\n\n将释放已预留库存，不会扣减实物库存。取消后不可恢复为待发货。"
-    );
-    if (!ok) return;
+    setError(null);
+    setConfirmOpen(true);
+  };
+
+  const confirmCancel = () => {
+    setConfirmOpen(false);
+    setError(null);
     run(() => submitCancelOrder(detail.entityId, { reason }));
   };
 
@@ -1259,14 +1308,33 @@ export function CancelOrderSection({ detail, pending, run }: ActionFormProps) {
         <Label>取消原因 *</Label>
         <Textarea
           value={reason}
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) => {
+            setError(null);
+            setReason(event.target.value);
+          }}
           placeholder="如：买家取消、重复下单、信息有误"
           disabled={pending}
         />
+        {error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
       <Button type="button" variant="outline" disabled={pending} onClick={handleCancel}>
         取消订单并释放预留
       </Button>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="确认取消订单"
+        description="将释放已预留库存，不会扣减实物库存。取消后不可恢复为待发货。"
+        confirmText="取消订单"
+        cancelText="返回"
+        tone="danger"
+        loading={pending}
+        onConfirm={confirmCancel}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }
@@ -1315,8 +1383,6 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
     actualSalePrice: "",
     platformFee: detail.actionContext.platformFee ?? "",
     shippingFee: detail.actionContext.shippingFee ?? "",
-    actualReceived: "",
-    fxRate: "",
   });
 
   return (
@@ -1330,23 +1396,33 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>实际售价</Label>
-          <Input type="number" value={form.actualSalePrice} onChange={(event) => setForm((value) => ({ ...value, actualSalePrice: event.target.value }))} />
-        </div>
-        <div className="space-y-2">
-          <Label>实际到账</Label>
-          <Input type="number" value={form.actualReceived} onChange={(event) => setForm((value) => ({ ...value, actualReceived: event.target.value }))} />
+          <Input
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={form.actualSalePrice}
+            onChange={(event) => setForm((value) => ({ ...value, actualSalePrice: event.target.value }))}
+          />
         </div>
         <div className="space-y-2">
           <Label>实际手续费</Label>
-          <Input type="number" value={form.platformFee} onChange={(event) => setForm((value) => ({ ...value, platformFee: event.target.value }))} />
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.platformFee}
+            onChange={(event) => setForm((value) => ({ ...value, platformFee: event.target.value }))}
+          />
         </div>
         <div className="space-y-2">
           <Label>实际邮费</Label>
-          <Input type="number" value={form.shippingFee} onChange={(event) => setForm((value) => ({ ...value, shippingFee: event.target.value }))} />
-        </div>
-        <div className="space-y-2 sm:col-span-2">
-          <Label>汇率</Label>
-          <Input type="number" value={form.fxRate} onChange={(event) => setForm((value) => ({ ...value, fxRate: event.target.value }))} />
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.shippingFee}
+            onChange={(event) => setForm((value) => ({ ...value, shippingFee: event.target.value }))}
+          />
         </div>
       </div>
       <SubmitButton pending={pending}>完成结算</SubmitButton>

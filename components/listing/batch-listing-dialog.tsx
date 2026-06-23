@@ -40,8 +40,10 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
   const [platformId, setPlatformId] = useState("");
   const [price, setPrice] = useState("");
   const [currency, setCurrency] = useState("CNY");
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleToggleSku = (skuId: string) => {
+    setSubmitError(null);
     setSelectedSkus((prev) => {
       const next = new Set(prev);
       if (next.has(skuId)) {
@@ -54,6 +56,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
   };
 
   const handleSelectAll = () => {
+    setSubmitError(null);
     if (selectedSkus.size === skus.length) {
       setSelectedSkus(new Set());
     } else {
@@ -63,19 +66,23 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
 
   const handleSubmit = async () => {
     setLoading(true);
+    setSubmitError(null);
     try {
-      await batchCreateListings({
+      const result = await batchCreateListings({
         storeId,
         platformId,
         skuIds: Array.from(selectedSkus),
         listedPrice: price || undefined,
         currency: currency || undefined,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
       handleClose();
       router.refresh();
     } catch (error) {
-      console.error("Batch create failed:", error);
-      alert("批量上架失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "批量上架失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -88,6 +95,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
     setPlatformId("");
     setPrice("");
     setCurrency("CNY");
+    setSubmitError(null);
   };
 
   const canProceed = () => {
@@ -231,7 +239,10 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                         name="platform"
                         value={p.id}
                         checked={platformId === p.id}
-                        onChange={() => setPlatformId(p.id)}
+                        onChange={() => {
+                          setSubmitError(null);
+                          setPlatformId(p.id);
+                        }}
                         className="h-4 w-4"
                       />
                       <div>
@@ -262,7 +273,10 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                     step="0.01"
                     placeholder="0.00"
                     value={price}
-                    onChange={(e) => setPrice(e.target.value)}
+                    onChange={(e) => {
+                      setSubmitError(null);
+                      setPrice(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="space-y-2">
@@ -270,7 +284,10 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                   <Select
                     id="batchCurrency"
                     value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
+                    onChange={(e) => {
+                      setSubmitError(null);
+                      setCurrency(e.target.value);
+                    }}
                   >
                     <option value="CNY">人民币 (CNY)</option>
                     <option value="USD">美元 (USD)</option>
@@ -353,11 +370,22 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
                 下一步
               </Button>
             ) : (
-              <Button onClick={handleSubmit} disabled={loading}>
-                {loading
-                  ? "创建中..."
-                  : `确认创建 (${selectedSkus.size} 个)`}
-              </Button>
+              <div className="flex flex-col items-end gap-2">
+                {submitError ? (
+                  <div
+                    role="alert"
+                    className="flex max-w-md gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p>{submitError}</p>
+                  </div>
+                ) : null}
+                <Button onClick={handleSubmit} disabled={loading}>
+                  {loading
+                    ? "创建中..."
+                    : `确认创建 (${selectedSkus.size} 个)`}
+                </Button>
+              </div>
             )}
           </div>
         </CardContent>

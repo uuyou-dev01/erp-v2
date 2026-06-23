@@ -15,8 +15,12 @@ import {
   bulkTransferPurchases,
   bulkUpdatePurchaseOrderLogistics,
 } from "@/app/actions/workbench";
-import { Loader2, PackageCheck, Truck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, PackageCheck, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  describeBulkActionResult,
+  type BulkActionNotice,
+} from "@/lib/application/bulk-action-result";
 import {
   WorkbenchLocationSelect,
   type WorkbenchLocationOption,
@@ -60,6 +64,7 @@ export function BulkActionToolbar({
   const [bulkReturnTrackingNo, setBulkReturnTrackingNo] = useState("");
   const [bulkReturnCarrier, setBulkReturnCarrier] = useState("");
   const [bulkReturnNote, setBulkReturnNote] = useState("");
+  const [notice, setNotice] = useState<BulkActionNotice | null>(null);
   const selectedItems = items.filter((item) => selectedIds.includes(item.id));
   const purchaseOrderIds = selectedItems
     .filter((item) => item.entityType === "purchaseOrder")
@@ -73,21 +78,57 @@ export function BulkActionToolbar({
   const run = (fn: () => Promise<unknown>) => {
     startTransition(async () => {
       try {
-        await fn();
+        setNotice(null);
+        const result = await fn();
+        const bulkNotice = describeBulkActionResult(result);
+        if (bulkNotice) {
+          setNotice(bulkNotice);
+          if (bulkNotice.shouldClearSelection) onClear();
+          if (bulkNotice.shouldRefresh) router.refresh();
+          return;
+        }
         onClear();
         router.refresh();
       } catch (error) {
-        alert(error instanceof Error ? error.message : "批量操作失败");
+        setNotice({
+          tone: "error",
+          message: error instanceof Error ? error.message : "批量操作失败",
+          shouldRefresh: false,
+          shouldClearSelection: false,
+        });
       }
     });
+  };
+
+  const clearSelection = () => {
+    setNotice(null);
+    onClear();
   };
 
   return (
     <div className="mb-3 rounded-lg border bg-muted/30 p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm font-medium">已选择 {selectedIds.length} 项</p>
-        <Button variant="ghost" size="sm" onClick={onClear}>清空</Button>
+        <Button variant="ghost" size="sm" onClick={clearSelection}>清空</Button>
       </div>
+      {notice ? (
+        <p
+          role={notice.tone === "error" ? "alert" : "status"}
+          className={cn(
+            "mt-2 flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+            notice.tone === "error"
+              ? "border-destructive/20 bg-destructive/5 text-destructive"
+              : "border-emerald-200 bg-emerald-50 text-emerald-800"
+          )}
+        >
+          {notice.tone === "error" ? (
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          )}
+          <span>{notice.message}</span>
+        </p>
+      ) : null}
 
       {queue === "missingLogistics" && (
         <div className="mt-3 space-y-3 rounded-md border border-dashed bg-background/80 p-3">

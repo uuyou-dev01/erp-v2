@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { createInventoryLot } from "@/app/actions/inventory-lots";
+import { createInventoryLotAction } from "@/app/actions/inventory-lots";
 import { getSKUs } from "@/app/actions/skus";
 import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal } from "@/lib/decimal";
@@ -21,7 +21,9 @@ interface InventoryLotFormProps {
 export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [skus, setSKUs] = useState<
+    Array<{ id: string; code: string; name: string; parentSkuId?: string | null; childSkus?: { id: string }[] }>
+  >([]);
   const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [formData, setFormData] = useState({
     skuId: "",
@@ -33,6 +35,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
     receivedAt: new Date().toISOString().split("T")[0],
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([getSKUs(storeId), getLocations(storeId)]).then(([skuData, locationData]) => {
@@ -40,6 +43,11 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
       setLocations(locationData);
     });
   }, [storeId]);
+
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -67,11 +75,12 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!validateForm()) return;
 
     setLoading(true);
     try {
-      await createInventoryLot({
+      const result = await createInventoryLotAction({
         storeId,
         skuId: formData.skuId,
         locationId: formData.locationId,
@@ -82,12 +91,15 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
         sourceId: formData.sourceId,
         receivedAt: new Date(formData.receivedAt),
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
 
       router.push("/inventory/lots");
       router.refresh();
     } catch (error) {
-      console.error("Failed to create inventory lot:", error);
-      alert("创建入库库存失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "创建入库库存失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -105,11 +117,13 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
             <Select
               id="skuId"
               value={formData.skuId}
-              onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
+              onChange={(e) => updateFormData({ skuId: e.target.value })}
               required
             >
               <option value="">{t("inventory.select_sku")}</option>
-              {skus.map((sku) => (
+              {skus
+                .filter((sku) => sku.parentSkuId || !sku.childSkus?.length)
+                .map((sku) => (
                 <option key={sku.id} value={sku.id}>
                   {sku.code} - {sku.name}
                 </option>
@@ -128,7 +142,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
             <Select
               id="locationId"
               value={formData.locationId}
-              onChange={(e) => setFormData({ ...formData, locationId: e.target.value })}
+              onChange={(e) => updateFormData({ locationId: e.target.value })}
               required
             >
               <option value="">{t("inventory.select_location")}</option>
@@ -152,7 +166,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
               id="quantity"
               type="text"
               value={formData.quantity}
-              onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+              onChange={(e) => updateFormData({ quantity: e.target.value })}
               placeholder={t("inventory.quantity_placeholder")}
               required
             />
@@ -172,7 +186,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
                 id="unitCost"
                 type="text"
                 value={formData.unitCost}
-                onChange={(e) => setFormData({ ...formData, unitCost: e.target.value })}
+                onChange={(e) => updateFormData({ unitCost: e.target.value })}
                 placeholder={t("inventory.unit_cost_placeholder")}
                 required
               />
@@ -190,7 +204,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
               <Select
                 id="costCurrency"
                 value={formData.costCurrency}
-                onChange={(e) => setFormData({ ...formData, costCurrency: e.target.value })}
+                onChange={(e) => updateFormData({ costCurrency: e.target.value })}
                 required
               >
                 {CURRENCIES.map((c) => (
@@ -206,7 +220,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
               id="receivedAt"
               type="date"
               value={formData.receivedAt}
-              onChange={(e) => setFormData({ ...formData, receivedAt: e.target.value })}
+              onChange={(e) => updateFormData({ receivedAt: e.target.value })}
               required
             />
             <p className="text-xs text-muted-foreground">{t("inventory.received_date_hint")}</p>
@@ -225,6 +239,16 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
           </div>
         </CardContent>
       </Card>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>

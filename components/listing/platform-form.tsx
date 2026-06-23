@@ -7,9 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { createPlatform, updatePlatform } from "@/app/actions/platforms";
+import { createPlatformAction, updatePlatformAction } from "@/app/actions/platforms";
 import { COUNTRIES, CURRENCIES } from "@/lib/i18n";
-import { Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Plus, Trash2 } from "lucide-react";
 
 interface PlatformFormProps {
   storeId: string;
@@ -79,9 +79,16 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
       notes: rule.notes || "",
     }));
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     setLoading(true);
 
     try {
@@ -104,23 +111,25 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
         notes: formData.notes || undefined,
       };
 
-      if (initialData) {
-        await updatePlatform(initialData.id, payload);
-      } else {
-        await createPlatform(payload);
+      const result = initialData
+        ? await updatePlatformAction(initialData.id, payload)
+        : await createPlatformAction(payload);
+
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
       }
 
       router.push("/listing/platforms");
       router.refresh();
     } catch (error) {
-      console.error("Failed to save platform:", error);
-      const message =
+      setSubmitError(
         error instanceof Error
           ? error.message
           : initialData
             ? "保存平台失败"
-            : "创建平台失败";
-      alert(message);
+            : "创建平台失败"
+      );
     } finally {
       setLoading(false);
     }
@@ -135,6 +144,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
     field: keyof ShippingRuleForm,
     value: string
   ) => {
+    setSubmitError(null);
     setShippingRules((prev) =>
       prev.map((rule, i) => (i === index ? { ...rule, [field]: value } : rule))
     );
@@ -150,7 +160,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             placeholder="例如：MERCARI, YAHOO, RAKUTEN"
             value={formData.code}
             onChange={(e) =>
-              setFormData({ ...formData, code: e.target.value.toUpperCase() })
+              updateFormData({ code: e.target.value.toUpperCase() })
             }
             required
           />
@@ -165,7 +175,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             id="name"
             placeholder="例如：Mercari、Yahoo拍卖、乐天"
             value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            onChange={(e) => updateFormData({ name: e.target.value })}
             required
           />
         </div>
@@ -178,7 +188,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             id="country"
             value={formData.country}
             onChange={(e) =>
-              setFormData({ ...formData, country: e.target.value })
+              updateFormData({ country: e.target.value })
             }
           >
             <option value="">选择国家（选填）</option>
@@ -196,7 +206,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             id="defaultCurrency"
             value={formData.defaultCurrency}
             onChange={(e) =>
-              setFormData({ ...formData, defaultCurrency: e.target.value })
+              updateFormData({ defaultCurrency: e.target.value })
             }
           >
             <option value="">选择币种（选填）</option>
@@ -221,7 +231,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             placeholder="例如：0.10 (10%)"
             value={formData.defaultFeeRate}
             onChange={(e) =>
-              setFormData({ ...formData, defaultFeeRate: e.target.value })
+              updateFormData({ defaultFeeRate: e.target.value })
             }
           />
           {feeRatePercent && (
@@ -241,7 +251,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             placeholder={formData.defaultCurrency ? `例如：750 (${formData.defaultCurrency})` : "例如：750"}
             value={formData.defaultShippingFee}
             onChange={(e) =>
-              setFormData({ ...formData, defaultShippingFee: e.target.value })
+              updateFormData({ defaultShippingFee: e.target.value })
             }
           />
           <p className="text-xs text-muted-foreground">
@@ -262,12 +272,13 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() =>
+            onClick={() => {
+              setSubmitError(null);
               setShippingRules((prev) => [
                 ...prev,
                 createEmptyShippingRule(formData.defaultCurrency || "JPY"),
               ])
-            }
+            }}
           >
             <Plus className="mr-2 h-4 w-4" />
             添加规则
@@ -285,9 +296,10 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
                     variant="ghost"
                     size="sm"
                     className="text-red-600 hover:text-red-700"
-                    onClick={() =>
-                      setShippingRules((prev) => prev.filter((_, i) => i !== index))
-                    }
+                    onClick={() => {
+                      setSubmitError(null);
+                      setShippingRules((prev) => prev.filter((_, i) => i !== index));
+                    }}
                   >
                     <Trash2 className="mr-1 h-4 w-4" />
                     删除
@@ -378,10 +390,16 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
           id="notes"
           placeholder="平台的额外信息、注意事项..."
           value={formData.notes}
-          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+          onChange={(e) => updateFormData({ notes: e.target.value })}
           rows={3}
         />
       </div>
+
+      {submitError && (
+        <p className="flex items-center gap-1 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />{submitError}
+        </p>
+      )}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>

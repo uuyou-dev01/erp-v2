@@ -60,6 +60,7 @@ export function ListingForm({
 }: ListingFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [platforms, setPlatforms] = useState<PlatformData[]>([]);
   const [skus, setSkus] = useState<SKU[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
@@ -130,6 +131,7 @@ export function ListingForm({
 
   const handlePlatformChange = (platformId: string) => {
     const platform = platforms.find((p) => p.id === platformId);
+    setSubmitError(null);
     setFormData({
       ...formData,
       platformId,
@@ -140,9 +142,10 @@ export function ListingForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setSubmitError(null);
 
     try {
-      await createListing({
+      const result = await createListing({
         storeId,
         platformId: formData.platformId,
         listingType: formData.listingType,
@@ -155,11 +158,16 @@ export function ListingForm({
         shippingFeeOverride: formData.shippingFeeOverride || undefined,
         estimatedNet: estimatedNet != null ? estimatedNet.toFixed(4) : undefined,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
 
       router.push(returnHref);
     } catch (error) {
-      console.error("Failed to create listing:", error);
-      alert("添加上架记录失败");
+      setSubmitError(
+        error instanceof Error ? error.message : "添加上架记录失败，请重试",
+      );
     } finally {
       setLoading(false);
     }
@@ -236,7 +244,10 @@ export function ListingForm({
           <Select
             id="skuId"
             value={formData.skuId}
-            onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
+            onChange={(e) => {
+              setSubmitError(null);
+              setFormData({ ...formData, skuId: e.target.value });
+            }}
             required
           >
             <option value="">选择SKU</option>
@@ -265,9 +276,10 @@ export function ListingForm({
           <Select
             id="itemUnitId"
             value={formData.itemUnitId}
-            onChange={(e) =>
-              setFormData({ ...formData, itemUnitId: e.target.value })
-            }
+            onChange={(e) => {
+              setSubmitError(null);
+              setFormData({ ...formData, itemUnitId: e.target.value });
+            }}
             required
           >
             <option value="">选择单品</option>
@@ -431,6 +443,16 @@ export function ListingForm({
           </CardContent>
         </Card>
       )}
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading || platforms.length === 0}>

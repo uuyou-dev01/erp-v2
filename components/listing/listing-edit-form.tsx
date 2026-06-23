@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { updateListing } from "@/app/actions/listings";
+import { updateListingAction } from "@/app/actions/listings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { AlertCircle } from "lucide-react";
 
 interface ListingEditFormProps {
   listingId: string;
@@ -30,20 +31,30 @@ export function ListingEditForm({
     currency,
     status,
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    setSubmitError(null);
     setLoading(true);
     try {
-      await updateListing(listingId, {
+      const result = await updateListingAction(listingId, {
         listedPrice: formData.listedPrice || undefined,
         currency: formData.currency || undefined,
         status: formData.status,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
       router.refresh();
     } catch (error) {
-      console.error("Failed to update listing:", error);
-      alert("更新 Listing 失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "更新 Listing 失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -60,7 +71,7 @@ export function ListingEditForm({
             step="0.01"
             value={formData.listedPrice}
             onChange={(event) =>
-              setFormData({ ...formData, listedPrice: event.target.value })
+              updateFormData({ listedPrice: event.target.value })
             }
           />
         </div>
@@ -70,7 +81,7 @@ export function ListingEditForm({
             id="currency"
             value={formData.currency}
             onChange={(event) =>
-              setFormData({ ...formData, currency: event.target.value })
+              updateFormData({ currency: event.target.value })
             }
           >
             <option value="CNY">人民币 (CNY)</option>
@@ -87,7 +98,7 @@ export function ListingEditForm({
           id="status"
           value={formData.status}
           onChange={(event) =>
-            setFormData({ ...formData, status: event.target.value })
+            updateFormData({ status: event.target.value })
           }
         >
           <option value="ACTIVE">在售中</option>
@@ -95,6 +106,16 @@ export function ListingEditForm({
           <option value="SOLD_OUT">已售罄</option>
         </Select>
       </div>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>

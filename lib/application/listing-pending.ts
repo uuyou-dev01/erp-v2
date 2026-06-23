@@ -1,9 +1,12 @@
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
 import {
-  getStoreStockBreakdown,
-  type StockLocationBreakdown,
-} from "@/lib/application/inventory";
+  CORE_SELLING_PLATFORM_CODES,
+  isCoreSellingPlatform,
+  requiresSellableStockForListing,
+  sortCoreSellingPlatforms,
+} from "@/lib/core-platforms";
+import { getStoreStockBreakdown, type StockLocationBreakdown } from "@/lib/application/inventory";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -23,6 +26,7 @@ export interface ListingPendingItem {
   skuCode: string;
   skuName: string;
   imageUrl: string | null;
+  waitingSince: string;
   conditionGrade?: string | null;
   locationName?: string | null;
   sellableQty: number;
@@ -115,12 +119,21 @@ function formatReferencePrice(reference: ReferencePrice | undefined) {
   return reference?.price.toFixed(2) ?? null;
 }
 
+function eligiblePlatforms<T extends { code: string }>(
+  platforms: T[],
+  hasSellableStock: boolean,
+) {
+  return sortCoreSellingPlatforms(platforms).filter(
+    (platform) =>
+      hasSellableStock || !requiresSellableStockForListing(platform.code),
+  );
+}
+
 export async function getListingPendingItems(storeId: string) {
   const [platforms, skus, itemUnits, stockBreakdown] = await Promise.all([
     prisma.platform.findMany({
-      where: { storeId },
+      where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
       select: { id: true, name: true, code: true },
-      orderBy: { code: "asc" },
     }),
     prisma.sKU.findMany({
       where: { storeId },
@@ -129,6 +142,7 @@ export async function getListingPendingItems(storeId: string) {
         code: true,
         name: true,
         imageUrl: true,
+        updatedAt: true,
         listings: {
           where: { status: "ACTIVE", itemUnitId: null },
           include: {
@@ -145,6 +159,7 @@ export async function getListingPendingItems(storeId: string) {
       select: {
         id: true,
         skuId: true,
+        updatedAt: true,
         conditionGrade: true,
         photos: true,
         location: {
@@ -181,12 +196,20 @@ export async function getListingPendingItems(storeId: string) {
 
   const skuItems: ListingPendingItem[] = skus
     .map((sku) => {
-      const activePlatformIds = new Set(sku.listings.map((listing) => listing.platformId));
-      const activePlatforms = sku.listings.map((listing) => listing.platform);
-      const availablePlatforms = platforms.filter((platform) => !activePlatformIds.has(platform.id));
+      const activePlatformIds = new Set(
+        sku.listings
+          .filter((listing) => isCoreSellingPlatform(listing.platform.code))
+          .map((listing) => listing.platformId)
+      );
+      const activePlatforms = sku.listings
+        .filter((listing) => isCoreSellingPlatform(listing.platform.code))
+        .map((listing) => listing.platform);
       const breakdown = stockBreakdown.get(sku.id);
       const sellableQty = breakdown?.sellableQty ?? 0;
       const inTransitQty = breakdown?.inTransitQty ?? 0;
+      const availablePlatforms = eligiblePlatforms(platforms, sellableQty > 0).filter(
+        (platform) => !activePlatformIds.has(platform.id)
+      );
       const reference = referencePrices.get(sku.id);
 
       return {
@@ -196,6 +219,7 @@ export async function getListingPendingItems(storeId: string) {
         skuCode: sku.code,
         skuName: sku.name,
         imageUrl: sku.imageUrl,
+        waitingSince: sku.updatedAt.toISOString(),
         sellableQty,
         inTransitQty,
         sellableLocations: breakdown?.sellableLocations ?? [],
@@ -208,17 +232,24 @@ export async function getListingPendingItems(storeId: string) {
     })
     .filter(
       (item) =>
-        item.availablePlatforms.length > 0 &&
-        (item.sellableQty > 0 || item.inTransitQty > 0)
+        item.availablePlatforms.length > 0 && (item.sellableQty > 0 || item.inTransitQty > 0)
     );
 
   const unitItems: ListingPendingItem[] = itemUnits
     .map((item) => {
-      const activePlatformIds = new Set(item.listings.map((listing) => listing.platformId));
-      const activePlatforms = item.listings.map((listing) => listing.platform);
-      const availablePlatforms = platforms.filter((platform) => !activePlatformIds.has(platform.id));
+      const activePlatformIds = new Set(
+        item.listings
+          .filter((listing) => isCoreSellingPlatform(listing.platform.code))
+          .map((listing) => listing.platformId)
+      );
+      const activePlatforms = item.listings
+        .filter((listing) => isCoreSellingPlatform(listing.platform.code))
+        .map((listing) => listing.platform);
       const reference = referencePrices.get(item.skuId);
       const isSellable = item.location.isSellableDefault;
+      const availablePlatforms = eligiblePlatforms(platforms, isSellable).filter(
+        (platform) => !activePlatformIds.has(platform.id)
+      );
 
       return {
         id: `item-${item.id}`,
@@ -228,6 +259,7 @@ export async function getListingPendingItems(storeId: string) {
         skuCode: item.sku.code,
         skuName: item.sku.name,
         imageUrl: firstPhoto(item.photos) ?? item.sku.imageUrl,
+        waitingSince: item.updatedAt.toISOString(),
         conditionGrade: item.conditionGrade,
         locationName: item.location.name,
         sellableQty: isSellable ? 1 : 0,

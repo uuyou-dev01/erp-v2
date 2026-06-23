@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   Bell,
   Box,
   ClipboardList,
@@ -10,7 +9,6 @@ import {
   Package,
   PackageCheck,
   PackageOpen,
-  Send,
   Settings,
   ShoppingCart,
   Store,
@@ -37,7 +35,7 @@ export type NavGroup = {
 
 export const operationsNavigation: NavGroup[] = [
   {
-    title: "运营中心",
+    title: "工作台",
     items: [
       { name: "工作台", href: "/workbench", icon: ClipboardList, badgeKey: "total" },
       { name: "通知", href: "/notifications", icon: Bell },
@@ -51,35 +49,36 @@ export const operationsNavigation: NavGroup[] = [
     ],
   },
   {
-    title: "业务单据",
+    title: "采购与补货",
     items: [
       { name: "采购单据", href: "/procurement", icon: ShoppingCart },
-      { name: "销售订单", href: "/sales", icon: Package },
+    ],
+  },
+  {
+    title: "集运与仓配",
+    items: [
       { name: "集运物流", href: "/logistics/consolidations", icon: Truck },
     ],
   },
   {
     title: "库存与商品",
     items: [
-      { name: "可售库存", href: "/inventory/sellable", icon: PackageCheck },
-      { name: "SKU 档案", href: "/inventory/skus", icon: Store },
-      { name: "单件商品", href: "/inventory/items", icon: PackageOpen },
-      { name: "入库批次", href: "/inventory/lots", icon: Package },
-      { name: "仓库位置", href: "/inventory/locations", icon: MapPin },
+      { name: "库存看板", href: "/inventory/sellable", icon: PackageCheck },
+      { name: "商品主档", href: "/inventory/skus", icon: Store },
+      { name: "单件库存", href: "/inventory/items", icon: PackageOpen },
+      { name: "库存批次", href: "/inventory/lots", icon: Package },
       { name: "库存盘点", href: "/inventory/stocktake", icon: Box },
-      { name: "已售库存", href: "/inventory/sold", icon: Send },
     ],
   },
   {
-    title: "上架与平台",
+    title: "上架与订单",
     items: [
       { name: "上架运营", href: "/listing", icon: Globe },
-      { name: "销售平台", href: "/listing/platforms", icon: Store },
-      { name: "上架覆盖", href: "/inventory/coverage", icon: BarChart3 },
+      { name: "销售订单", href: "/sales", icon: Package },
     ],
   },
   {
-    title: "报表",
+    title: "经营分析",
     items: [
       { name: "经营报表", href: "/reports", icon: FileText },
       { name: "团队工作量", href: "/reports/team", icon: Users },
@@ -88,6 +87,8 @@ export const operationsNavigation: NavGroup[] = [
 ];
 
 export const settingsNavigation: NavItem[] = [
+  { name: "销售平台", href: "/listing/platforms", icon: Store },
+  { name: "仓库位置", href: "/inventory/locations", icon: MapPin },
   { name: "团队成员", href: "/settings/team", icon: Users },
   { name: "店铺管理", href: "/settings/stores", icon: Settings },
   { name: "切换操作人", href: "/login", icon: LogIn },

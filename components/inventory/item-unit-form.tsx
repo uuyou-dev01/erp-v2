@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { createItemUnit, updateItemUnit } from "@/app/actions/item-units";
+import { createItemUnitAction, updateItemUnitAction } from "@/app/actions/item-units";
 import { getSKUs } from "@/app/actions/skus";
 import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal } from "@/lib/decimal";
@@ -31,7 +31,9 @@ interface ItemUnitFormProps {
 export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [skus, setSKUs] = useState<
+    Array<{ id: string; code: string; name: string; parentSkuId?: string | null; childSkus?: { id: string }[] }>
+  >([]);
   const [locations, setLocations] = useState<
     Array<{ id: string; code: string; name: string; region: string | null }>
   >([]);
@@ -48,6 +50,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
   });
   const [photoInput, setPhotoInput] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([getSKUs(storeId), getLocations(storeId)]).then(([skuData, locationData]) => {
@@ -75,54 +78,67 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
 
   const handleAddPhoto = () => {
     if (photoInput.trim()) {
-      setFormData({ ...formData, photos: [...formData.photos, photoInput.trim()] });
+      updateFormData({ photos: [...formData.photos, photoInput.trim()] });
       setPhotoInput("");
     }
   };
 
   const handleRemovePhoto = (index: number) => {
-    setFormData({ ...formData, photos: formData.photos.filter((_, i) => i !== index) });
+    updateFormData({ photos: formData.photos.filter((_, i) => i !== index) });
+  };
+
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!validateForm()) return;
 
     setLoading(true);
     try {
+      const result =
+        mode === "create"
+          ? await createItemUnitAction({
+              storeId,
+              skuId: formData.skuId,
+              locationId: formData.locationId,
+              unitCost: formData.unitCost,
+              costCurrency: formData.costCurrency,
+              conditionGrade: formData.conditionGrade || undefined,
+              photos: formData.photos.length > 0 ? formData.photos : undefined,
+              ownerId: formData.ownerId || undefined,
+              holderId: formData.holderId || undefined,
+              notes: formData.notes || undefined,
+            })
+          : await updateItemUnitAction(initialData!.id, {
+              conditionGrade: formData.conditionGrade || undefined,
+              photos: formData.photos.length > 0 ? formData.photos : undefined,
+              ownerId: formData.ownerId || undefined,
+              holderId: formData.holderId || undefined,
+              notes: formData.notes || undefined,
+            });
+
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
+
       if (mode === "create") {
-        await createItemUnit({
-          storeId,
-          skuId: formData.skuId,
-          locationId: formData.locationId,
-          unitCost: formData.unitCost,
-          costCurrency: formData.costCurrency,
-          conditionGrade: formData.conditionGrade || undefined,
-          photos: formData.photos.length > 0 ? formData.photos : undefined,
-          ownerId: formData.ownerId || undefined,
-          holderId: formData.holderId || undefined,
-          notes: formData.notes || undefined,
-        });
         router.push("/inventory/items");
       } else {
-        await updateItemUnit(initialData!.id, {
-          conditionGrade: formData.conditionGrade || undefined,
-          photos: formData.photos.length > 0 ? formData.photos : undefined,
-          ownerId: formData.ownerId || undefined,
-          holderId: formData.holderId || undefined,
-          notes: formData.notes || undefined,
-        });
         router.refresh();
       }
     } catch (error) {
-      console.error("Failed to save item unit:", error);
-      const message =
+      setSubmitError(
         error instanceof Error
           ? error.message
           : mode === "create"
             ? "创建单品失败，请重试"
-            : "保存单品失败，请重试";
-      alert(message);
+            : "保存单品失败，请重试"
+      );
     } finally {
       setLoading(false);
     }
@@ -137,11 +153,13 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
             <Select
               id="skuId"
               value={formData.skuId}
-              onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
+              onChange={(e) => updateFormData({ skuId: e.target.value })}
               required
             >
               <option value="">{t("inventory.select_sku")}</option>
-              {skus.map((sku) => (
+              {skus
+                .filter((sku) => sku.parentSkuId || !sku.childSkus?.length)
+                .map((sku) => (
                 <option key={sku.id} value={sku.id}>{sku.code} - {sku.name}</option>
               ))}
             </Select>
@@ -157,7 +175,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
             <Select
               id="locationId"
               value={formData.locationId}
-              onChange={(e) => setFormData({ ...formData, locationId: e.target.value })}
+              onChange={(e) => updateFormData({ locationId: e.target.value })}
               required
             >
               <option value="">{t("inventory.select_location")}</option>
@@ -182,7 +200,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
                 id="unitCost"
                 type="text"
                 value={formData.unitCost}
-                onChange={(e) => setFormData({ ...formData, unitCost: e.target.value })}
+                onChange={(e) => updateFormData({ unitCost: e.target.value })}
                 placeholder="例如：100.00"
                 required
               />
@@ -198,7 +216,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
               <Select
                 id="costCurrency"
                 value={formData.costCurrency}
-                onChange={(e) => setFormData({ ...formData, costCurrency: e.target.value })}
+                onChange={(e) => updateFormData({ costCurrency: e.target.value })}
                 required
               >
                 {CURRENCIES.map((c) => (
@@ -215,7 +233,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
         <Select
           id="conditionGrade"
           value={formData.conditionGrade}
-          onChange={(e) => setFormData({ ...formData, conditionGrade: e.target.value })}
+          onChange={(e) => updateFormData({ conditionGrade: e.target.value })}
         >
           <option value="">选择成色</option>
           <option value="NEW">全新</option>
@@ -263,7 +281,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
             id="ownerId"
             type="text"
             value={formData.ownerId}
-            onChange={(e) => setFormData({ ...formData, ownerId: e.target.value })}
+            onChange={(e) => updateFormData({ ownerId: e.target.value })}
             placeholder="例如：user_123"
           />
           <p className="text-xs text-muted-foreground">该商品的所有者</p>
@@ -275,7 +293,7 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
             id="holderId"
             type="text"
             value={formData.holderId}
-            onChange={(e) => setFormData({ ...formData, holderId: e.target.value })}
+            onChange={(e) => updateFormData({ holderId: e.target.value })}
             placeholder="例如：user_456"
           />
           <p className="text-xs text-muted-foreground">当前持有/代卖该商品的人</p>
@@ -287,11 +305,17 @@ export function ItemUnitForm({ storeId, initialData, mode }: ItemUnitFormProps) 
         <Textarea
           id="notes"
           value={formData.notes}
-          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+          onChange={(e) => updateFormData({ notes: e.target.value })}
           placeholder="关于该商品的备注信息..."
           rows={3}
         />
       </div>
+
+      {submitError && (
+        <p className="flex items-center gap-1 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />{submitError}
+        </p>
+      )}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Eye, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { deleteSKU, setSkuCatalogStatus } from "@/app/actions/skus";
+import { deleteSKUAction, setSkuCatalogStatusAction } from "@/app/actions/skus";
 import type { CatalogStatus, SkuCatalogListItem } from "@/lib/application/sku-catalog";
 
 interface SkuCatalogRowActionsProps {
@@ -16,36 +16,53 @@ interface SkuCatalogRowActionsProps {
 export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
   const router = useRouter();
   const [toggling, setToggling] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [disableOpen, setDisableOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const toggleStatus = async () => {
-    const next: CatalogStatus = item.catalogStatus === "active" ? "disabled" : "active";
-    if (
-      next === "disabled" &&
-      !confirm(`确认停用「${item.name}」？停用后仍可在列表中筛选查看。`)
-    ) {
-      return;
-    }
+  const changeStatus = async (next: CatalogStatus) => {
+    setToggleError(null);
     setToggling(true);
     try {
-      await setSkuCatalogStatus(item.id, next);
+      const result = await setSkuCatalogStatusAction(item.id, next);
+      if (!result.success) {
+        setToggleError(result.error);
+        return;
+      }
+      setDisableOpen(false);
       router.refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "操作失败");
+      setToggleError(e instanceof Error ? e.message : "操作失败");
     } finally {
       setToggling(false);
     }
   };
 
+  const toggleStatus = async () => {
+    const next: CatalogStatus = item.catalogStatus === "active" ? "disabled" : "active";
+    if (next === "disabled") {
+      setToggleError(null);
+      setDisableOpen(true);
+      return;
+    }
+    await changeStatus(next);
+  };
+
   const handleDelete = async () => {
+    setDeleteError(null);
     setDeleteLoading(true);
     try {
-      await deleteSKU(item.id);
+      const result = await deleteSKUAction(item.id);
+      if (!result.success) {
+        setDeleteError(result.error);
+        return;
+      }
       setDeleteOpen(false);
       router.refresh();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "删除失败");
+      setDeleteError(e instanceof Error ? e.message : "删除失败");
     } finally {
       setDeleteLoading(false);
     }
@@ -53,36 +70,58 @@ export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
 
   return (
     <>
-      <div className="flex justify-end gap-0.5">
-        <Link href={`/inventory/skus/${item.id}`} title="查看">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <Eye className="h-4 w-4" />
+      <div className="space-y-1 text-right">
+        <div className="flex justify-end gap-0.5">
+          <Link href={`/inventory/skus/${item.id}`} title="查看">
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Eye className="h-4 w-4" />
+            </Button>
+          </Link>
+          <Link href={`/inventory/skus/${item.id}?edit=1`} title="编辑">
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Pencil className="h-4 w-4" />
+            </Button>
+          </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-red-600 hover:text-red-700"
+            title="删除"
+            onClick={() => {
+              setDeleteError(null);
+              setDeleteOpen(true);
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
           </Button>
-        </Link>
-        <Link href={`/inventory/skus/${item.id}?edit=1`} title="编辑">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <Pencil className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2 text-xs"
+            disabled={toggling}
+            onClick={toggleStatus}
+          >
+            {item.catalogStatus === "active" ? "停用" : "启用"}
           </Button>
-        </Link>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-red-600 hover:text-red-700"
-          title="删除"
-          onClick={() => setDeleteOpen(true)}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2 text-xs"
-          disabled={toggling}
-          onClick={toggleStatus}
-        >
-          {item.catalogStatus === "active" ? "停用" : "启用"}
-        </Button>
+        </div>
+        {toggleError && <p className="text-xs text-destructive">{toggleError}</p>}
       </div>
+
+      <ConfirmDialog
+        open={disableOpen}
+        title="确认停用 SKU"
+        description={`确认停用「${item.name}」？停用后仍可在列表中筛选查看。`}
+        confirmText="确认停用"
+        cancelText="取消"
+        loading={toggling}
+        tone="danger"
+        error={toggleError}
+        onConfirm={() => changeStatus("disabled")}
+        onCancel={() => {
+          setToggleError(null);
+          setDisableOpen(false);
+        }}
+      />
 
       <ConfirmDialog
         open={deleteOpen}
@@ -92,8 +131,12 @@ export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
         cancelText="取消"
         loading={deleteLoading}
         tone="danger"
+        error={deleteError}
         onConfirm={handleDelete}
-        onCancel={() => setDeleteOpen(false)}
+        onCancel={() => {
+          setDeleteError(null);
+          setDeleteOpen(false);
+        }}
       />
     </>
   );

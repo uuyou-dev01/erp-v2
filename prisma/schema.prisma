@@ -293,6 +293,10 @@ model ItemUnit {
   unitCost       Decimal  @db.Decimal(19, 4)
   costCurrency   String
   fxRateId       String?
+  unitCode       String?
+  labelCode      String?
+  labelStatus    String   @default("PENDING") // PENDING, PRINTED, ATTACHED
+  labelPrintedAt DateTime?
   conditionGrade String?
   photos         Json?
   ownerId        String?
@@ -314,6 +318,8 @@ model ItemUnit {
   @@index([skuId])
   @@index([locationId])
   @@index([status])
+  @@unique([storeId, unitCode])
+  @@unique([storeId, labelCode])
   @@map("item_units")
 }
 

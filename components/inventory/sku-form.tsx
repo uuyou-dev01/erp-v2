@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { createSKU, updateSKU } from "@/app/actions/skus";
+import { createSKUAction, updateSKUAction } from "@/app/actions/skus";
 import {
   mergeSkuCatalogAttributes,
   parseSkuCatalogMeta,
@@ -19,7 +19,7 @@ import {
   type SkuNewFields,
   type SkuUsedFields,
 } from "@/lib/application/sku-catalog";
-import { X, Plus, Upload, Link as LinkIcon, GitBranch, Star } from "lucide-react";
+import { AlertCircle, X, Plus, Upload, Link as LinkIcon, GitBranch, Star } from "lucide-react";
 import { t } from "@/lib/i18n";
 
 export interface ParentOption {
@@ -108,6 +108,7 @@ export function SKUForm({
   const [loading, setLoading] = useState(false);
   const [uploadMode, setUploadMode] = useState<"url" | "file">("url");
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [imageUrlInput, setImageUrlInput] = useState("");
   const [catalog, setCatalog] = useState(() => initialCatalogState(initialData));
   const [formData, setFormData] = useState({
@@ -119,6 +120,7 @@ export function SKUForm({
     description: initialData?.description || "",
     imageUrl: initialData?.imageUrl || "",
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [attributes, setAttributes] = useState<Array<{ key: string; value: string }>>(
     () => initialCatalogState(initialData).variantEntries
@@ -133,6 +135,7 @@ export function SKUForm({
   const presetAttributes = isChild ? CHILD_PRESET_ATTRIBUTES : PARENT_PRESET_ATTRIBUTES;
 
   const handleParentChange = (parentId: string) => {
+    setSubmitError(null);
     const parent = parentOptions.find((p) => p.id === parentId);
     if (parent) {
       const nextIndex = parent._count.childSkus + 1;
@@ -150,22 +153,30 @@ export function SKUForm({
     }
   };
 
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
     if (!validTypes.includes(file.type)) {
-      alert("不支持的文件类型。仅支持JPEG、PNG、GIF和WebP格式。");
+      setUploadError("不支持的文件类型。仅支持 JPEG、PNG、GIF 和 WebP 格式。");
+      e.target.value = "";
       return;
     }
 
     const maxSize = 5 * 1024 * 1024;
     if (file.size > maxSize) {
-      alert("文件过大。最大允许5MB。");
+      setUploadError("文件过大。最大允许 5MB。");
+      e.target.value = "";
       return;
     }
 
+    setUploadError(null);
     setUploading(true);
     try {
       const uploadFormData = new FormData();
@@ -187,15 +198,16 @@ export function SKUForm({
         images: [...prev.images, { url, isCover: prev.images.length === 0 }],
       }));
     } catch (error) {
-      console.error("Upload error:", error);
-      alert(error instanceof Error ? error.message : "图片上传失败");
+      setUploadError(error instanceof Error ? error.message : "图片上传失败");
     } finally {
       setUploading(false);
+      e.target.value = "";
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     setLoading(true);
 
     try {
@@ -248,11 +260,19 @@ export function SKUForm({
 
       let skuId: string;
       if (initialData) {
-        const sku = await updateSKU({ id: initialData.id, ...data });
-        skuId = sku.id;
+        const result = await updateSKUAction({ id: initialData.id, ...data });
+        if (!result.success) {
+          setSubmitError(result.error);
+          return;
+        }
+        skuId = result.id;
       } else {
-        const sku = await createSKU(data);
-        skuId = sku.id;
+        const result = await createSKUAction(data);
+        if (!result.success) {
+          setSubmitError(result.error);
+          return;
+        }
+        skuId = result.id;
       }
 
       if (onSaved) {
@@ -262,8 +282,7 @@ export function SKUForm({
       }
       router.refresh();
     } catch (error) {
-      console.error("Failed to save SKU:", error);
-      alert("保存失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "保存失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -378,6 +397,9 @@ export function SKUForm({
           <div className="space-y-2">
             <Label>参考售价</Label>
             <Input
+              type="number"
+              min="0"
+              step="0.01"
               value={catalog.referencePrice}
               onChange={(e) =>
                 setCatalog((c) => ({ ...c, referencePrice: e.target.value }))
@@ -388,6 +410,9 @@ export function SKUForm({
           <div className="space-y-2">
             <Label>参考成本</Label>
             <Input
+              type="number"
+              min="0"
+              step="0.01"
               value={catalog.referenceCost}
               onChange={(e) =>
                 setCatalog((c) => ({ ...c, referenceCost: e.target.value }))
@@ -397,10 +422,16 @@ export function SKUForm({
           </div>
           <div className="space-y-2">
             <Label>币种</Label>
-            <Input
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               value={catalog.currency}
               onChange={(e) => setCatalog((c) => ({ ...c, currency: e.target.value }))}
-            />
+            >
+              <option value="CNY">人民币 (CNY)</option>
+              <option value="JPY">日元 (JPY)</option>
+              <option value="USD">美元 (USD)</option>
+              <option value="EUR">欧元 (EUR)</option>
+            </select>
           </div>
           <div className="space-y-2">
             <Label>系列</Label>
@@ -516,7 +547,7 @@ export function SKUForm({
                 <Input
                   id="code"
                   value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                  onChange={(e) => updateFormData({ code: e.target.value })}
                   placeholder={isChild ? "01, 02, RED-M ..." : t("sku.code_placeholder")}
                   required
                 />
@@ -533,7 +564,7 @@ export function SKUForm({
               <Input
                 id="name"
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={(e) => updateFormData({ name: e.target.value })}
                 placeholder={
                   isChild && selectedParent
                     ? `${selectedParent.name} · 白色M码`
@@ -550,7 +581,7 @@ export function SKUForm({
               <Input
                 id="category"
                 value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                onChange={(e) => updateFormData({ category: e.target.value })}
                 placeholder={t("sku.category_placeholder")}
               />
               {isChild && selectedParent?.category && formData.category === selectedParent.category && (
@@ -563,7 +594,7 @@ export function SKUForm({
               <Input
                 id="brand"
                 value={formData.brand}
-                onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+                onChange={(e) => updateFormData({ brand: e.target.value })}
                 placeholder={t("sku.brand_placeholder")}
               />
               {isChild && selectedParent?.brand && formData.brand === selectedParent.brand && (
@@ -577,7 +608,7 @@ export function SKUForm({
             <Textarea
               id="description"
               value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              onChange={(e) => updateFormData({ description: e.target.value })}
               placeholder={t("sku.description_placeholder")}
               rows={3}
             />
@@ -590,7 +621,10 @@ export function SKUForm({
                 type="button"
                 variant={uploadMode === "url" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setUploadMode("url")}
+                onClick={() => {
+                  setUploadError(null);
+                  setUploadMode("url");
+                }}
               >
                 <LinkIcon className="mr-2 h-4 w-4" />
                 网址
@@ -599,7 +633,10 @@ export function SKUForm({
                 type="button"
                 variant={uploadMode === "file" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setUploadMode("file")}
+                onClick={() => {
+                  setUploadError(null);
+                  setUploadMode("file");
+                }}
               >
                 <Upload className="mr-2 h-4 w-4" />
                 上传
@@ -618,6 +655,7 @@ export function SKUForm({
                   variant="secondary"
                   onClick={() => {
                     if (!imageUrlInput.trim()) return;
+                    setUploadError(null);
                     setCatalog((c) => ({
                       ...c,
                       images: [
@@ -645,6 +683,11 @@ export function SKUForm({
                 <p className="text-xs text-muted-foreground">
                   {uploading ? t("sku.image_uploading") : t("sku.image_upload_hint")}
                 </p>
+                {uploadError ? (
+                  <p role="alert" className="text-xs text-destructive">
+                    {uploadError}
+                  </p>
+                ) : null}
               </>
             )}
 
@@ -652,6 +695,7 @@ export function SKUForm({
               <div className="mt-2 flex flex-wrap gap-3">
                 {catalog.images.map((img, index) => (
                   <div key={`${img.url}-${index}`} className="relative rounded-lg border p-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={img.url} alt="" className="h-24 w-24 rounded object-cover" />
                     {img.isCover ? (
                       <Badge className="absolute left-2 top-2 text-[10px]">封面</Badge>
@@ -770,6 +814,16 @@ export function SKUForm({
           )}
         </CardContent>
       </Card>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading || uploading}>

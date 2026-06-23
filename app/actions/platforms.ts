@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { CORE_SELLING_PLATFORM_CODES, sortCoreSellingPlatforms } from "@/lib/core-platforms";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 export interface PlatformShippingRuleInput {
   name: string;
@@ -15,14 +17,58 @@ export interface PlatformShippingRuleInput {
   notes?: string;
 }
 
+function parseOptionalPlatformDecimal(
+  value: string | undefined,
+  fieldLabel: string,
+  options: { nonNegative?: boolean; max?: Decimal.Value } = {},
+) {
+  if (value == null || value.trim() === "") return null;
+
+  let decimal: Decimal;
+  try {
+    decimal = new Decimal(value);
+  } catch {
+    throw new Error(`${fieldLabel}必须是有效数字`);
+  }
+
+  if (!decimal.isFinite()) {
+    throw new Error(`${fieldLabel}必须是有效数字`);
+  }
+  if (options.nonNegative && decimal.lt(0)) {
+    throw new Error(`${fieldLabel}不能为负数`);
+  }
+  if (options.max !== undefined && decimal.gt(options.max)) {
+    throw new Error(`${fieldLabel}不能大于 ${options.max}`);
+  }
+
+  return decimal;
+}
+
+function parsePlatformFeeDefaults(data: {
+  defaultFeeRate?: string;
+  defaultShippingFee?: string;
+}) {
+  return {
+    defaultFeeRate: parseOptionalPlatformDecimal(data.defaultFeeRate, "默认平台费率", {
+      nonNegative: true,
+      max: 1,
+    }),
+    defaultShippingFee: parseOptionalPlatformDecimal(data.defaultShippingFee, "默认运费", {
+      nonNegative: true,
+    }),
+  };
+}
+
 export async function getPlatforms(storeId: string) {
   const context = await requireUserContext({ storeId });
   const platforms = await prisma.platform.findMany({
-    where: { storeId: context.activeStoreId },
-    orderBy: { createdAt: "desc" },
+    where: {
+      storeId: context.activeStoreId,
+      code: { in: [...CORE_SELLING_PLATFORM_CODES] },
+    },
   });
 
-  return platforms.map((platform) => ({
+  return sortCoreSellingPlatforms(platforms).map((platform) => ({
     ...platform,
     defaultFeeRate: platform.defaultFeeRate?.toString() ?? null,
     defaultShippingFee: platform.defaultShippingFee?.toString() ?? null,
@@ -76,16 +122,15 @@ export async function createPlatform(data: {
 }) {
   const context = await requireUserContext({ storeId: data.storeId });
   try {
+    const feeDefaults = parsePlatformFeeDefaults(data);
     const platform = await prisma.platform.create({
       data: {
         storeId: context.activeStoreId,
         code: data.code,
         name: data.name,
         country: data.country || null,
-        defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
-        defaultShippingFee: data.defaultShippingFee
-          ? new Decimal(data.defaultShippingFee)
-          : null,
+        defaultFeeRate: feeDefaults.defaultFeeRate,
+        defaultShippingFee: feeDefaults.defaultShippingFee,
         shippingRules: normalizeShippingRules(data.shippingRules),
         defaultCurrency: data.defaultCurrency || null,
         notes: data.notes || null,
@@ -96,6 +141,25 @@ export async function createPlatform(data: {
     return { id: platform.id };
   } catch (error) {
     throw mapPlatformWriteError(error, data.code);
+  }
+}
+
+export async function createPlatformAction(data: {
+  storeId: string;
+  code: string;
+  name: string;
+  country?: string;
+  defaultFeeRate?: string;
+  defaultShippingFee?: string;
+  shippingRules?: PlatformShippingRuleInput[];
+  defaultCurrency?: string;
+  notes?: string;
+}) {
+  try {
+    const platform = await createPlatform(data);
+    return actionSuccess({ id: platform.id });
+  } catch (error) {
+    return toActionFailure(error, "创建平台失败，请重试");
   }
 }
 
@@ -122,16 +186,15 @@ export async function updatePlatform(
   await requireUserContext({ storeId: existing.storeId });
 
   try {
+    const feeDefaults = parsePlatformFeeDefaults(data);
     const platform = await prisma.platform.update({
       where: { id },
       data: {
         code: data.code,
         name: data.name,
         country: data.country || null,
-        defaultFeeRate: data.defaultFeeRate ? new Decimal(data.defaultFeeRate) : null,
-        defaultShippingFee: data.defaultShippingFee
-          ? new Decimal(data.defaultShippingFee)
-          : null,
+        defaultFeeRate: feeDefaults.defaultFeeRate,
+        defaultShippingFee: feeDefaults.defaultShippingFee,
         shippingRules: normalizeShippingRules(data.shippingRules),
         defaultCurrency: data.defaultCurrency || null,
         notes: data.notes || null,
@@ -143,6 +206,27 @@ export async function updatePlatform(
     return { id: platform.id };
   } catch (error) {
     throw mapPlatformWriteError(error, data.code);
+  }
+}
+
+export async function updatePlatformAction(
+  id: string,
+  data: {
+    code: string;
+    name: string;
+    country?: string;
+    defaultFeeRate?: string;
+    defaultShippingFee?: string;
+    shippingRules?: PlatformShippingRuleInput[];
+    defaultCurrency?: string;
+    notes?: string;
+  }
+) {
+  try {
+    const platform = await updatePlatform(id, data);
+    return actionSuccess({ id: platform.id });
+  } catch (error) {
+    return toActionFailure(error, "保存平台失败，请重试");
   }
 }
 
@@ -162,9 +246,7 @@ export async function deletePlatform(id: string, storeId: string) {
   ]);
 
   if (listingCount > 0) {
-    throw new Error(
-      `该平台仍有 ${listingCount} 条上架记录，无法删除。请先下架或删除相关上架。`
-    );
+    throw new Error(`该平台仍有 ${listingCount} 条上架记录，无法删除。请先下架或删除相关上架。`);
   }
 
   if (orderCount > 0) {
@@ -176,6 +258,15 @@ export async function deletePlatform(id: string, storeId: string) {
   });
 
   revalidatePath("/listing/platforms");
+}
+
+export async function deletePlatformAction(id: string, storeId: string) {
+  try {
+    await deletePlatform(id, storeId);
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "删除平台失败，请重试");
+  }
 }
 
 function mapPlatformWriteError(error: unknown, code: string): Error {

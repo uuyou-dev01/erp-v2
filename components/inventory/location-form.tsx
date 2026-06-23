@@ -8,9 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { createLocation, updateLocation, type LocationType } from "@/app/actions/locations";
+import {
+  createLocationAction,
+  updateLocationAction,
+  type LocationType,
+} from "@/app/actions/locations";
 import { LOCATION_REGIONS } from "@/lib/inventory/location-regions";
 import { t } from "@/lib/i18n";
+import { AlertCircle } from "lucide-react";
 
 interface LocationFormProps {
   storeId: string;
@@ -56,6 +61,7 @@ export function LocationForm({
     region: initialData?.region ?? (isCreateMode ? "CN_SHANGHAI" : ""),
     isSellableDefault: initialData?.isSellableDefault ?? true,
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const generatedCodeHint = useMemo(() => generateLocationCode(formData.type), [formData.type]);
 
@@ -87,22 +93,28 @@ export function LocationForm({
     router.back();
   };
 
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     setLoading(true);
 
     try {
-      if (initialData) {
-        await updateLocation({ id: initialData.id, storeId, ...formData });
-      } else {
-        await createLocation({ storeId, ...formData });
+      const result = initialData
+        ? await updateLocationAction({ id: initialData.id, storeId, ...formData })
+        : await createLocationAction({ storeId, ...formData });
+
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
       }
       handleSaved();
     } catch (error) {
-      console.error("Failed to save location:", error);
-      const message =
-        error instanceof Error ? error.message : "保存仓库位置失败，请重试";
-      alert(message);
+      setSubmitError(error instanceof Error ? error.message : "保存仓库位置失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -118,7 +130,7 @@ export function LocationForm({
             value={formData.code}
             onChange={(e) => {
               setCodeEditedManually(true);
-              setFormData({ ...formData, code: e.target.value.toUpperCase() });
+              updateFormData({ code: e.target.value.toUpperCase() });
             }}
             placeholder={generatedCodeHint}
             required
@@ -129,7 +141,7 @@ export function LocationForm({
               variant="outline"
               onClick={() => {
                 setCodeEditedManually(false);
-                setFormData((prev) => ({ ...prev, code: generateLocationCode(prev.type) }));
+                updateFormData({ code: generateLocationCode(formData.type) });
               }}
             >
               自动生成
@@ -146,7 +158,7 @@ export function LocationForm({
         <Input
           id="name"
           value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          onChange={(e) => updateFormData({ name: e.target.value })}
           placeholder="例如：中国主仓库"
           required
         />
@@ -157,7 +169,7 @@ export function LocationForm({
         <Select
           id="region"
           value={formData.region}
-          onChange={(e) => setFormData({ ...formData, region: e.target.value })}
+          onChange={(e) => updateFormData({ region: e.target.value })}
           required
         >
           <option value="">选择地区</option>
@@ -177,7 +189,7 @@ export function LocationForm({
         <Select
           id="type"
           value={formData.type}
-          onChange={(e) => setFormData({ ...formData, type: e.target.value as LocationType })}
+          onChange={(e) => updateFormData({ type: e.target.value as LocationType })}
           required
         >
           <option value="WAREHOUSE">仓库</option>
@@ -192,11 +204,21 @@ export function LocationForm({
         <Checkbox
           id="isSellableDefault"
           checked={formData.isSellableDefault}
-          onChange={(e) => setFormData({ ...formData, isSellableDefault: e.currentTarget.checked })}
+          onChange={(e) => updateFormData({ isSellableDefault: e.currentTarget.checked })}
           label="默认可销售"
         />
         <p className="text-xs text-muted-foreground">该位置的库存默认是否可用于销售</p>
       </div>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="flex gap-2 pt-4">
         <Button type="submit" disabled={loading}>

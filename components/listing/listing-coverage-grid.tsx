@@ -7,7 +7,7 @@ interface ListingCoverageGridProps {
   products: ListingCoverageProduct[];
   emptyTitle?: string;
   emptyDescription?: string;
-  /** 为 true 时，尚未上架的商品默认展开（如待上架筛选页） */
+  /** 保留兼容旧调用；卡片详情现在统一使用弹窗展示。 */
   expandIfUnlisted?: boolean;
 }
 
@@ -15,8 +15,10 @@ export function ListingCoverageGrid({
   products,
   emptyTitle = "暂无符合条件的商品",
   emptyDescription = "调整平台、状态、风险或搜索条件后再查看。",
-  expandIfUnlisted = false,
+  expandIfUnlisted: _expandIfUnlisted = false,
 }: ListingCoverageGridProps) {
+  void _expandIfUnlisted;
+
   if (products.length === 0) {
     return (
       <EmptyState
@@ -32,11 +34,7 @@ export function ListingCoverageGrid({
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
       {products.map((product) => (
-        <ListingCoverageCard
-          key={product.key}
-          product={product}
-          defaultExpanded={expandIfUnlisted && product.records.length === 0}
-        />
+        <ListingCoverageCard key={product.key} product={product} />
       ))}
     </div>
   );

@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { markOrderShipped } from "@/app/actions/customer-orders";
-import { Truck, X } from "lucide-react";
+import { markOrderShippedAction } from "@/app/actions/customer-orders";
+import { AlertCircle, Truck, X } from "lucide-react";
 
 interface MarkOrderShippedButtonProps {
   orderId: string;
@@ -22,16 +22,22 @@ export function MarkOrderShippedButton({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [trackingNo, setTrackingNo] = useState(defaultTrackingNo ?? "");
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError("");
     try {
-      await markOrderShipped(orderId, { trackingNo: trackingNo || undefined });
+      const result = await markOrderShippedAction(orderId, { trackingNo: trackingNo || undefined });
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
       setOpen(false);
       router.refresh();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "标记发货失败");
+      setError(error instanceof Error ? error.message : "标记发货失败");
     } finally {
       setLoading(false);
     }
@@ -63,6 +69,12 @@ export function MarkOrderShippedButton({
             <p className="text-sm text-muted-foreground">
               确认后将扣减库存并更新订单为已发货状态。
             </p>
+            {error && (
+              <p className="flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4" />
+                {error}
+              </p>
+            )}
             <div className="space-y-2">
               <Label htmlFor="trackingNo">物流单号（选填）</Label>
               <Input

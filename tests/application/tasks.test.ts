@@ -1,4 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+}));
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: () => undefined,
+  }),
+}));
+
+import { assignWorkTaskAction } from "@/app/actions/tasks";
 import {
   INCOMPLETE_TASK_STATUSES,
   TASK_STATUS,
@@ -27,5 +39,14 @@ describe("task constants", () => {
       TASK_STATUS.IN_PROGRESS,
       TASK_STATUS.OVERDUE,
     ]);
+  });
+
+  it("returns a structured failure when assigning a missing task", async () => {
+    const result = await assignWorkTaskAction("missing_task", "missing_user");
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("任务不存在");
+    }
   });
 });

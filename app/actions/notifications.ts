@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { getUnreadNotificationCount, markNotificationRead } from "@/lib/application/notifications";
 
 export async function getMyNotificationSummary() {
@@ -30,4 +31,13 @@ export async function markMyNotificationRead(notificationId: string) {
     recipientId: context.userId,
   });
   revalidatePath("/notifications");
+}
+
+export async function markMyNotificationReadAction(notificationId: string) {
+  try {
+    await markMyNotificationRead(notificationId);
+    return actionSuccess({ notificationId });
+  } catch (error) {
+    return toActionFailure(error, "标记通知已读失败，请重试");
+  }
 }

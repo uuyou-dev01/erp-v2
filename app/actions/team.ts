@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
 
@@ -157,6 +158,15 @@ export async function createTeamMember(formData: FormData) {
   revalidatePath("/settings/team");
 }
 
+export async function createTeamMemberAction(formData: FormData) {
+  try {
+    await createTeamMember(formData);
+    return actionSuccess({});
+  } catch (error) {
+    return toActionFailure(error, "保存成员失败，请稍后重试");
+  }
+}
+
 export async function deactivateTeamMember(formData: FormData) {
   const context = await requireTeamManager();
   const userId = cleanString(formData.get("userId"));
@@ -172,4 +182,13 @@ export async function deactivateTeamMember(formData: FormData) {
   });
 
   revalidatePath("/settings/team");
+}
+
+export async function deactivateTeamMemberAction(formData: FormData) {
+  try {
+    await deactivateTeamMember(formData);
+    return actionSuccess({});
+  } catch (error) {
+    return toActionFailure(error, "停用成员失败，请稍后重试");
+  }
 }

@@ -18,7 +18,7 @@ import {
   MapPin,
   DollarSign,
   Calendar,
-  Image,
+  Image as ImageIcon,
   User,
   FileText,
   Store,
@@ -252,7 +252,7 @@ export default async function ItemUnitDetailPage({
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Image className="h-5 w-5" />
+              <ImageIcon className="h-5 w-5" />
               照片
             </CardTitle>
           </CardHeader>

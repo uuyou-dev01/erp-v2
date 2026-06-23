@@ -53,8 +53,7 @@ export async function POST(request: NextRequest) {
     // TODO: Replace with cloud storage URL (e.g., AWS S3, Cloudinary, etc.)
     const url = `/uploads/${filename}`;
     return NextResponse.json({ url });
-  } catch (error) {
-    console.error("Upload error:", error);
+  } catch {
     return NextResponse.json({ error: "Failed to upload file" }, { status: 500 });
   }
 }

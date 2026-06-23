@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Mercari">
+  <rect width="32" height="32" rx="8" fill="#FFFFFF"/>
+  <path d="M8 12.2 16 7.5l8 4.7v9.2l-8 4.7-8-4.7v-9.2Z" fill="#FF0211"/>
+  <text x="15.2" y="21.1" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="800" fill="#FFFFFF">m</text>
+  <circle cx="23.2" cy="10" r="3.3" fill="#44C7F4"/>
+</svg>

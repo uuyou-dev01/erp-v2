@@ -5,9 +5,14 @@ import { useRouter } from "next/navigation";
 import Decimal from "decimal.js";
 import { Loader2 } from "lucide-react";
 import {
-  submitSkuLocationStocktakeAdjustments,
+  submitSkuLocationStocktakeAdjustmentsAction,
   type SkuLocationStocktakeRow,
 } from "@/app/actions/stocktake";
+import {
+  isStocktakeDraftChanged,
+  parseStocktakeIntegerInput,
+  parseStocktakeUnitCostInput,
+} from "@/lib/application/stocktake-form";
 import { formatCurrency } from "@/lib/decimal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,11 +40,6 @@ interface DraftRow {
 
 function rowKey(row: SkuLocationStocktakeRow) {
   return `${row.skuId}:${row.locationId}`;
-}
-
-function parseIntegerInput(value: string, fallback = 0) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function formatIntegerDiff(diff: number) {
@@ -99,13 +99,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
     return rows.filter((row) => {
       const draft = drafts[rowKey(row)];
       if (!draft) return false;
-      const countedQty = parseIntegerInput(draft.countedQty, row.bookQty);
-      const countedUnitCost = new Decimal(draft.countedUnitCost || row.bookUnitCost);
-      return (
-        countedQty !== row.bookQty ||
-        !countedUnitCost.eq(new Decimal(row.bookUnitCost)) ||
-        Boolean(draft.notes.trim())
-      );
+      return isStocktakeDraftChanged(draft, row.bookQty, row.bookUnitCost);
     });
   }, [drafts, rows]);
 
@@ -113,7 +107,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
     return changedRows.filter((row) => {
       const draft = drafts[rowKey(row)];
       if (!draft) return false;
-      return parseIntegerInput(draft.countedQty, row.bookQty) !== row.bookQty;
+      return parseStocktakeIntegerInput(draft.countedQty, row.bookQty) !== row.bookQty;
     });
   }, [changedRows, drafts]);
 
@@ -126,8 +120,11 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
       return {
         skuId: row.skuId,
         locationId: row.locationId,
-        countedQty: parseIntegerInput(draft.countedQty, row.bookQty),
-        countedUnitCost: new Decimal(draft.countedUnitCost || row.bookUnitCost).toFixed(2),
+        countedQty: parseStocktakeIntegerInput(draft.countedQty, row.bookQty),
+        countedUnitCost: parseStocktakeUnitCostInput(
+          draft.countedUnitCost,
+          row.bookUnitCost
+        ).decimal.toFixed(2),
         notes: draft.notes.trim() || undefined,
       };
     });
@@ -137,6 +134,15 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
     setMessage(null);
     if (qtyChangedRows.length === 0) {
       setError("没有需要提交的数量差异");
+      return;
+    }
+    const invalidUnitCostRow = qtyChangedRows.find((row) => {
+      const draft = drafts[rowKey(row)];
+      if (!draft) return false;
+      return !parseStocktakeUnitCostInput(draft.countedUnitCost, row.bookUnitCost).valid;
+    });
+    if (invalidUnitCostRow) {
+      setError(`${invalidUnitCostRow.skuCode} 的盘点单价格式无效`);
       return;
     }
     setConfirmOpen(true);
@@ -149,12 +155,16 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
 
     try {
       const items = buildSubmitItems();
-      const result = await submitSkuLocationStocktakeAdjustments({
+      const result = await submitSkuLocationStocktakeAdjustmentsAction({
         storeId,
         items,
       });
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
       setConfirmOpen(false);
-      setMessage(`提交成功，已写入 ${result.length} 条调整流水`);
+      setMessage(`提交成功，已写入 ${result.adjustments.length} 条调整流水`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败，请稍后重试");
@@ -191,7 +201,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
           <ul className="mb-4 space-y-2 text-sm">
             {qtyChangedRows.map((row) => {
               const draft = drafts[rowKey(row)];
-              const countedQty = parseIntegerInput(draft?.countedQty ?? "", row.bookQty);
+              const countedQty = parseStocktakeIntegerInput(draft?.countedQty ?? "", row.bookQty);
               const diff = countedQty - row.bookQty;
               return (
                 <li key={rowKey(row)} className="flex flex-wrap gap-x-2 gap-y-1">
@@ -243,7 +253,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
             const key = rowKey(row);
             const draft = drafts[key];
             if (!draft) return null;
-            const countedQty = parseIntegerInput(draft.countedQty, row.bookQty);
+            const countedQty = parseStocktakeIntegerInput(draft.countedQty, row.bookQty);
             const diff = countedQty - row.bookQty;
             return (
               <TableRow key={key}>

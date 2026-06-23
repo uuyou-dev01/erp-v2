@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { createCustomerOrder } from "@/app/actions/customer-orders";
+import { createCustomerOrderAction } from "@/app/actions/customer-orders";
 import { getPlatforms } from "@/app/actions/platforms";
+import { AlertCircle } from "lucide-react";
 import { t, CURRENCIES, COUNTRY_FLOWS } from "@/lib/i18n";
 
 interface Platform {
@@ -40,24 +41,31 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
     currency: "JPY",
     countryFlow: "CN_TO_JP",
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     getPlatforms(storeId).then((list) => setPlatforms(list as Platform[]));
   }, [storeId]);
 
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
   const handlePlatformChange = (platformId: string) => {
     const platform = platforms.find((p) => p.id === platformId);
-    setFormData((prev) => ({
-      ...prev,
+    setSubmitError(null);
+    updateFormData({
       platformId,
-      currency: platform?.defaultCurrency || prev.currency,
-    }));
+      currency: platform?.defaultCurrency || formData.currency,
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!formData.platformId) {
-      alert("请选择销售平台");
+      setSubmitError("请选择销售平台");
       return;
     }
     setLoading(true);
@@ -65,7 +73,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
     try {
       const orderNumber = `ORD-${Date.now()}`;
 
-      const order = await createCustomerOrder({
+      const result = await createCustomerOrderAction({
         storeId,
         orderNumber,
         platformId: formData.platformId,
@@ -78,12 +86,15 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
         currency: formData.currency,
         countryFlow: formData.countryFlow || undefined,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
 
-      router.push(`/sales/${order.id}`);
+      router.push(`/sales/${result.id}`);
       router.refresh();
     } catch (error) {
-      console.error("Failed to create customer order:", error);
-      alert("创建订单失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "创建订单失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -130,7 +141,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
             <Input
               id="customerName"
               value={formData.customerName}
-              onChange={(e) => setFormData({ ...formData, customerName: e.target.value })}
+              onChange={(e) => updateFormData({ customerName: e.target.value })}
               placeholder={t("sales.customer_name_placeholder")}
               required
             />
@@ -143,7 +154,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
                 id="customerEmail"
                 type="email"
                 value={formData.customerEmail}
-                onChange={(e) => setFormData({ ...formData, customerEmail: e.target.value })}
+                onChange={(e) => updateFormData({ customerEmail: e.target.value })}
                 placeholder="customer@example.com"
               />
             </div>
@@ -154,7 +165,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
                 id="customerPhone"
                 type="tel"
                 value={formData.customerPhone}
-                onChange={(e) => setFormData({ ...formData, customerPhone: e.target.value })}
+                onChange={(e) => updateFormData({ customerPhone: e.target.value })}
                 placeholder="+81 90-1234-5678"
               />
             </div>
@@ -165,7 +176,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
             <Textarea
               id="shippingAddress"
               value={formData.shippingAddress}
-              onChange={(e) => setFormData({ ...formData, shippingAddress: e.target.value })}
+              onChange={(e) => updateFormData({ shippingAddress: e.target.value })}
               placeholder={t("sales.shipping_address_placeholder")}
               rows={3}
             />
@@ -185,7 +196,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
                 id="orderDate"
                 type="date"
                 value={formData.orderDate}
-                onChange={(e) => setFormData({ ...formData, orderDate: e.target.value })}
+                onChange={(e) => updateFormData({ orderDate: e.target.value })}
                 required
               />
             </div>
@@ -195,7 +206,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
               <Select
                 id="currency"
                 value={formData.currency}
-                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                onChange={(e) => updateFormData({ currency: e.target.value })}
                 required
               >
                 {CURRENCIES.map((c) => (
@@ -211,7 +222,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
               <Select
                 id="countryFlow"
                 value={formData.countryFlow}
-                onChange={(e) => setFormData({ ...formData, countryFlow: e.target.value })}
+                onChange={(e) => updateFormData({ countryFlow: e.target.value })}
               >
                 {COUNTRY_FLOWS.map((f) => (
                   <option key={f.value} value={f.value}>{f.label}</option>
@@ -224,7 +235,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
               <Input
                 id="externalOrderNo"
                 value={formData.externalOrderNo}
-                onChange={(e) => setFormData({ ...formData, externalOrderNo: e.target.value })}
+                onChange={(e) => updateFormData({ externalOrderNo: e.target.value })}
                 placeholder={t("sales.external_order_no_placeholder")}
               />
               <p className="text-xs text-muted-foreground">{t("sales.external_order_no_hint")}</p>
@@ -232,6 +243,16 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
           </div>
         </CardContent>
       </Card>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={loading}>

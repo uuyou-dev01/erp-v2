@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { QueueCounts, WorkItem, WorkQueue } from "@/lib/application/next-actions";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
 import { getWorkbenchWorkItemDetail } from "@/app/actions/workbench";
-import { cancelPurchaseOrder } from "@/app/actions/purchase-orders";
+import { cancelPurchaseOrderAction } from "@/app/actions/purchase-orders";
 import { TodayCommandBar } from "./today-command-bar";
 import { StatusQueue } from "./status-queue";
 import { WorkQueueList } from "./work-queue-list";
@@ -14,12 +14,13 @@ import { RecentActivityFeed, type ActivityFeedItem } from "./recent-activity-fee
 import { WorkflowCard, getOldestWaitLabel } from "./workflow-card";
 import { ActionDrawer } from "./action-drawer";
 import { QuickEntryWorkbench } from "./quick-entry-workbench";
-import { WORKFLOW_STAGES } from "@/lib/application/next-actions";
+import { getVisibleWorkflowStages } from "@/lib/application/next-actions";
 import { cn } from "@/lib/utils";
 import { BulkActionToolbar } from "./bulk-action-toolbar";
 import { PendingActionPanel } from "./pending-action-panel";
 import type { WorkbenchPlatformOption } from "./action-drawer-forms";
 import type { AssignableMemberOption } from "./task-assignment-card";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 function Panel({
   title,
@@ -125,6 +126,8 @@ export function NextActionWorkbench({
   const [showQuickEntry, setShowQuickEntry] = useState(false);
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "delegated">("all");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [cancelTarget, setCancelTarget] = useState<WorkItem | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const filteredItems = useMemo(() => {
@@ -160,6 +163,8 @@ export function NextActionWorkbench({
     setSelectedItem(null);
     setSelectedDetail(null);
     setCheckedIds([]);
+    setCancelTarget(null);
+    setCancelError(null);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("action");
     params.delete("open");
@@ -170,6 +175,8 @@ export function NextActionWorkbench({
 
   const handleSelectItem = (item: WorkItem) => {
     setSelectedItem(item);
+    setCancelTarget(null);
+    setCancelError(null);
     setShowQuickEntry(false);
     startTransition(async () => {
       const data = await getWorkbenchWorkItemDetail(item.entityType, item.entityId);
@@ -179,18 +186,28 @@ export function NextActionWorkbench({
 
   const handleCancelPurchase = (item: WorkItem) => {
     if (item.entityType !== "purchaseOrder" || item.queue !== "missingLogistics") return;
-    const confirmed = window.confirm(`确认取消采购单「${item.title}」吗？此操作会让它从待补物流队列移除。`);
-    if (!confirmed) return;
+    setCancelTarget(item);
+    setCancelError(null);
+  };
+
+  const handleConfirmCancelPurchase = () => {
+    if (!cancelTarget) return;
 
     startTransition(async () => {
       try {
-        await cancelPurchaseOrder(item.entityId);
-        setSelectedItem((current) => (current?.id === item.id ? null : current));
-        setSelectedDetail((current) => (current?.id === item.id ? null : current));
-        setCheckedIds((ids) => ids.filter((id) => id !== item.id));
+        setCancelError(null);
+        const result = await cancelPurchaseOrderAction(cancelTarget.entityId);
+        if (!result.success) {
+          setCancelError(result.error);
+          return;
+        }
+        setSelectedItem((current) => (current?.id === cancelTarget.id ? null : current));
+        setSelectedDetail((current) => (current?.id === cancelTarget.id ? null : current));
+        setCheckedIds((ids) => ids.filter((id) => id !== cancelTarget.id));
+        setCancelTarget(null);
         router.refresh();
       } catch (error) {
-        alert(error instanceof Error ? error.message : "取消采购失败");
+        setCancelError(error instanceof Error ? error.message : "取消采购失败");
       }
     });
   };
@@ -242,7 +259,7 @@ export function NextActionWorkbench({
       />
 
       <div className="flex gap-3 overflow-x-auto pb-1">
-        {WORKFLOW_STAGES.filter((s) => initialCounts[s.key] > 0 || s.key === selectedQueue).slice(0, 8).map(({ key }) => {
+        {getVisibleWorkflowStages(initialCounts, selectedQueue).map(({ key }) => {
           const queueItems = initialItems.filter((i) => i.queue === key);
           return (
             <WorkflowCard
@@ -271,7 +288,11 @@ export function NextActionWorkbench({
         </Panel>
 
         <Panel
-          title={selectedQueue === "all" ? `全部待办 · ${filteredItems.length}` : `待处理 · ${filteredItems.length}`}
+          title={
+            selectedQueue === "all"
+              ? `全部待办 · ${filteredItems.length}`
+              : `待处理 · ${filteredItems.length}`
+          }
         >
           <div className="mb-2 flex flex-wrap gap-1">
             {[
@@ -368,6 +389,26 @@ export function NextActionWorkbench({
           </div>
         </div>
       </ActionDrawer>
+
+      <ConfirmDialog
+        open={Boolean(cancelTarget)}
+        title="确认取消采购单"
+        description={
+          cancelTarget
+            ? `确认取消采购单「${cancelTarget.title}」吗？此操作会让它从待补物流队列移除。`
+            : ""
+        }
+        confirmText="取消采购"
+        cancelText="返回"
+        tone="danger"
+        loading={pending}
+        error={cancelError}
+        onConfirm={handleConfirmCancelPurchase}
+        onCancel={() => {
+          setCancelTarget(null);
+          setCancelError(null);
+        }}
+      />
     </div>
   );
 }

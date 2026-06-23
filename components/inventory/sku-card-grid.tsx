@@ -9,14 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProductImage } from "@/components/ui/product-image";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { cn } from "@/lib/utils";
 
 interface SKUCardGridProps {
   products: SkuCardProduct[];
-}
-
-function platformInitial(name: string) {
-  return name.trim().slice(0, 1).toUpperCase() || "P";
 }
 
 function statusClass(status: string) {
@@ -42,20 +39,20 @@ function PlatformDots({ platforms }: { platforms: Array<{ code: string; name: st
   return (
     <div className="flex flex-wrap gap-1.5">
       {platforms.map((platform) => (
-        <span
+        <ListingPlatformMark
           key={`${platform.code}-${platform.name}`}
-          title={platform.name}
-          className="grid h-7 w-7 place-items-center rounded-lg border bg-white text-[11px] font-bold text-gray-700"
-        >
-          {platformInitial(platform.name)}
-        </span>
+          code={platform.code}
+          name={platform.name}
+          className="h-5 w-5 rounded-md bg-white text-[10px] text-gray-700"
+        />
       ))}
     </div>
   );
 }
 
 function platformStatusClass(status: string) {
-  if (status === "SYNC_OK" || status === "LISTED") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "SYNC_OK" || status === "LISTED")
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "SYNC_EXCEPTION") return "border-red-200 bg-red-50 text-red-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
@@ -78,17 +75,21 @@ function PlatformOpsStrip({
         <span
           key={platform.code}
           className={cn(
-            "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium",
+            "inline-flex h-6 w-6 items-center justify-center rounded-md border",
             platformStatusClass(platform.status)
           )}
-          title={`${platform.name} · ${platform.stockLabel}`}
+          title={`${platform.name} · ${platform.statusLabel} · ${platform.stockLabel}`}
+          aria-label={`${platform.name} · ${platform.statusLabel} · ${platform.stockLabel}`}
         >
-          <span>{platform.name}</span>
-          <span className="text-current/70">{platform.statusLabel}</span>
+          <ListingPlatformMark
+            code={platform.code}
+            name={platform.name}
+            className="h-5 w-5 rounded-md border-0 bg-transparent p-0 shadow-none"
+          />
         </span>
       ))}
       {limit && platforms.length > limit && (
-        <span className="inline-flex items-center rounded-md border bg-white px-2 py-1 text-[11px] text-muted-foreground">
+        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md border bg-white px-1 text-[10px] text-muted-foreground">
           +{platforms.length - limit}
         </span>
       )}
@@ -152,7 +153,8 @@ function SKUProductCard({
   const [activeSkuId, setActiveSkuId] = useState(product.variants[0]?.skuId);
   const [expanded, setExpanded] = useState(false);
   const [variantsExpanded, setVariantsExpanded] = useState(false);
-  const active = product.variants.find((variant) => variant.skuId === activeSkuId) ?? product.variants[0];
+  const active =
+    product.variants.find((variant) => variant.skuId === activeSkuId) ?? product.variants[0];
   const summary = useMemo(() => {
     const variants = product.variants;
     const primary = [...variants].sort(
@@ -166,11 +168,13 @@ function SKUProductCard({
       lockedCount: variants.reduce((sum, variant) => sum + variant.lockedCount, 0),
       riskTags,
       platformSummary:
-        variants.find((variant) => variant.platformSummary !== "暂无平台")?.platformSummary ?? "暂无平台",
+        variants.find((variant) => variant.platformSummary !== "暂无平台")?.platformSummary ??
+        "暂无平台",
     };
   }, [product.variants]);
   const isExpanded = expanded || densityMode === "detail";
-  const visibleVariants = variantsExpanded || isExpanded ? product.variants : product.variants.slice(0, 3);
+  const visibleVariants =
+    variantsExpanded || isExpanded ? product.variants : product.variants.slice(0, 3);
   const hiddenVariantCount = Math.max(product.variants.length - visibleVariants.length, 0);
 
   return (
@@ -186,10 +190,15 @@ function SKUProductCard({
                 {product.brand || "未设置品牌"}
               </p>
               <h2 className="mt-1 truncate text-lg font-semibold tracking-tight">{product.name}</h2>
-              {active && <p className="mt-1 font-mono text-xs text-muted-foreground">{active.skuCode}</p>}
+              {active && (
+                <p className="mt-1 font-mono text-xs text-muted-foreground">{active.skuCode}</p>
+              )}
             </div>
             {summary.primary && (
-              <Badge variant="outline" className={cn("shrink-0", lifecycleClass(summary.primary.lifecycleStage))}>
+              <Badge
+                variant="outline"
+                className={cn("shrink-0", lifecycleClass(summary.primary.lifecycleStage))}
+              >
                 {summary.primary.lifecycleStageLabel}
               </Badge>
             )}
@@ -252,7 +261,11 @@ function SKUProductCard({
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {summary.riskTags.length > 0 ? (
                   summary.riskTags.slice(0, 2).map((tag) => (
-                    <Badge key={tag} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                    <Badge
+                      key={tag}
+                      variant="outline"
+                      className="border-amber-200 bg-amber-50 text-amber-700"
+                    >
                       {tag}
                     </Badge>
                   ))
@@ -290,7 +303,9 @@ function SKUProductCard({
                   onClick={() => setExpanded((value) => !value)}
                 >
                   {isExpanded ? "收起" : "展开"}
-                  <ChevronDown className={cn("ml-1.5 h-3.5 w-3.5 transition", isExpanded && "rotate-180")} />
+                  <ChevronDown
+                    className={cn("ml-1.5 h-3.5 w-3.5 transition", isExpanded && "rotate-180")}
+                  />
                 </Button>
               )}
             </div>
@@ -323,7 +338,8 @@ function SKUProductCard({
               <div className="min-w-0">
                 <p className="text-sm font-semibold">运营对象状态</p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
-                  新品库存 {active.newStockCount} · 中古单品 {active.usedItems.length} · 锁定 {active.lockedCount} 件
+                  新品库存 {active.newStockCount} · 中古单品 {active.usedItems.length} · 锁定{" "}
+                  {active.lockedCount} 件
                 </p>
                 <div className="mt-2">
                   <PlatformOpsStrip platforms={active.platformStatuses} />
@@ -331,12 +347,19 @@ function SKUProductCard({
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {active.riskTags.length > 0 ? (
                     active.riskTags.map((tag) => (
-                      <Badge key={tag} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                      <Badge
+                        key={tag}
+                        variant="outline"
+                        className="border-amber-200 bg-amber-50 text-amber-700"
+                      >
                         {tag}
                       </Badge>
                     ))
                   ) : (
-                    <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 bg-slate-50 text-slate-600"
+                    >
                       暂无风险
                     </Badge>
                   )}
@@ -371,7 +394,11 @@ function SKUProductCard({
                     · {active.newStockLocation || "-"}
                   </p>
                 </div>
-                <PlatformOpsStrip platforms={active.platformStatuses.filter((platform) => platform.status !== "NOT_CREATED")} />
+                <PlatformOpsStrip
+                  platforms={active.platformStatuses.filter(
+                    (platform) => platform.status !== "NOT_CREATED"
+                  )}
+                />
               </div>
             </section>
 
@@ -449,7 +476,9 @@ export function SKUCardGrid({ products }: SKUCardGridProps) {
               onClick={() => setDensityMode("compact")}
               className={cn(
                 "rounded px-2.5 py-1.5 text-xs font-medium",
-                densityMode === "compact" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                densityMode === "compact"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground"
               )}
             >
               紧凑
@@ -459,7 +488,9 @@ export function SKUCardGrid({ products }: SKUCardGridProps) {
               onClick={() => setDensityMode("detail")}
               className={cn(
                 "rounded px-2.5 py-1.5 text-xs font-medium",
-                densityMode === "detail" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                densityMode === "detail"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground"
               )}
             >
               详细
@@ -481,7 +512,9 @@ export function SKUCardGrid({ products }: SKUCardGridProps) {
         <EmptyState
           icon={Box}
           title={products.length === 0 ? "暂无 SKU" : "没有匹配的商品"}
-          description={products.length === 0 ? "先添加 SKU 或通过快速录入生成库存" : "调整关键词后再试"}
+          description={
+            products.length === 0 ? "先添加 SKU 或通过快速录入生成库存" : "调整关键词后再试"
+          }
           actionLabel={products.length === 0 ? "添加 SKU" : undefined}
           actionHref={products.length === 0 ? "/inventory/skus/new" : undefined}
         />

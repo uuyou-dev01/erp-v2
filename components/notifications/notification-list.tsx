@@ -1,12 +1,12 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Check } from "lucide-react";
+import { AlertTriangle, Bell, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { markMyNotificationRead } from "@/app/actions/notifications";
+import { markMyNotificationReadAction } from "@/app/actions/notifications";
 
 interface NotificationRow {
   id: string;
@@ -41,6 +41,7 @@ function dateLabel(value: string) {
 export function NotificationList({ notifications }: { notifications: NotificationRow[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [notificationError, setNotificationError] = useState<string | null>(null);
 
   if (notifications.length === 0) {
     return (
@@ -54,6 +55,15 @@ export function NotificationList({ notifications }: { notifications: Notificatio
 
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
+      {notificationError ? (
+        <div
+          role="alert"
+          className="flex gap-2 border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{notificationError}</p>
+        </div>
+      ) : null}
       {notifications.map((notification) => (
         <div
           key={notification.id}
@@ -85,9 +95,20 @@ export function NotificationList({ notifications }: { notifications: Notificatio
               className="h-8 w-8"
               disabled={pending}
               onClick={() => {
+                setNotificationError(null);
                 startTransition(async () => {
-                  await markMyNotificationRead(notification.id);
-                  router.refresh();
+                  try {
+                    const result = await markMyNotificationReadAction(notification.id);
+                    if (!result.success) {
+                      setNotificationError(result.error);
+                      return;
+                    }
+                    router.refresh();
+                  } catch (error) {
+                    setNotificationError(
+                      error instanceof Error ? error.message : "标记通知已读失败，请重试"
+                    );
+                  }
                 });
               }}
             >

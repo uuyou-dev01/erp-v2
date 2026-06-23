@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { markPurchaseAsShipped } from "@/app/actions/purchase-orders";
+import { markPurchaseAsShippedAction } from "@/app/actions/purchase-orders";
 import { Truck, X, AlertCircle } from "lucide-react";
 
 interface MarkShippedDialogProps {
@@ -37,6 +37,7 @@ export function MarkShippedDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [form, setForm] = useState({
     shippedAt: new Date().toISOString().split("T")[0],
     trackingNo: defaultTrackingNo ?? "",
@@ -47,6 +48,7 @@ export function MarkShippedDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     const errs: Record<string, string> = {};
     if (!form.shippedAt) errs.shippedAt = "请填写发货日期";
     if (form.etaDate && form.shippedAt && form.etaDate < form.shippedAt) {
@@ -57,7 +59,7 @@ export function MarkShippedDialog({
 
     setLoading(true);
     try {
-      await markPurchaseAsShipped({
+      const result = await markPurchaseAsShippedAction({
         purchaseOrderId,
         shippedAt: new Date(form.shippedAt),
         trackingNo: form.trackingNo || undefined,
@@ -66,11 +68,14 @@ export function MarkShippedDialog({
         shipmentNote: form.shipmentNote || undefined,
         shipmentMode: "purchase_only",
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
       setOpen(false);
       router.refresh();
     } catch (error) {
-      console.error("Failed to mark as shipped:", error);
-      alert(error instanceof Error ? error.message : "标记发货失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "标记发货失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -121,7 +126,10 @@ export function MarkShippedDialog({
                   id="shippedAt"
                   type="date"
                   value={form.shippedAt}
-                  onChange={(e) => setForm({ ...form, shippedAt: e.target.value })}
+                  onChange={(e) => {
+                    setSubmitError(null);
+                    setForm({ ...form, shippedAt: e.target.value });
+                  }}
                   required
                 />
                 {errors.shippedAt && (
@@ -137,7 +145,10 @@ export function MarkShippedDialog({
                   id="etaDate"
                   type="date"
                   value={form.etaDate}
-                  onChange={(e) => setForm({ ...form, etaDate: e.target.value })}
+                  onChange={(e) => {
+                    setSubmitError(null);
+                    setForm({ ...form, etaDate: e.target.value });
+                  }}
                   min={form.shippedAt || undefined}
                 />
                 {errors.etaDate && (
@@ -155,7 +166,10 @@ export function MarkShippedDialog({
                 <Input
                   id="trackingNo"
                   value={form.trackingNo}
-                  onChange={(e) => setForm({ ...form, trackingNo: e.target.value })}
+                  onChange={(e) => {
+                    setSubmitError(null);
+                    setForm({ ...form, trackingNo: e.target.value });
+                  }}
                   placeholder="例如：SF1234567890"
                 />
               </div>
@@ -164,7 +178,10 @@ export function MarkShippedDialog({
                 <Input
                   id="carrier"
                   value={form.carrier}
-                  onChange={(e) => setForm({ ...form, carrier: e.target.value })}
+                  onChange={(e) => {
+                    setSubmitError(null);
+                    setForm({ ...form, carrier: e.target.value });
+                  }}
                   placeholder="例如：顺丰 / EMS / DHL"
                 />
               </div>
@@ -175,12 +192,25 @@ export function MarkShippedDialog({
               <textarea
                 id="shipmentNote"
                 value={form.shipmentNote}
-                onChange={(e) => setForm({ ...form, shipmentNote: e.target.value })}
+                onChange={(e) => {
+                  setSubmitError(null);
+                  setForm({ ...form, shipmentNote: e.target.value });
+                }}
                 rows={2}
                 placeholder="多包裹、第二程物流单号等可记在此处"
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
+
+            {submitError ? (
+              <div
+                role="alert"
+                className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{submitError}</p>
+              </div>
+            ) : null}
 
             <div className="flex justify-end gap-2 pt-2">
               <Button

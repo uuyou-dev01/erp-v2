@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AlertCircle } from "lucide-react";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -11,6 +12,7 @@ interface ConfirmDialogProps {
   cancelText?: string;
   loading?: boolean;
   tone?: "danger" | "default";
+  error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -23,6 +25,7 @@ export function ConfirmDialog({
   cancelText = "取消",
   loading = false,
   tone = "default",
+  error,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -42,11 +45,17 @@ export function ConfirmDialog({
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">{description}</p>
+          {error && (
+            <p className="flex items-start gap-2 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onCancel} disabled={loading}>
+            <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
               {cancelText}
             </Button>
-            <Button className={confirmClassName} onClick={onConfirm} disabled={loading}>
+            <Button type="button" className={confirmClassName} onClick={onConfirm} disabled={loading}>
               {loading ? "处理中..." : confirmText}
             </Button>
           </div>

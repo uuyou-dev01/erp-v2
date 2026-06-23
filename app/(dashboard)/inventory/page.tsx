@@ -1,50 +1,57 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MapPin, Box, Package, PackageOpen } from "lucide-react";
+import { Box, Globe, MapPin, Package, PackageOpen } from "lucide-react";
 import Link from "next/link";
 
 export default function InventoryPage() {
   const modules = [
     {
-      title: "Locations",
-      description: "Manage warehouses, forwarders, and storage locations",
+      title: "仓库位置",
+      description: "维护仓库、货代仓、可售默认仓和库位区域",
       icon: MapPin,
       href: "/inventory/locations",
       color: "text-blue-500",
     },
     {
-      title: "SKUs",
-      description: "Product definitions and catalog management",
+      title: "SKU 档案",
+      description: "维护标准商品、变体、图片和基础定价信息",
       icon: Box,
       href: "/inventory/skus",
       color: "text-green-500",
     },
     {
-      title: "Inventory Lots",
-      description: "New goods batches and quantity tracking",
+      title: "入库批次",
+      description: "查看采购入库后的批次数量、成本和所在仓位",
       icon: Package,
       href: "/inventory/lots",
       color: "text-purple-500",
     },
     {
-      title: "Item Units",
-      description: "Individual used/defective items tracking",
+      title: "单件库存",
+      description: "核对中古、瑕疵、唯一件等单件库存的标签、图片和上架状态",
       icon: PackageOpen,
       href: "/inventory/items",
       color: "text-orange-500",
+    },
+    {
+      title: "销售平台",
+      description: "配置平台、费率、默认币种和上架展示信息",
+      icon: Globe,
+      href: "/listing/platforms",
+      color: "text-cyan-500",
     },
   ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Inventory Management</h1>
+        <h1 className="text-3xl font-bold">库存与基础资料</h1>
         <p className="text-muted-foreground">
-          Manage your inventory, locations, and stock levels
+          集中维护 SKU、单件库存、入库批次、仓库位置和销售平台。
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {modules.map((module) => (
           <Card key={module.title} className="hover:border-primary transition-colors">
             <CardHeader>
@@ -57,7 +64,7 @@ export default function InventoryPage() {
               <p className="mb-4 text-sm text-muted-foreground">{module.description}</p>
               <Link href={module.href}>
                 <Button variant="outline" className="w-full">
-                  Manage {module.title}
+                  打开{module.title}
                 </Button>
               </Link>
             </CardContent>
@@ -67,23 +74,13 @@ export default function InventoryPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Inventory Overview</CardTitle>
+          <CardTitle>页面定位</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Total Locations</p>
-              <p className="text-2xl font-bold">0</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Active SKUs</p>
-              <p className="text-2xl font-bold">0</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Total Units</p>
-              <p className="text-2xl font-bold">0</p>
-            </div>
-          </div>
+          <p className="text-sm leading-6 text-muted-foreground">
+            这里作为基础资料入口保留；日常处理可售库存、盘点和上架状态时，
+            优先从侧边栏的「库存运营」进入。
+          </p>
         </CardContent>
       </Card>
     </div>

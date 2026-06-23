@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
 import { syncQuickEntryFromOrder } from "@/lib/application/workflow-queries";
 import {
+  allocateAmountByLineAmount,
   computeOrderFees,
   feeResultToStrings,
 } from "@/lib/application/order-fees";
@@ -29,6 +30,7 @@ import {
   createTaskIfMissing,
   TASK_TYPE,
 } from "@/lib/application/tasks";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 export type OrderStatus =
   | "DRAFT"
@@ -105,6 +107,7 @@ export async function getCustomerOrderById(id: string) {
                   location: true,
                 },
               },
+              itemUnit: true,
             },
           },
         },
@@ -163,6 +166,15 @@ export async function createCustomerOrder(data: CreateCustomerOrderInput) {
   return order;
 }
 
+export async function createCustomerOrderAction(data: CreateCustomerOrderInput) {
+  try {
+    const order = await createCustomerOrder(data);
+    return actionSuccess({ id: order.id });
+  } catch (error) {
+    return toActionFailure(error, "创建订单失败，请重试");
+  }
+}
+
 export async function addOrderLine(data: CreateOrderLineInput) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: data.orderId },
@@ -197,6 +209,15 @@ export async function addOrderLine(data: CreateOrderLineInput) {
   revalidatePath("/sales");
   revalidatePath(`/sales/${data.orderId}`);
   return line;
+}
+
+export async function addOrderLineAction(data: CreateOrderLineInput) {
+  try {
+    const line = await addOrderLine(data);
+    return actionSuccess({ id: line.id });
+  } catch (error) {
+    return toActionFailure(error, "添加商品行失败，请重试");
+  }
 }
 
 export async function allocateInventory(data: AllocateInventoryInput) {
@@ -278,6 +299,15 @@ export async function allocateInventory(data: AllocateInventoryInput) {
   return allocation;
 }
 
+export async function allocateInventoryAction(data: AllocateInventoryInput) {
+  try {
+    const allocation = await allocateInventory(data);
+    return actionSuccess({ allocationId: allocation.id });
+  } catch (error) {
+    return toActionFailure(error, "分配库存失败，请重试");
+  }
+}
+
 export async function confirmOrder(data: ConfirmOrderInput) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: data.orderId },
@@ -291,7 +321,7 @@ export async function confirmOrder(data: ConfirmOrderInput) {
   });
 
   if (!order) {
-    throw new Error("Order not found");
+    throw new Error("订单不存在");
   }
   const context = await requireUserContext({ storeId: order.storeId });
 
@@ -367,6 +397,15 @@ export async function confirmOrder(data: ConfirmOrderInput) {
   revalidatePath("/sales");
   revalidatePath(`/sales/${data.orderId}`);
   revalidatePath("/inventory/lots");
+}
+
+export async function confirmOrderAction(data: ConfirmOrderInput) {
+  try {
+    await confirmOrder(data);
+    return actionSuccess({ orderId: data.orderId });
+  } catch (error) {
+    return toActionFailure(error, "确认订单失败，请重试");
+  }
 }
 
 export async function saveOrderShippingProof(
@@ -874,9 +913,50 @@ export async function markOrderShipped(
   revalidatePath("/workbench");
 }
 
+export async function markOrderShippedAction(
+  orderId: string,
+  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+) {
+  try {
+    await markOrderShipped(orderId, options);
+    return actionSuccess({ orderId });
+  } catch (error) {
+    return toActionFailure(error, "标记发货失败，请重试");
+  }
+}
+
+function parseNonNegativeSettlementDecimal(value: string, label: string) {
+  const amount = parseSettlementDecimal(value, label);
+  if (amount.lt(0)) {
+    throw new Error(`${label}不能为负数`);
+  }
+  return amount;
+}
+
+function parsePositiveSettlementDecimal(value: string, label: string) {
+  const amount = parseSettlementDecimal(value, label);
+  if (amount.lte(0)) {
+    throw new Error(`${label}必须大于 0`);
+  }
+  return amount;
+}
+
+function parseSettlementDecimal(value: string, label: string) {
+  try {
+    const amount = new Decimal(value);
+    if (!amount.isFinite()) {
+      throw new Error("invalid");
+    }
+    return amount;
+  } catch {
+    throw new Error(`${label}必须是有效数字`);
+  }
+}
+
 export async function settleCustomerOrder(
   orderId: string,
   data: {
+    actualSalePrice?: string;
     platformFee?: string;
     shippingFee?: string;
     platformFeeRate?: string;
@@ -896,6 +976,9 @@ export async function settleCustomerOrder(
   const context = await requireUserContext({ storeId: order.storeId });
 
   const subtotal = new Decimal(order.subtotal.toString());
+  const settlementSubtotal = data.actualSalePrice
+    ? parsePositiveSettlementDecimal(data.actualSalePrice, "实际售价")
+    : subtotal;
   const inventoryCost = order.lines.reduce((sum, line) => {
     return line.allocations.reduce(
       (lineSum, alloc) => lineSum.plus(new Decimal(alloc.costAmount.toString())),
@@ -904,28 +987,64 @@ export async function settleCustomerOrder(
   }, new Decimal(0));
 
   const platformFeeRate = data.platformFeeRate
-    ? new Decimal(data.platformFeeRate)
+    ? parseNonNegativeSettlementDecimal(data.platformFeeRate, "平台费率")
     : order.platform?.defaultFeeRate
       ? new Decimal(order.platform.defaultFeeRate.toString())
       : null;
 
   const fees = computeOrderFees({
-    subtotal,
-    platformFeeAmount: data.platformFee ? new Decimal(data.platformFee) : null,
+    subtotal: settlementSubtotal,
+    platformFeeAmount: data.platformFee
+      ? parseNonNegativeSettlementDecimal(data.platformFee, "平台手续费")
+      : null,
     platformFeeRate,
-    shippingFee: data.shippingFee ? new Decimal(data.shippingFee) : new Decimal(order.shippingFee.toString()),
+    shippingFee: data.shippingFee
+      ? parseNonNegativeSettlementDecimal(data.shippingFee, "实际邮费")
+      : new Decimal(order.shippingFee.toString()),
     inventoryCost,
   });
   const feeStrings = feeResultToStrings(fees);
 
-  await prisma.customerOrder.update({
-    where: { id: orderId },
-    data: {
-      platformFee: feeStrings.platformFee,
-      shippingFee: feeStrings.shippingFee,
-      netRevenue: feeStrings.netRevenue,
-      settledAt: new Date(),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.customerOrder.update({
+      where: { id: orderId },
+      data: {
+        subtotal: settlementSubtotal.toFixed(4),
+        totalPaid: settlementSubtotal.toFixed(4),
+        platformFee: feeStrings.platformFee,
+        shippingFee: feeStrings.shippingFee,
+        netRevenue: feeStrings.netRevenue,
+        settledAt: new Date(),
+      },
+    });
+
+    if (data.actualSalePrice) {
+      const lineAllocations = allocateAmountByLineAmount({
+        amount: settlementSubtotal,
+        lines: order.lines.map((line) => ({
+          id: line.id,
+          lineAmount: new Decimal(line.lineAmount.toString()),
+        })),
+      });
+      const amountByLineId = new Map(
+        lineAllocations.map((row) => [row.id, row.amount])
+      );
+
+      for (const line of order.lines) {
+        const lineAmount = amountByLineId.get(line.id);
+        if (!lineAmount) continue;
+        const quantity = new Decimal(line.quantity.toString());
+        await tx.orderLine.update({
+          where: { id: line.id },
+          data: {
+            lineAmount: lineAmount.toFixed(4),
+            unitPrice: quantity.gt(0)
+              ? lineAmount.div(quantity).toDecimalPlaces(4).toFixed(4)
+              : line.unitPrice,
+          },
+        });
+      }
+    }
   });
 
   await syncQuickEntryFromOrder(orderId, "SETTLED");
@@ -954,6 +1073,23 @@ export async function settleCustomerOrder(
   revalidatePath("/reports");
   revalidatePath("/reports/team");
   revalidatePath("/workbench");
+}
+
+export async function settleCustomerOrderAction(
+  orderId: string,
+  data: {
+    actualSalePrice?: string;
+    platformFee?: string;
+    shippingFee?: string;
+    platformFeeRate?: string;
+  }
+) {
+  try {
+    await settleCustomerOrder(orderId, data);
+    return actionSuccess({ orderId });
+  } catch (error) {
+    return toActionFailure(error, "结算失败，请重试");
+  }
 }
 
 async function recalculateOrderTotals(orderId: string) {

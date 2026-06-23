@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import type { StockLocationBreakdown } from "@/lib/application/inventory";
-import { ShoppingCart, X } from "lucide-react";
+import { AlertCircle, ShoppingCart, X } from "lucide-react";
 
 interface QuickSellButtonProps {
   listingId: string;
@@ -47,6 +47,7 @@ export function QuickSellButton({
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [fifoDefaultLocationId, setFifoDefaultLocationId] = useState<
     string | null
   >(null);
@@ -111,6 +112,7 @@ export function QuickSellButton({
 
   const handleOpen = () => {
     setFifoDefaultLocationId(null);
+    setError("");
     setFormData((prev) => ({ ...prev, shipFromLocationId: "" }));
     setOpen(true);
   };
@@ -123,6 +125,7 @@ export function QuickSellButton({
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoading(true);
+    setError("");
 
     try {
       const result = await quickSellListing({
@@ -142,7 +145,7 @@ export function QuickSellButton({
       });
 
       if (!result.success) {
-        alert(result.error);
+        setError(result.error);
         return;
       }
 
@@ -150,8 +153,7 @@ export function QuickSellButton({
       router.push(`/sales/${result.orderId}`);
       router.refresh();
     } catch (error) {
-      console.error("Quick sell failed:", error);
-      alert(error instanceof Error ? error.message : "登记售出失败，请重试");
+      setError(error instanceof Error ? error.message : "登记售出失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -213,6 +215,13 @@ export function QuickSellButton({
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
+                {error ? (
+                  <p className="flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    {error}
+                  </p>
+                ) : null}
+
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor={`quantity-${listingId}`}>数量</Label>

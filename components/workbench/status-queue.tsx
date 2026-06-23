@@ -40,6 +40,13 @@ const TASK_GROUPS: Array<{
     color: "text-orange-600",
   },
   {
+    label: "库存 / 上架",
+    description: "可售库存、待上架和已上架",
+    queues: ["inStock", "pendingListing", "listed"],
+    mark: "🏷️",
+    color: "text-violet-600",
+  },
+  {
     label: "出售",
     description: "售出后的发货与结算",
     queues: ["pendingShipment", "shipped", "pendingSettlement"],
@@ -71,9 +78,13 @@ const QUEUE_DOT: Partial<Record<WorkQueue, string>> = {
   exception: "bg-red-500",
 };
 
-export function StatusQueue({ counts, selectedQueue = "all", onSelect, className }: StatusQueueProps) {
-  const groupTotal = (queues: WorkQueue[]) =>
-    queues.reduce((sum, queue) => sum + counts[queue], 0);
+export function StatusQueue({
+  counts,
+  selectedQueue = "all",
+  onSelect,
+  className,
+}: StatusQueueProps) {
+  const groupTotal = (queues: WorkQueue[]) => queues.reduce((sum, queue) => sum + counts[queue], 0);
 
   return (
     <nav className={cn("space-y-3", className)}>
@@ -82,7 +93,9 @@ export function StatusQueue({ counts, selectedQueue = "all", onSelect, className
         onClick={() => onSelect("all")}
         className={cn(
           "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors",
-          selectedQueue === "all" ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60"
+          selectedQueue === "all"
+            ? "bg-muted font-medium"
+            : "text-muted-foreground hover:bg-muted/60"
         )}
       >
         <span>全部</span>
@@ -113,7 +126,9 @@ export function StatusQueue({ counts, selectedQueue = "all", onSelect, className
                   onClick={() => onSelect(key)}
                   className={cn(
                     "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors",
-                    selectedQueue === key && isException && "bg-destructive/10 font-medium text-destructive",
+                    selectedQueue === key &&
+                      isException &&
+                      "bg-destructive/10 font-medium text-destructive",
                     selectedQueue === key && !isException && "bg-muted font-medium",
                     selectedQueue !== key && "text-muted-foreground hover:bg-muted/60"
                   )}
@@ -122,7 +137,9 @@ export function StatusQueue({ counts, selectedQueue = "all", onSelect, className
                     <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", QUEUE_DOT[key])} />
                     <span className="truncate">{QUEUE_LABELS[key]}</span>
                   </span>
-                  <span className="ml-2 text-xs tabular-nums text-muted-foreground">{counts[key]}</span>
+                  <span className="ml-2 text-xs tabular-nums text-muted-foreground">
+                    {counts[key]}
+                  </span>
                 </button>
               );
             })}

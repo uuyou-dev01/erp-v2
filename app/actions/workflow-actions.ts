@@ -112,8 +112,6 @@ export interface SettleOrderPayload {
   actualSalePrice?: string;
   platformFee?: string;
   shippingFee?: string;
-  actualReceived?: string;
-  fxRate?: string;
 }
 
 function clean(value?: string | null) {
@@ -179,26 +177,6 @@ async function createPurchaseLineInspections(
       photos: payload.serialNo ? { serialNo: payload.serialNo } : undefined,
     })),
   });
-}
-
-async function resolvePlatformId(storeId: string, platformText?: string) {
-  const text = clean(platformText);
-  if (!text) throw new Error("请填写上架平台");
-
-  const platform = await prisma.platform.findFirst({
-    where: {
-      storeId,
-      OR: [
-        { name: { contains: text, mode: "insensitive" } },
-        { code: { equals: text, mode: "insensitive" } },
-        { code: { contains: text, mode: "insensitive" } },
-      ],
-    },
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (!platform) throw new Error(`未找到平台：${text}`);
-  return platform.id;
 }
 
 async function resolveOrCreateLocation(storeId: string, locationText?: string) {
@@ -559,14 +537,14 @@ export async function submitCreateListing(
 
     const results = [];
     for (const platformId of toCreate) {
-      results.push(
-        await createListing({
-          storeId: item.storeId,
-          platformId,
-          listingType: "ITEM_UNIT",
-          itemUnitId: item.id,
-        })
-      );
+      const result = await createListing({
+        storeId: item.storeId,
+        platformId,
+        listingType: "ITEM_UNIT",
+        itemUnitId: item.id,
+      });
+      if (!result.success) throw new Error(result.error);
+      results.push(result);
     }
     revalidatePath("/workbench");
     revalidatePath(`/inventory/items/${item.id}`);
@@ -612,14 +590,14 @@ export async function submitCreateListing(
 
     const results = [];
     for (const platformId of toCreate) {
-      results.push(
-        await createListing({
-          storeId: lot.storeId,
-          platformId,
-          listingType: "SKU",
-          skuId: lot.skuId,
-        })
-      );
+      const result = await createListing({
+        storeId: lot.storeId,
+        platformId,
+        listingType: "SKU",
+        skuId: lot.skuId,
+      });
+      if (!result.success) throw new Error(result.error);
+      results.push(result);
     }
     revalidatePath("/workbench");
     revalidatePath("/inventory/skus");
@@ -709,6 +687,7 @@ export async function submitShipOrder(entityId: string, payload: ShipOrderPayloa
 
 export async function submitSettleOrder(entityId: string, payload: SettleOrderPayload) {
   await settleCustomerOrder(entityId, {
+    actualSalePrice: clean(payload.actualSalePrice),
     platformFee: clean(payload.platformFee),
     shippingFee: clean(payload.shippingFee),
   });

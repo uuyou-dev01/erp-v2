@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProductImage } from "@/components/ui/product-image";
@@ -19,16 +21,10 @@ import { formatListedDaysShort } from "@/lib/application/listing-record-display"
 import { productKindLabel } from "@/lib/application/sku-catalog";
 import { formatCurrency } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
-import {
-  AlertTriangle,
-  ChevronDown,
-  Eye,
-  Plus,
-} from "lucide-react";
+import { AlertTriangle, Eye, Plus, X } from "lucide-react";
 
 interface ListingCoverageCardProps {
   product: ListingCoverageProduct;
-  defaultExpanded?: boolean;
 }
 
 function riskClassName(risk: ListingCoverageRisk) {
@@ -49,24 +45,6 @@ function stockKindBadge(product: ListingCoverageProduct) {
   return "SKU 批次";
 }
 
-function collapsedStockLine(product: ListingCoverageProduct) {
-  const parts: string[] = [];
-  if (product.sellableLotQty > 0) {
-    const locs = product.sellableLocations;
-    if (locs.length > 0) {
-      const detail = locs.map((loc) => `${loc.code} ${loc.qty}`).join(" · ");
-      parts.push(`批次 ${product.sellableLotQty} · ${detail}`);
-    } else {
-      parts.push(`批次 ${product.sellableLotQty}`);
-    }
-  }
-  if (product.sellableItemUnitCount > 0) {
-    parts.push(`中古 ${product.sellableItemUnitCount} 件`);
-  }
-  if (parts.length === 0) return `可售 ${product.sellableQty}`;
-  return parts.join(" · ");
-}
-
 function listingSummary(product: ListingCoverageProduct) {
   if (product.records.length === 0) {
     return { label: "待上架", tone: "amber" as const };
@@ -85,23 +63,81 @@ function countMissingPlatforms(product: ListingCoverageProduct) {
   return product.platforms.filter((p) => p.state === "missing").length;
 }
 
-export function ListingCoverageCard({
-  product,
-  defaultExpanded = false,
-}: ListingCoverageCardProps) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+function CompactChannelRow({
+  label,
+  metrics,
+}: {
+  label: string;
+  metrics: Array<{ label: string; value: number; tone?: "default" | "muted" | "amber" }>;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <div className="mb-1.5 text-[11px] font-medium text-foreground">{label}</div>
+      <div className="flex flex-wrap gap-1">
+        {metrics.map((metric) => (
+          <span
+            key={`${label}-${metric.label}`}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] leading-4",
+              metric.tone === "amber"
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-800"
+                : metric.tone === "muted"
+                  ? "border-border bg-background/70 text-muted-foreground"
+                  : "border-border bg-background text-foreground"
+            )}
+          >
+            <span>{metric.label}</span>
+            <span className="font-semibold tabular-nums">{metric.value}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-2 rounded-lg border bg-background/70 p-3">
+      <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
+  const [mounted, setMounted] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [addOpen, setAddOpen] = useState(false);
   const [addPlatformId, setAddPlatformId] = useState<string | undefined>();
 
-  const hasUnlisted = product.records.length === 0;
   const missingPlatforms = countMissingPlatforms(product);
   const summary = listingSummary(product);
   const kind = product.hasItemUnits && !product.hasLotStock ? "USED" : product.productKind;
   const sellableUnits = product.itemUnits.filter((u) => u.sellable);
+  const skuListingRecords = product.records.filter((record) => record.listingScope !== "ITEM_UNIT");
+  const itemUnitListingRecords = product.records.filter(
+    (record) => record.listingScope === "ITEM_UNIT"
+  );
+  const pendingItemUnitWork = sellableUnits.filter(
+    (unit) => unit.photoCount === 0 || unit.labelStatus !== "ATTACHED"
+  );
   const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
   const catalogHref = withReturnTo(`/inventory/skus/${product.skuId}`, currentHref);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [detailsOpen]);
 
   const openAdd = (platformId?: string) => {
     setAddPlatformId(platformId);
@@ -110,31 +146,13 @@ export function ListingCoverageCard({
 
   return (
     <>
-      <article
-        className={cn(
-          "flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow",
-          expanded && "shadow-md"
-        )}
-      >
-        {/* 共用顶栏：折叠/展开均保留，避免重复商品头图 */}
-        <div
-          className={cn(
-            "flex items-stretch gap-0",
-            expanded && "border-b"
-          )}
-        >
+      <article className="flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+        <div className="flex items-stretch gap-0 border-b">
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
+            onClick={() => setDetailsOpen(true)}
             className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/40"
-            aria-expanded={expanded}
           >
-            <ChevronDown
-              className={cn(
-                "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-180"
-              )}
-            />
             <ProductImage
               src={product.imageUrl}
               alt={product.skuName}
@@ -159,221 +177,394 @@ export function ListingCoverageCard({
           </div>
         </div>
 
-        {!expanded ? (
-          <div className="space-y-2 px-3 pb-3 pt-1">
-            <p className="truncate text-[11px] text-muted-foreground">
-              {collapsedStockLine(product)}
-            </p>
-
-            <ListingPlatformStrip product={product} onAddPlatform={openAdd} />
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge
-                variant={summary.tone === "amber" ? "outline" : "secondary"}
-                className={cn(
-                  "text-[10px] font-normal",
-                  summary.tone === "amber" && "border-amber-500/30 text-amber-800"
-                )}
-              >
-                {summary.label}
-              </Badge>
-              {missingPlatforms > 0 ? (
-                <span className="text-[10px] text-muted-foreground">
-                  +{missingPlatforms} 平台未覆盖
-                </span>
-              ) : null}
-              {product.aggregateRisks.length > 0 ? (
-                <Badge
-                  variant="outline"
-                  className={cn("text-[10px]", riskClassName(product.aggregateRisks[0]))}
-                >
-                  <AlertTriangle className="mr-0.5 h-3 w-3" />
-                  {product.aggregateRisks[0].label}
-                </Badge>
-              ) : null}
-            </div>
-
-            <div className="flex flex-wrap gap-1.5 pt-0.5">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-[11px]"
-                onClick={() => openAdd()}
-              >
-                <Plus className="mr-1 h-3 w-3" />
-                上架
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-[11px] text-muted-foreground"
-                onClick={() => setExpanded(true)}
-              >
-                展开
-              </Button>
-              <Link href={catalogHref}>
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground">
-                  <Eye className="h-3.5 w-3.5" />
-                </Button>
-              </Link>
-            </div>
+        <div className="space-y-2 px-3 py-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <CompactChannelRow
+              label="新品/批次"
+              metrics={[
+                { label: "可售", value: product.newStockSummary.sellableQty },
+                { label: "在售", value: product.newStockSummary.activeListingCount },
+                {
+                  label: "待平台",
+                  value: product.newStockSummary.pendingListingCount,
+                  tone: product.newStockSummary.pendingListingCount > 0 ? "amber" : "muted",
+                },
+              ]}
+            />
+            <CompactChannelRow
+              label="中古/单件"
+              metrics={[
+                { label: "可售", value: product.itemUnitSummary.sellableCount },
+                { label: "在售", value: product.itemUnitSummary.activeListingCount },
+                {
+                  label: "待上架",
+                  value: product.itemUnitSummary.pendingListingCount,
+                  tone: product.itemUnitSummary.pendingListingCount > 0 ? "amber" : "muted",
+                },
+                {
+                  label: "待图",
+                  value: product.itemUnitSummary.pendingPhotoCount,
+                  tone: product.itemUnitSummary.pendingPhotoCount > 0 ? "amber" : "muted",
+                },
+                {
+                  label: "待标",
+                  value: product.itemUnitSummary.pendingLabelCount,
+                  tone: product.itemUnitSummary.pendingLabelCount > 0 ? "amber" : "muted",
+                },
+              ]}
+            />
           </div>
-        ) : (
-          <>
-            <div className="space-y-3 px-4 py-3">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                <span>{productKindLabel(kind)}</span>
-                {product.brand ? (
-                  <>
-                    <span>·</span>
-                    <span>{product.brand}</span>
-                  </>
-                ) : null}
-                {product.category ? (
-                  <>
-                    <span>·</span>
-                    <span>{product.category}</span>
-                  </>
-                ) : null}
-                {product.referencePrice ? (
-                  <>
-                    <span>·</span>
-                    <span>
-                      参考{" "}
-                      {formatCurrency(
-                        product.referencePrice,
-                        product.referenceCurrency ?? "CNY"
-                      )}
-                    </span>
-                  </>
-                ) : null}
-                <Link
-                  href={catalogHref}
-                  className="text-foreground underline-offset-2 hover:underline"
-                >
-                  商品档案
-                </Link>
-              </div>
 
-              {product.hasLotStock ? (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    批次库存
-                  </p>
-                  <SellableStockBreakdown
-                    product={product}
-                    hideTotal
-                    totalQty={product.sellableLotQty}
-                  />
-                </div>
-              ) : null}
+          <ListingPlatformStrip product={product} onAddPlatform={openAdd} />
 
-              {product.hasItemUnits ? (
-                <div className="space-y-1.5">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    中古单件（{product.sellableItemUnitCount} 件可售）
-                  </p>
-                  <SellableItemUnitsList units={product.itemUnits} anchorId={`units-${product.skuId}`} />
-                </div>
-              ) : null}
-
-              {product.aggregateRisks.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {product.aggregateRisks.map((risk) => (
-                    <Badge
-                      key={`${risk.key}-${risk.label}`}
-                      variant="outline"
-                      className={riskClassName(risk)}
-                    >
-                      <AlertTriangle className="mr-1 h-3 w-3" />
-                      {risk.label}
-                    </Badge>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  平台覆盖
-                </p>
-                <ListingPlatformStrip product={product} onAddPlatform={openAdd} />
-                {hasUnlisted ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    点击灰色平台图标快速添加上架记录
-                  </p>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="space-y-2 border-t bg-muted/15 px-4 py-3">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                已上架
-              </p>
-              {product.records.length === 0 ? (
-                <p className="py-2 text-center text-xs text-muted-foreground">暂无记录</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {product.records.map((record) => (
-                    <li key={record.listingId}>
-                      <ListingRecordCompactRow product={product} record={record} />
-                    </li>
-                  ))}
-                </ul>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge
+              variant={summary.tone === "amber" ? "outline" : "secondary"}
+              className={cn(
+                "text-[10px] font-normal",
+                summary.tone === "amber" && "border-amber-500/30 text-amber-800"
               )}
-            </div>
-
-            <div className="mt-auto flex flex-wrap items-center gap-2 border-t px-4 py-3">
-              <Button
+            >
+              {summary.label}
+            </Badge>
+            {missingPlatforms > 0 ? (
+              <span className="text-[10px] text-muted-foreground">
+                +{missingPlatforms} 平台未覆盖
+              </span>
+            ) : null}
+            {product.aggregateRisks.length > 0 ? (
+              <Badge
                 variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => openAdd()}
+                className={cn("text-[10px]", riskClassName(product.aggregateRisks[0]))}
               >
-                <Plus className="mr-1 h-3.5 w-3.5" />
-                添加上架
+                <AlertTriangle className="mr-0.5 h-3 w-3" />
+                {product.aggregateRisks[0].label}
+              </Badge>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px]"
+              onClick={() => openAdd()}
+            >
+              <Plus className="mr-1 h-3 w-3" />
+              上架
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground"
+              onClick={() => setDetailsOpen(true)}
+            >
+              详情
+            </Button>
+            <Link href={catalogHref}>
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground">
+                <Eye className="h-3.5 w-3.5" />
               </Button>
-              <Link href={catalogHref}>
-                <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
-                  <Eye className="mr-1 h-3.5 w-3.5" />
-                  档案
-                </Button>
-              </Link>
-              {sellableUnits.length === 1 ? (
-                <Link
-                  href={withReturnTo(
-                    `/inventory/items/${sellableUnits[0].id}`,
-                    currentHref
-                  )}
-                >
-                  <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
-                    单件
-                  </Button>
-                </Link>
-              ) : sellableUnits.length > 1 ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 text-xs text-muted-foreground"
-                  onClick={() => {
-                    const el = document.getElementById(`units-${product.skuId}`);
-                    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                  }}
-                >
-                  单件列表
-                </Button>
-              ) : null}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto h-8 text-xs text-muted-foreground"
-                onClick={() => setExpanded(false)}
-              >
-                收起
-              </Button>
-            </div>
-          </>
-        )}
+            </Link>
+          </div>
+        </div>
       </article>
+
+      {mounted && detailsOpen
+        ? createPortal(
+            <div className="fixed inset-0 z-[900] flex items-end justify-center p-3 sm:items-center sm:p-4">
+              <div className="absolute inset-0 bg-black/45" onClick={() => setDetailsOpen(false)} />
+              <div className="relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl">
+                <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <ProductImage
+                      src={product.imageUrl}
+                      alt={product.skuName}
+                      size="sm"
+                      className="shrink-0 rounded-md"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{product.skuName}</p>
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        {product.skuCode}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => setDetailsOpen(false)}
+                    aria-label="关闭"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto px-4 py-3">
+                  <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                    <span>{productKindLabel(kind)}</span>
+                    {product.brand ? (
+                      <>
+                        <span>·</span>
+                        <span>{product.brand}</span>
+                      </>
+                    ) : null}
+                    {product.category ? (
+                      <>
+                        <span>·</span>
+                        <span>{product.category}</span>
+                      </>
+                    ) : null}
+                    {product.referencePrice ? (
+                      <>
+                        <span>·</span>
+                        <span>
+                          参考{" "}
+                          {formatCurrency(
+                            product.referencePrice,
+                            product.referenceCurrency ?? "CNY"
+                          )}
+                        </span>
+                      </>
+                    ) : null}
+                    <Link
+                      href={catalogHref}
+                      className="text-foreground underline-offset-2 hover:underline"
+                    >
+                      商品档案
+                    </Link>
+                  </div>
+
+                  {product.aggregateRisks.length > 0 ? (
+                    <div className="mb-3 flex flex-wrap gap-1">
+                      {product.aggregateRisks.map((risk) => (
+                        <Badge
+                          key={`${risk.key}-${risk.label}`}
+                          variant="outline"
+                          className={riskClassName(risk)}
+                        >
+                          <AlertTriangle className="mr-1 h-3 w-3" />
+                          {risk.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <DetailSection title="新品批次">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <CompactChannelRow
+                          label="可售"
+                          metrics={[{ label: "数量", value: product.newStockSummary.sellableQty }]}
+                        />
+                        <CompactChannelRow
+                          label="在售"
+                          metrics={[
+                            { label: "Listing", value: product.newStockSummary.activeListingCount },
+                          ]}
+                        />
+                        <CompactChannelRow
+                          label="待覆盖"
+                          metrics={[
+                            {
+                              label: "平台",
+                              value: product.newStockSummary.pendingListingCount,
+                              tone:
+                                product.newStockSummary.pendingListingCount > 0 ? "amber" : "muted",
+                            },
+                          ]}
+                        />
+                      </div>
+
+                      {product.hasLotStock ? (
+                        <SellableStockBreakdown
+                          product={product}
+                          hideTotal
+                          totalQty={product.sellableLotQty}
+                        />
+                      ) : (
+                        <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                          暂无新品批次库存
+                        </p>
+                      )}
+
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          平台覆盖
+                        </p>
+                        <ListingPlatformStrip product={product} onAddPlatform={openAdd} />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          SKU Listing
+                        </p>
+                        {skuListingRecords.length === 0 ? (
+                          <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                            暂无记录
+                          </p>
+                        ) : (
+                          <ul className="space-y-1.5">
+                            {skuListingRecords.map((record) => (
+                              <li key={record.listingId}>
+                                <ListingRecordCompactRow product={product} record={record} />
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </DetailSection>
+
+                    <DetailSection title="单件库存">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <CompactChannelRow
+                          label="可售"
+                          metrics={[
+                            { label: "件数", value: product.itemUnitSummary.sellableCount },
+                          ]}
+                        />
+                        <CompactChannelRow
+                          label="在售"
+                          metrics={[
+                            {
+                              label: "Listing",
+                              value: product.itemUnitSummary.activeListingCount,
+                            },
+                          ]}
+                        />
+                        <CompactChannelRow
+                          label="待处理"
+                          metrics={[
+                            {
+                              label: "上架",
+                              value: product.itemUnitSummary.pendingListingCount,
+                              tone:
+                                product.itemUnitSummary.pendingListingCount > 0 ? "amber" : "muted",
+                            },
+                            {
+                              label: "图",
+                              value: product.itemUnitSummary.pendingPhotoCount,
+                              tone:
+                                product.itemUnitSummary.pendingPhotoCount > 0 ? "amber" : "muted",
+                            },
+                            {
+                              label: "标",
+                              value: product.itemUnitSummary.pendingLabelCount,
+                              tone:
+                                product.itemUnitSummary.pendingLabelCount > 0 ? "amber" : "muted",
+                            },
+                          ]}
+                        />
+                      </div>
+
+                      {product.hasItemUnits ? (
+                        <SellableItemUnitsList
+                          units={product.itemUnits}
+                          anchorId={`units-${product.skuId}`}
+                        />
+                      ) : (
+                        <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                          暂无单件库存
+                        </p>
+                      )}
+
+                      {pendingItemUnitWork.length > 0 ? (
+                        <div className="space-y-1">
+                          {pendingItemUnitWork.map((unit) => (
+                            <Link
+                              key={unit.id}
+                              href={withReturnTo(`/inventory/items/${unit.id}`, currentHref)}
+                              className="flex items-center justify-between gap-2 rounded-md border bg-background/80 px-2 py-1.5 text-[11px] hover:bg-muted/50"
+                            >
+                              <span className="min-w-0 truncate">
+                                {unit.conditionGrade ? `品相 ${unit.conditionGrade}` : "中古单件"}
+                              </span>
+                              <span className="flex shrink-0 gap-1">
+                                {unit.photoCount === 0 ? (
+                                  <Badge variant="outline" className="text-[10px]">
+                                    待图
+                                  </Badge>
+                                ) : null}
+                                {unit.labelStatus !== "ATTACHED" ? (
+                                  <Badge variant="outline" className="text-[10px]">
+                                    待标
+                                  </Badge>
+                                ) : null}
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          单件 Listing
+                        </p>
+                        {itemUnitListingRecords.length === 0 ? (
+                          <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                            暂无记录
+                          </p>
+                        ) : (
+                          <ul className="space-y-1.5">
+                            {itemUnitListingRecords.map((record) => (
+                              <li key={record.listingId}>
+                                <ListingRecordCompactRow product={product} record={record} />
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </DetailSection>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 border-t bg-muted/15 px-4 py-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => openAdd()}
+                  >
+                    <Plus className="mr-1 h-3.5 w-3.5" />
+                    添加上架
+                  </Button>
+                  <Link href={catalogHref}>
+                    <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                      <Eye className="mr-1 h-3.5 w-3.5" />
+                      档案
+                    </Button>
+                  </Link>
+                  {sellableUnits.length === 1 ? (
+                    <Link
+                      href={withReturnTo(`/inventory/items/${sellableUnits[0].id}`, currentHref)}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-xs text-muted-foreground"
+                      >
+                        单件
+                      </Button>
+                    </Link>
+                  ) : sellableUnits.length > 1 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-xs text-muted-foreground"
+                      onClick={() => {
+                        const el = document.getElementById(`units-${product.skuId}`);
+                        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                      }}
+                    >
+                      单件列表
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
       <QuickAddListingDialog
         open={addOpen}

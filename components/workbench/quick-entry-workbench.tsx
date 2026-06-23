@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
   ChevronDown,
@@ -238,6 +239,7 @@ function PendingEntryPanel({
   storeId: string;
   onUpdated: (msg: string) => void;
 }) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState({
@@ -267,7 +269,7 @@ function PendingEntryPanel({
       });
       if (result.success) {
         onUpdated("录入记录已更新并重新结构化");
-        window.location.reload();
+        router.refresh();
       } else {
         onUpdated(result.error ?? "更新失败");
       }
@@ -412,6 +414,7 @@ export function QuickEntryWorkbench({
   recentEntries,
   suggestions,
 }: QuickEntryWorkbenchProps) {
+  const router = useRouter();
   const [rows, setRows] = useState<DraftRow[]>(() => [blankRow(storeId)]);
   const [pasteText, setPasteText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -825,7 +828,7 @@ export function QuickEntryWorkbench({
         <div className="rounded-lg border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold">录入待补全</h2>
-            <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
+            <Button variant="ghost" size="sm" onClick={() => router.refresh()}>
               <RotateCcw className="mr-1.5 h-4 w-4" />
               刷新
             </Button>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { ListingOpsPlatform } from "@/components/listing/listing-ops-types";
+import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { Search } from "lucide-react";
 
 interface ListingOpsToolbarProps {
@@ -64,10 +65,7 @@ export function ListingOpsToolbar({
     <div className="space-y-4 rounded-xl border bg-card p-4">
       <div className="flex gap-2 overflow-x-auto pb-1">
         <Link href={withParam(searchParams, basePath, "platformId")}>
-          <Button
-            variant={!activePlatformId ? "default" : "outline"}
-            size="sm"
-          >
+          <Button variant={!activePlatformId ? "default" : "outline"} size="sm">
             全部
           </Button>
         </Link>
@@ -79,8 +77,15 @@ export function ListingOpsToolbar({
             <Button
               variant={activePlatformId === platform.id ? "default" : "outline"}
               size="sm"
+              title={platform.name}
+              aria-label={platform.name}
+              className="h-9 w-9 px-0"
             >
-              {platform.name}
+              <ListingPlatformMark
+                code={platform.code}
+                name={platform.name}
+                className="h-5 w-5 rounded-md border-0 bg-transparent p-0 shadow-none"
+              />
             </Button>
           </Link>
         ))}

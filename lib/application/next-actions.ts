@@ -23,12 +23,7 @@ export type ProductLifecycleStage =
   | "COMPLETED"
   | "EXCEPTION";
 
-export type SubProcessType =
-  | "LOGISTICS"
-  | "INSPECTION"
-  | "LISTING"
-  | "FULFILLMENT"
-  | "SETTLEMENT";
+export type SubProcessType = "LOGISTICS" | "INSPECTION" | "LISTING" | "FULFILLMENT" | "SETTLEMENT";
 
 export type PrimaryAction =
   | "fillLogistics"
@@ -186,7 +181,12 @@ export function deriveLifecycleStageFromQueue(
   ) {
     return "PROCURING";
   }
-  if (queue === "pendingListing" || queue === "listed" || queue === "inStock" || queue === "returnInspection") {
+  if (
+    queue === "pendingListing" ||
+    queue === "listed" ||
+    queue === "inStock" ||
+    queue === "returnInspection"
+  ) {
     return "IN_STOCK";
   }
   if (queue === "pendingShipment" || queue === "shipped" || queue === "pendingSettlement") {
@@ -210,14 +210,17 @@ export function deriveSubProcesses(queue: WorkQueue): SubProcessState[] {
   });
 
   if (queue === "missingLogistics") return [active("LOGISTICS", "待补物流")];
-  if (queue === "inTransit" || queue === "pendingArrival") return [active("LOGISTICS", QUEUE_LABELS[queue])];
+  if (queue === "inTransit" || queue === "pendingArrival")
+    return [active("LOGISTICS", QUEUE_LABELS[queue])];
   if (queue === "pendingDisposition") return [active("LOGISTICS", "待分流")];
   if (queue === "inspectionException") {
     return [active("INSPECTION", QUEUE_LABELS[queue], true)];
   }
-  if (queue === "pendingListing" || queue === "listed") return [active("LISTING", QUEUE_LABELS[queue])];
+  if (queue === "pendingListing" || queue === "listed")
+    return [active("LISTING", QUEUE_LABELS[queue])];
   if (queue === "returnInspection") return [active("INSPECTION", QUEUE_LABELS[queue])];
-  if (queue === "pendingShipment" || queue === "shipped") return [active("FULFILLMENT", QUEUE_LABELS[queue])];
+  if (queue === "pendingShipment" || queue === "shipped")
+    return [active("FULFILLMENT", QUEUE_LABELS[queue])];
   if (queue === "pendingSettlement") return [active("SETTLEMENT", QUEUE_LABELS[queue])];
   if (queue === "exception") return [active("LOGISTICS", "异常处理", true)];
   return [];
@@ -248,12 +251,23 @@ export const WORKFLOW_STAGES: Array<{ key: WorkQueue; label: string }> = [
   { key: "pendingArrival", label: "待确认收货" },
   { key: "pendingDisposition", label: "待分流" },
   { key: "inspectionException", label: "检查异常" },
+  { key: "inStock", label: "库存中" },
+  { key: "pendingListing", label: "待上架检查" },
+  { key: "listed", label: "已有上架记录" },
   { key: "pendingShipment", label: "待发货" },
   { key: "shipped", label: "已发货" },
   { key: "pendingSettlement", label: "待结算" },
   { key: "returnInspection", label: "退货待检" },
   { key: "completed", label: "已完成" },
+  { key: "exception", label: "异常商品" },
 ];
+
+export function getVisibleWorkflowStages(
+  counts: QueueCounts,
+  _selectedQueue: WorkQueue | "all" = "all"
+) {
+  return WORKFLOW_STAGES.filter((stage) => counts[stage.key] > 0);
+}
 
 function isoDate(value?: Date | string | null) {
   if (!value) return new Date().toISOString();
@@ -269,10 +283,10 @@ export function deriveQuickEntryWorkItem(entry: QuickEntry): WorkItem | null {
   const title = productTitle(entry);
   const hasOperationalObject = Boolean(
     entry.generatedPurchaseOrderId ||
-      entry.generatedLotId ||
-      entry.generatedItemUnitIds ||
-      entry.generatedListingIds ||
-      entry.generatedCustomerOrderId
+    entry.generatedLotId ||
+    entry.generatedItemUnitIds ||
+    entry.generatedListingIds ||
+    entry.generatedCustomerOrderId
   );
   const base = {
     entityType: "quickEntry" as const,
@@ -363,16 +377,76 @@ export function buildLifecycleEvents(input: {
   currentQueue?: WorkQueue;
 }): LifecycleEvent[] {
   const stages: Array<Omit<LifecycleEvent, "status">> = [
-    { id: "purchase", stage: "purchase", label: "采购录入", timestamp: input.purchasedAt ?? undefined, description: "商品进入采购流程" },
-    { id: "logistics", stage: "logistics", label: "物流运输", timestamp: input.shippedAt ?? undefined, description: "补齐物流后等待到货" },
-    { id: "arrival", stage: "arrival", label: "确认到货", timestamp: input.arrivedAt ?? undefined, description: "确认到货位置和后续处理方式" },
-    { id: "disposition", stage: "disposition", label: "待分流", timestamp: undefined, description: "决定入库、集运、换仓或其他后续处理" },
-    { id: "inspection", stage: "inspection", label: "到货检查", timestamp: input.inspectedAt ?? undefined, description: "记录新品或中古质检结果" },
-    { id: "stock", stage: "stock", label: "入库可售", timestamp: input.arrivedAt ?? undefined, description: "商品成为可运营库存" },
-    { id: "listing", stage: "listing", label: "上架记录", timestamp: input.listedAt ?? undefined, description: "添加上架记录或同步库存" },
-    { id: "sold", stage: "sold", label: "售出", timestamp: input.soldAt ?? undefined, description: "商品已产生销售订单" },
-    { id: "fulfillment", stage: "fulfillment", label: "发货履约", timestamp: input.orderShippedAt ?? undefined, description: "确认发货并扣减库存" },
-    { id: "settlement", stage: "settlement", label: "结算记账", timestamp: input.settledAt ?? undefined, description: "录入费用并确认利润" },
+    {
+      id: "purchase",
+      stage: "purchase",
+      label: "采购录入",
+      timestamp: input.purchasedAt ?? undefined,
+      description: "商品进入采购流程",
+    },
+    {
+      id: "logistics",
+      stage: "logistics",
+      label: "物流运输",
+      timestamp: input.shippedAt ?? undefined,
+      description: "补齐物流后等待到货",
+    },
+    {
+      id: "arrival",
+      stage: "arrival",
+      label: "确认到货",
+      timestamp: input.arrivedAt ?? undefined,
+      description: "确认到货位置和后续处理方式",
+    },
+    {
+      id: "disposition",
+      stage: "disposition",
+      label: "待分流",
+      timestamp: undefined,
+      description: "决定入库、集运、换仓或其他后续处理",
+    },
+    {
+      id: "inspection",
+      stage: "inspection",
+      label: "到货检查",
+      timestamp: input.inspectedAt ?? undefined,
+      description: "记录新品或中古质检结果",
+    },
+    {
+      id: "stock",
+      stage: "stock",
+      label: "入库可售",
+      timestamp: input.arrivedAt ?? undefined,
+      description: "商品成为可运营库存",
+    },
+    {
+      id: "listing",
+      stage: "listing",
+      label: "上架记录",
+      timestamp: input.listedAt ?? undefined,
+      description: "添加上架记录或同步库存",
+    },
+    {
+      id: "sold",
+      stage: "sold",
+      label: "售出",
+      timestamp: input.soldAt ?? undefined,
+      description: "商品已产生销售订单",
+    },
+    {
+      id: "fulfillment",
+      stage: "fulfillment",
+      label: "发货履约",
+      timestamp: input.orderShippedAt ?? undefined,
+      description: "确认发货并扣减库存",
+    },
+    {
+      id: "settlement",
+      stage: "settlement",
+      label: "结算记账",
+      timestamp: input.settledAt ?? undefined,
+      description: "录入费用并确认利润",
+    },
   ];
 
   const currentIndexMap: Partial<Record<WorkQueue, number>> = {
@@ -392,7 +466,7 @@ export function buildLifecycleEvents(input: {
     exception: 4,
   };
 
-  const currentIndex = input.currentQueue ? currentIndexMap[input.currentQueue] ?? 0 : 0;
+  const currentIndex = input.currentQueue ? (currentIndexMap[input.currentQueue] ?? 0) : 0;
 
   return stages.map((stage, index) => {
     let status: LifecycleEvent["status"] = "upcoming";

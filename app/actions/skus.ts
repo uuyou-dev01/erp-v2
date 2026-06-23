@@ -10,6 +10,7 @@ import {
   type CatalogStatus,
 } from "@/lib/application/sku-catalog";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 export interface CreateSKUInput {
   storeId: string;
@@ -235,6 +236,31 @@ async function assertParentSkuInStore(parentSkuId: string | null | undefined, st
   }
 }
 
+const SUPPORTED_SKU_CURRENCIES = new Set(["CNY", "JPY", "USD", "EUR"]);
+
+function validateSkuCatalogMeta(attributes: Record<string, unknown>) {
+  const meta = parseSkuCatalogMeta(attributes);
+  for (const [label, value] of [
+    ["参考售价", meta.referencePrice],
+    ["参考成本", meta.referenceCost],
+  ] as const) {
+    if (!value) continue;
+    let decimal: Decimal;
+    try {
+      decimal = new Decimal(value);
+    } catch {
+      throw new Error(`${label}必须是有效数字`);
+    }
+    if (!decimal.isFinite() || decimal.lt(0)) {
+      throw new Error(`${label}不能为负数`);
+    }
+  }
+
+  if (meta.currency && !SUPPORTED_SKU_CURRENCIES.has(meta.currency)) {
+    throw new Error("币种必须是 CNY、JPY、USD 或 EUR");
+  }
+}
+
 export async function getSKUById(id: string) {
   const sku = await prisma.sKU.findUnique({
     where: { id },
@@ -414,10 +440,20 @@ export async function setSkuCatalogStatus(id: string, status: CatalogStatus) {
   revalidatePath("/inventory/sellable");
 }
 
+export async function setSkuCatalogStatusAction(id: string, status: CatalogStatus) {
+  try {
+    await setSkuCatalogStatus(id, status);
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "更新SKU状态失败，请重试");
+  }
+}
+
 export async function createSKU(data: CreateSKUInput) {
   const context = await requireUserContext({ storeId: data.storeId });
   await assertParentSkuInStore(data.parentSkuId, context.activeStoreId);
   const attributes = data.attributes ?? {};
+  validateSkuCatalogMeta(attributes);
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
 
@@ -440,6 +476,29 @@ export async function createSKU(data: CreateSKUInput) {
   return sku;
 }
 
+export async function createSKUAction(data: CreateSKUInput) {
+  try {
+    const context = await requireUserContext({ storeId: data.storeId });
+    const existing = await prisma.sKU.findUnique({
+      where: {
+        storeId_code: {
+          storeId: context.activeStoreId,
+          code: data.code,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new Error("SKU代码已存在，请换一个编码");
+    }
+
+    const sku = await createSKU(data);
+    return actionSuccess(sku);
+  } catch (error) {
+    return toActionFailure(error, "创建SKU失败，请重试");
+  }
+}
+
 export async function updateSKU(data: UpdateSKUInput) {
   const existing = await prisma.sKU.findUnique({
     where: { id: data.id },
@@ -451,6 +510,7 @@ export async function updateSKU(data: UpdateSKUInput) {
   await assertParentSkuInStore(parentSkuId, existing.storeId);
 
   const attributes = data.attributes ?? {};
+  validateSkuCatalogMeta(attributes);
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
 
@@ -472,6 +532,15 @@ export async function updateSKU(data: UpdateSKUInput) {
   revalidatePath(`/inventory/skus/${data.id}`);
   revalidatePath("/inventory/sellable");
   return sku;
+}
+
+export async function updateSKUAction(data: UpdateSKUInput) {
+  try {
+    const sku = await updateSKU(data);
+    return actionSuccess(sku);
+  } catch (error) {
+    return toActionFailure(error, "更新SKU失败，请重试");
+  }
 }
 
 export async function deleteSKU(id: string) {
@@ -517,4 +586,13 @@ export async function deleteSKU(id: string) {
   });
 
   revalidatePath("/inventory/skus");
+}
+
+export async function deleteSKUAction(id: string) {
+  try {
+    await deleteSKU(id);
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "删除SKU失败，请重试");
+  }
 }

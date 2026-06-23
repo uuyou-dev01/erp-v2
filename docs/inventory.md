@@ -128,6 +128,28 @@ ItemUnit 适合：
 
 盲盒“已拆并确定款式”的单件（如果你要追踪每盒照片/成色）
 
+3) SKU 层级与页面统计口径
+
+父 SKU 表示系列或产品组，例如 iPhone 16 Pro 系列、盲盒系列或服装款式。子 SKU 表示可交易规格，例如具体颜色/容量、具体角色、具体颜色尺码。
+
+库存对象必须挂在子 SKU 或独立 SKU 下：
+
+- InventoryLot：同质新品数量库存。
+- ItemUnit：具体物理单件，适合中古、瑕疵、唯一件、寄售件、需要照片、需要贴标或合规追踪的库存。
+
+页面统计规则：
+
+- 父 SKU 页：汇总所有子 SKU 的 Lot 数量、ItemUnit 件数、上架、采购、销售与利润参考。
+- 子 SKU 页：只展示自身 Lot 与 ItemUnit。
+- 库存看板：父 SKU 卡片展示子 SKU 汇总；新品批次和单件库存分区展示。
+- 单件库存页：是 ItemUnit 工作台，用于核对 SKU 层级、标签、图片、库位、状态和上架，不是第二套商品主档。
+
+数量规则：
+
+- Lot 可售/在途数量来自 StockLedger 汇总。
+- ItemUnit 可售/在途数量来自 ItemUnit.status 与 Location.isSellableDefault。
+- 不把 Lot 数量和 ItemUnit 件数混成同一个来源；展示时可以合计为“可售库存”，但明细必须拆分。
+
 四、库存真相源：StockLedger（库存流水）
 1) 为什么必须用 StockLedger？
 

@@ -1,4 +1,4 @@
-import { getCustomerOrderById, updateOrderNetRevenue } from "@/app/actions/customer-orders";
+import { getCustomerOrderById } from "@/app/actions/customer-orders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { notFound } from "next/navigation";
@@ -18,6 +18,10 @@ import {
   Store,
 } from "lucide-react";
 import Decimal from "decimal.js";
+import {
+  computeOrderDetailProfit,
+  resolveAllocationCostCurrency,
+} from "@/lib/application/order-detail-profit";
 
 export const dynamic = "force-dynamic";
 
@@ -79,22 +83,40 @@ export default async function CustomerOrderDetailPage({
     : subtotal.times(platformFeeRate);
   const shippingFee = existingShippingFee;
 
-  const inventoryCost = order.lines.reduce((sum, line) => {
-    return line.allocations.reduce((lineSum, alloc) => {
-      return lineSum.plus(new Decimal(alloc.costAmount.toString()));
-    }, sum);
-  }, new Decimal(0));
-
-  const netProfit = totalPaid.minus(platformFee).minus(shippingFee).minus(inventoryCost);
-
-  if (order.netRevenue == null && totalPaid.gt(0)) {
-    await updateOrderNetRevenue(order.id, netProfit.toFixed(4));
-  }
+  const profitSummary = await computeOrderDetailProfit({
+    storeId: order.storeId,
+    orderCurrency: order.currency,
+    orderDate: order.orderDate,
+    totalPaid,
+    subtotal,
+    platformFee,
+    shippingFee,
+    lines: order.lines.map((line) => ({
+      id: line.id,
+      lineAmount: line.lineAmount.toString(),
+      allocations: line.allocations.map((allocation) => ({
+        costAmount: allocation.costAmount.toString(),
+        costCurrency: resolveAllocationCostCurrency({
+          orderCurrency: order.currency,
+          inventoryLot: allocation.inventoryLot,
+          itemUnit: allocation.itemUnit,
+        }),
+        effectiveAt:
+          allocation.inventoryLot?.receivedAt ??
+          allocation.itemUnit?.createdAt ??
+          order.orderDate,
+      })),
+    })),
+  });
+  const inventoryCost = profitSummary.inventoryCost;
+  const netRevenue = profitSummary.netRevenue;
+  const netProfit = profitSummary.grossProfit;
 
   const profitItems = [
     { label: "销售收入", value: totalPaid, color: "text-foreground" },
     { label: "平台费", value: platformFee.negated(), color: "text-red-600" },
     { label: "运费", value: shippingFee.negated(), color: "text-red-600" },
+    { label: "净收入", value: netRevenue, color: "text-foreground" },
     { label: "库存成本", value: inventoryCost.negated(), color: "text-red-600" },
   ];
 
@@ -116,6 +138,7 @@ export default async function CustomerOrderDetailPage({
             <SettleOrderDialog
               orderId={order.id}
               currency={order.currency}
+              defaultSalePrice={order.totalPaid.toString()}
               defaultPlatformFee={order.platformFee.toString()}
               defaultShippingFee={order.shippingFee.toString()}
               defaultFeeRate={order.platform?.defaultFeeRate?.toString()}
@@ -287,7 +310,15 @@ export default async function CustomerOrderDetailPage({
                                 {formatQuantity(alloc.quantity)} 件
                               </span>
                               <span className="text-muted-foreground">
-                                成本: {formatCurrency(alloc.costAmount, order.currency)}
+                                成本:{" "}
+                                {formatCurrency(
+                                  alloc.costAmount,
+                                  resolveAllocationCostCurrency({
+                                    orderCurrency: order.currency,
+                                    inventoryLot: alloc.inventoryLot,
+                                    itemUnit: alloc.itemUnit,
+                                  }),
+                                )}
                               </span>
                             </div>
                           ))}

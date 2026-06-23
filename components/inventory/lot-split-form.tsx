@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { convertLotToItemUnit } from "@/app/actions/inventory-lots";
+import { convertLotToItemUnitAction } from "@/app/actions/inventory-lots";
 import { Scissors } from "lucide-react";
 
 const CONDITION_GRADES = [
@@ -50,13 +50,17 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
         return;
       }
 
-      await convertLotToItemUnit({
+      const result = await convertLotToItemUnitAction({
         lotId,
         storeId,
         quantity: qty,
         conditionGrade,
         notes: notes || undefined,
       });
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
 
       router.refresh();
       setQuantity("1");
@@ -125,7 +129,7 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
           </div>
 
           {error && (
-            <p className="text-sm text-destructive">{error}</p>
+            <p role="alert" className="text-sm text-destructive">{error}</p>
           )}
 
           <Button type="submit" disabled={loading} variant="default">

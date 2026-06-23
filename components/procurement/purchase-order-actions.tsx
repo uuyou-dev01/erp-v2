@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { updatePurchaseOrderStatus } from "@/app/actions/purchase-orders";
 import { MarkShippedDialog } from "@/components/procurement/mark-shipped-dialog";
+import { AlertTriangle } from "lucide-react";
 
 interface PurchaseOrderActionsProps {
   order: {
@@ -21,20 +22,25 @@ interface PurchaseOrderActionsProps {
 export function PurchaseOrderActions({ order }: PurchaseOrderActionsProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleMarkAsOrdered = async () => {
+    setError(null);
     if (order.lines.length === 0) {
-      alert("无法标记为已下单：采购单中没有商品");
+      setError("无法标记为已下单：采购单中没有商品");
       return;
     }
 
     setLoading(true);
     try {
-      await updatePurchaseOrderStatus(order.id, "ORDERED", new Date());
+      const result = await updatePurchaseOrderStatus(order.id, "ORDERED", new Date());
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
       router.refresh();
     } catch (error) {
-      console.error("Failed to update status:", error);
-      alert("更新状态失败");
+      setError(error instanceof Error ? error.message : "更新状态失败");
     } finally {
       setLoading(false);
     }
@@ -42,9 +48,20 @@ export function PurchaseOrderActions({ order }: PurchaseOrderActionsProps) {
 
   if (order.status === "DRAFT") {
     return (
-      <Button onClick={handleMarkAsOrdered} disabled={loading}>
-        {loading ? "更新中..." : "标记为已下单"}
-      </Button>
+      <div className="flex flex-col items-end gap-2">
+        {error ? (
+          <div
+            role="alert"
+            className="flex max-w-sm gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{error}</p>
+          </div>
+        ) : null}
+        <Button onClick={handleMarkAsOrdered} disabled={loading}>
+          {loading ? "更新中..." : "标记为已下单"}
+        </Button>
+      </div>
     );
   }
 

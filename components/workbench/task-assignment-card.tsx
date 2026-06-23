@@ -2,11 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { assignWorkTask } from "@/app/actions/tasks";
+import { assignWorkTaskAction } from "@/app/actions/tasks";
 import type { WorkItem } from "@/lib/application/next-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { AlertCircle } from "lucide-react";
 
 export interface AssignableMemberOption {
   id: string;
@@ -27,6 +28,7 @@ export function TaskAssignmentCard({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [assigneeId, setAssigneeId] = useState(item?.taskAssignedToId ?? "");
+  const [error, setError] = useState<string | null>(null);
 
   if (!item?.taskId) return null;
 
@@ -48,7 +50,10 @@ export function TaskAssignmentCard({
       <div className="flex gap-2">
         <Select
           value={assigneeId}
-          onChange={(event) => setAssigneeId(event.target.value)}
+          onChange={(event) => {
+            setError(null);
+            setAssigneeId(event.target.value);
+          }}
           className="h-9"
         >
           <option value="">选择负责人</option>
@@ -65,11 +70,16 @@ export function TaskAssignmentCard({
           onClick={() => {
             startTransition(async () => {
               try {
-                await assignWorkTask(item.taskId!, assigneeId);
+                setError(null);
+                const result = await assignWorkTaskAction(item.taskId!, assigneeId);
+                if (!result.success) {
+                  setError(result.error);
+                  return;
+                }
                 router.refresh();
                 onAssigned?.();
               } catch (error) {
-                alert(error instanceof Error ? error.message : "指派失败");
+                setError(error instanceof Error ? error.message : "指派失败");
               }
             });
           }}
@@ -77,6 +87,12 @@ export function TaskAssignmentCard({
           {pending ? "保存中" : "指派"}
         </Button>
       </div>
+      {error ? (
+        <p className="mt-2 flex items-center gap-1 text-xs text-destructive">
+          <AlertCircle className="h-3.5 w-3.5" />
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }

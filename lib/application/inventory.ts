@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
+import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
 
 export type InboundSourceType = "PURCHASE" | "SPLIT" | "QUICK_ENTRY";
 
@@ -29,7 +30,9 @@ export async function createInboundItemUnit(
     throw new Error("单位成本不能小于 0");
   }
 
-  const item = await tx.itemUnit.create({
+  const item = await createItemUnitWithIdentity(tx, {
+    storeId: input.storeId,
+    date: input.receivedAt,
     data: {
       storeId: input.storeId,
       skuId: input.skuId,
@@ -86,12 +89,18 @@ export interface SkuStockBreakdown {
   skuId: string;
   sellableQty: number;
   inTransitQty: number;
+  sellableLotQty: number;
+  sellableItemUnitCount: number;
+  inTransitLotQty: number;
+  inTransitItemUnitCount: number;
   sellableLocations: StockLocationBreakdown[];
   inTransitLocations: StockLocationBreakdown[];
 }
 
 interface AggregateAcc {
   qty: number;
+  lotQty: number;
+  itemUnitCount: number;
   byLocation: Map<string, StockLocationBreakdown>;
 }
 
@@ -100,19 +109,25 @@ function pushQty(
   skuId: string,
   qty: number,
   isSellable: boolean,
-  location: { id: string; code: string; name: string; type: string }
+  location: { id: string; code: string; name: string; type: string },
+  source: "LOT" | "ITEM_UNIT"
 ) {
   if (qty <= 0) return;
   let entry = acc.get(skuId);
   if (!entry) {
     entry = {
-      sellable: { qty: 0, byLocation: new Map() },
-      inTransit: { qty: 0, byLocation: new Map() },
+      sellable: { qty: 0, lotQty: 0, itemUnitCount: 0, byLocation: new Map() },
+      inTransit: { qty: 0, lotQty: 0, itemUnitCount: 0, byLocation: new Map() },
     };
     acc.set(skuId, entry);
   }
   const bucket = isSellable ? entry.sellable : entry.inTransit;
   bucket.qty += qty;
+  if (source === "LOT") {
+    bucket.lotQty += qty;
+  } else {
+    bucket.itemUnitCount += qty;
+  }
   const existing = bucket.byLocation.get(location.id);
   if (existing) {
     existing.qty += qty;
@@ -167,11 +182,11 @@ export async function getStoreStockBreakdown(
   for (const lot of lots) {
     const qty = lotQtyMap.get(lot.id) ?? 0;
     if (qty <= 0) continue;
-    pushQty(acc, lot.skuId, qty, lot.location.isSellableDefault, lot.location);
+    pushQty(acc, lot.skuId, qty, lot.location.isSellableDefault, lot.location, "LOT");
   }
 
   for (const item of itemUnits) {
-    pushQty(acc, item.skuId, 1, item.location.isSellableDefault, item.location);
+    pushQty(acc, item.skuId, 1, item.location.isSellableDefault, item.location, "ITEM_UNIT");
   }
 
   const result = new Map<string, SkuStockBreakdown>();
@@ -180,6 +195,10 @@ export async function getStoreStockBreakdown(
       skuId,
       sellableQty: entry.sellable.qty,
       inTransitQty: entry.inTransit.qty,
+      sellableLotQty: entry.sellable.lotQty,
+      sellableItemUnitCount: entry.sellable.itemUnitCount,
+      inTransitLotQty: entry.inTransit.lotQty,
+      inTransitItemUnitCount: entry.inTransit.itemUnitCount,
       sellableLocations: Array.from(entry.sellable.byLocation.values()).sort(
         (a, b) => b.qty - a.qty
       ),
@@ -238,6 +257,10 @@ export async function getSkuStockBreakdown(
       skuId,
       sellableQty: 0,
       inTransitQty: 0,
+      sellableLotQty: 0,
+      sellableItemUnitCount: 0,
+      inTransitLotQty: 0,
+      inTransitItemUnitCount: 0,
       sellableLocations: [],
       inTransitLocations: [],
     }

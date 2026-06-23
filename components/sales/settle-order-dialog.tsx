@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { settleCustomerOrder } from "@/app/actions/customer-orders";
-import { Calculator, X } from "lucide-react";
+import { settleCustomerOrderAction } from "@/app/actions/customer-orders";
+import { AlertCircle, Calculator, X } from "lucide-react";
 
 interface SettleOrderDialogProps {
   orderId: string;
   currency: string;
+  defaultSalePrice?: string;
   defaultPlatformFee?: string;
   defaultShippingFee?: string;
   defaultFeeRate?: string;
@@ -20,6 +21,7 @@ interface SettleOrderDialogProps {
 export function SettleOrderDialog({
   orderId,
   currency,
+  defaultSalePrice,
   defaultPlatformFee,
   defaultShippingFee,
   defaultFeeRate,
@@ -28,24 +30,37 @@ export function SettleOrderDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
+    actualSalePrice: defaultSalePrice ?? "",
     platformFee: defaultPlatformFee ?? "",
     shippingFee: defaultShippingFee ?? "",
     platformFeeRate: defaultFeeRate ?? "",
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const updateForm = (updates: Partial<typeof form>) => {
+    setSubmitError(null);
+    setForm((prev) => ({ ...prev, ...updates }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     setLoading(true);
     try {
-      await settleCustomerOrder(orderId, {
+      const result = await settleCustomerOrderAction(orderId, {
+        actualSalePrice: form.actualSalePrice || undefined,
         platformFee: form.platformFee || undefined,
         shippingFee: form.shippingFee || undefined,
         platformFeeRate: form.platformFeeRate || undefined,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
       setOpen(false);
       router.refresh();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "结算失败");
+      setSubmitError(error instanceof Error ? error.message : "结算失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -53,7 +68,13 @@ export function SettleOrderDialog({
 
   if (!open) {
     return (
-      <Button variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        variant="outline"
+        onClick={() => {
+          setSubmitError(null);
+          setOpen(true);
+        }}
+      >
         <Calculator className="mr-2 h-4 w-4" />
         结算订单
       </Button>
@@ -78,31 +99,60 @@ export function SettleOrderDialog({
               补充实际手续费和邮费，系统自动重算净利润。售出日期已自动记录。
             </p>
             <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2 md:col-span-2">
+                <Label>实际售价 ({currency})</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={form.actualSalePrice}
+                  onChange={(e) => updateForm({ actualSalePrice: e.target.value })}
+                  placeholder="实际成交金额"
+                />
+              </div>
               <div className="space-y-2">
                 <Label>平台手续费 ({currency})</Label>
                 <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={form.platformFee}
-                  onChange={(e) => setForm({ ...form, platformFee: e.target.value })}
+                  onChange={(e) => updateForm({ platformFee: e.target.value })}
                   placeholder="金额"
                 />
               </div>
               <div className="space-y-2">
                 <Label>或费率 (0.1 = 10%)</Label>
                 <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
                   value={form.platformFeeRate}
-                  onChange={(e) => setForm({ ...form, platformFeeRate: e.target.value })}
+                  onChange={(e) => updateForm({ platformFeeRate: e.target.value })}
                   placeholder="0.1"
                 />
               </div>
               <div className="space-y-2 md:col-span-2">
                 <Label>邮费 ({currency})</Label>
                 <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={form.shippingFee}
-                  onChange={(e) => setForm({ ...form, shippingFee: e.target.value })}
+                  onChange={(e) => updateForm({ shippingFee: e.target.value })}
                   placeholder="实际邮费"
                 />
               </div>
             </div>
+            {submitError ? (
+              <div
+                role="alert"
+                className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{submitError}</p>
+              </div>
+            ) : null}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
                 取消

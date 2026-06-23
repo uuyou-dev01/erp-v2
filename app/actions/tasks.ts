@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { assignTask } from "@/lib/application/tasks";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 export async function assignWorkTask(taskId: string, assignedToId: string) {
   const context = await requireUserContext();
@@ -43,4 +44,13 @@ export async function assignWorkTask(taskId: string, assignedToId: string) {
     organizationId: context.organizationId,
   });
   revalidatePath("/workbench");
+}
+
+export async function assignWorkTaskAction(taskId: string, assignedToId: string) {
+  try {
+    await assignWorkTask(taskId, assignedToId);
+    return actionSuccess({ taskId });
+  } catch (error) {
+    return toActionFailure(error, "指派失败，请重试");
+  }
 }

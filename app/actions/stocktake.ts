@@ -9,6 +9,7 @@ import {
   roundBookQty,
   type LotBreakdown,
 } from "@/lib/application/stocktake-allocation";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { prisma } from "@/lib/prisma";
 
 export interface SkuLocationLotBreakdown {
@@ -318,4 +319,15 @@ export async function submitSkuLocationStocktakeAdjustments(
   }
 
   return result;
+}
+
+export async function submitSkuLocationStocktakeAdjustmentsAction(
+  input: SubmitSkuLocationStocktakeInput
+) {
+  try {
+    const adjustments = await submitSkuLocationStocktakeAdjustments(input);
+    return actionSuccess({ adjustments });
+  } catch (error) {
+    return toActionFailure(error, "提交盘点失败，请稍后重试");
+  }
 }

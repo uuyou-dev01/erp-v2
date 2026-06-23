@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { receivePurchaseOrder } from "@/app/actions/purchase-orders";
+import { receivePurchaseOrderAction } from "@/app/actions/purchase-orders";
 import { AlertCircle, Package } from "lucide-react";
 import { t } from "@/lib/i18n";
 
@@ -25,8 +25,14 @@ export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: Rece
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setErrors({});
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrors({});
 
     if (!formData.locationId) {
       setErrors({ locationId: "请选择目的地仓库" });
@@ -35,17 +41,22 @@ export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: Rece
 
     setLoading(true);
     try {
-      await receivePurchaseOrder({
+      const result = await receivePurchaseOrderAction({
         purchaseOrderId,
         locationId: formData.locationId,
         receivedAt: new Date(formData.receivedAt),
       });
+      if (!result.success) {
+        setErrors({ form: result.error });
+        return;
+      }
 
       router.push("/procurement");
       router.refresh();
     } catch (error) {
-      console.error("Failed to receive goods:", error);
-      alert("收货失败，请重试");
+      setErrors({
+        form: error instanceof Error ? error.message : "收货失败，请重试",
+      });
     } finally {
       setLoading(false);
     }
@@ -62,6 +73,12 @@ export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: Rece
           </p>
         </div>
       </div>
+      {errors.form && (
+        <p className="flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          {errors.form}
+        </p>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
@@ -69,7 +86,7 @@ export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: Rece
           <Select
             id="locationId"
             value={formData.locationId}
-            onChange={(e) => setFormData({ ...formData, locationId: e.target.value })}
+            onChange={(e) => updateFormData({ locationId: e.target.value })}
             required
           >
             <option value="">{t("inventory.select_location")}</option>
@@ -93,7 +110,7 @@ export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: Rece
             id="receivedAt"
             type="date"
             value={formData.receivedAt}
-            onChange={(e) => setFormData({ ...formData, receivedAt: e.target.value })}
+            onChange={(e) => updateFormData({ receivedAt: e.target.value })}
             required
           />
         </div>

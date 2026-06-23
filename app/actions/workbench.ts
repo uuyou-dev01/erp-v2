@@ -24,6 +24,7 @@ import {
   createConsolidationForPurchaseOrders,
 } from "@/app/actions/consolidations";
 import { getListingPendingItems } from "@/lib/application/listing-pending";
+import { mergePendingListingWorkItems } from "@/lib/application/workbench-pending-listing";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { INCOMPLETE_TASK_STATUSES } from "@/lib/application/tasks";
 
@@ -83,9 +84,7 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
 
   const userIds = Array.from(
     new Set(
-      tasks
-        .flatMap((task) => [task.assignedToId, task.createdById])
-        .filter(Boolean) as string[]
+      tasks.flatMap((task) => [task.assignedToId, task.createdById]).filter(Boolean) as string[]
     )
   );
   const users = userIds.length
@@ -94,9 +93,7 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
         select: { id: true, name: true, email: true },
       })
     : [];
-  const userNameById = new Map(
-    users.map((user) => [user.id, user.name || user.email])
-  );
+  const userNameById = new Map(users.map((user) => [user.id, user.name || user.email]));
 
   const taskByRef = new Map<string, (typeof tasks)[number]>();
   for (const task of tasks) {
@@ -115,7 +112,7 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
       taskStatusLabel: TASK_STATUS_LABELS[task.status] ?? task.status,
       taskAssignedToId: task.assignedToId,
       taskAssignedToName: task.assignedToId
-        ? userNameById.get(task.assignedToId) ?? "未命名成员"
+        ? (userNameById.get(task.assignedToId) ?? "未命名成员")
         : null,
       taskCreatedById: task.createdById,
       taskCreatedByName: userNameById.get(task.createdById) ?? "系统",
@@ -146,8 +143,15 @@ export async function getWorkbenchWorkItems(
 ): Promise<WorkItem[]> {
   const context = await requireUserContext({ storeId });
   storeId = context.activeStoreId;
-  const items = await collectWorkItems(storeId, queue, limit);
-  return attachTaskMetadata(storeId, items);
+  const shouldIncludePendingListing = !queue || queue === "pendingListing";
+  const [items, pendingListingItems] = await Promise.all([
+    collectWorkItems(storeId, queue === "pendingListing" ? undefined : queue, limit),
+    shouldIncludePendingListing ? getListingPendingItems(storeId) : Promise.resolve([]),
+  ]);
+  const mergedItems = shouldIncludePendingListing
+    ? mergePendingListingWorkItems(items, pendingListingItems, queue, limit)
+    : items;
+  return attachTaskMetadata(storeId, mergedItems);
 }
 
 export async function getWorkbenchRecentActivity(
@@ -219,9 +223,7 @@ export async function bulkUpdatePurchaseOrderLogistics(
     throw new Error("请选择预计到货位置");
   }
 
-  const etaDate = payload.etaDate?.trim()
-    ? new Date(payload.etaDate)
-    : undefined;
+  const etaDate = payload.etaDate?.trim() ? new Date(payload.etaDate) : undefined;
 
   let success = 0;
   let failed = 0;
@@ -461,7 +463,9 @@ export async function bulkReturnPurchases(input: {
         input.trackingNo ? `退货单号:${input.trackingNo}` : null,
         input.carrier ? `承运商:${input.carrier}` : null,
         input.note,
-      ].filter(Boolean).join(" / ");
+      ]
+        .filter(Boolean)
+        .join(" / ");
 
       await prisma.purchaseOrder.update({
         where: { id: order.id },

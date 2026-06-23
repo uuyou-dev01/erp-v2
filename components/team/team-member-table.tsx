@@ -1,4 +1,8 @@
-import { createTeamMember, deactivateTeamMember } from "@/app/actions/team";
+"use client";
+
+import { FormEvent, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { createTeamMemberAction, deactivateTeamMemberAction } from "@/app/actions/team";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -60,6 +64,54 @@ export function TeamMemberTable({
   members,
   currentUserId,
 }: TeamMemberTableProps) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [memberCreateError, setMemberCreateError] = useState<string | null>(null);
+  const [memberCreateMessage, setMemberCreateMessage] = useState<string | null>(null);
+  const [memberActionError, setMemberActionError] = useState<string | null>(null);
+  const [memberActionMessage, setMemberActionMessage] = useState<string | null>(null);
+
+  const submitMemberCreate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setMemberCreateError(null);
+    setMemberCreateMessage(null);
+
+    startTransition(() => {
+      void (async () => {
+        const result = await createTeamMemberAction(new FormData(form));
+        if (!result.success) {
+          setMemberCreateError(result.error);
+          return;
+        }
+
+        form.reset();
+        setMemberCreateMessage("成员已保存");
+        router.refresh();
+      })();
+    });
+  };
+
+  const deactivateMember = (userId: string) => {
+    const formData = new FormData();
+    formData.set("userId", userId);
+    setMemberActionError(null);
+    setMemberActionMessage(null);
+
+    startTransition(() => {
+      void (async () => {
+        const result = await deactivateTeamMemberAction(formData);
+        if (!result.success) {
+          setMemberActionError(result.error);
+          return;
+        }
+
+        setMemberActionMessage("成员已停用");
+        router.refresh();
+      })();
+    });
+  };
+
   return (
     <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
       <Card>
@@ -67,7 +119,7 @@ export function TeamMemberTable({
           <CardTitle>添加成员</CardTitle>
         </CardHeader>
         <CardContent>
-          <form action={createTeamMember} className="space-y-4">
+          <form onSubmit={submitMemberCreate} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">姓名</Label>
               <Input id="name" name="name" placeholder="如：张三" />
@@ -103,8 +155,14 @@ export function TeamMemberTable({
                 ))}
               </div>
             </div>
-            <Button type="submit" className="w-full">
-              保存成员
+            {memberCreateError ? (
+              <p className="text-sm text-destructive">{memberCreateError}</p>
+            ) : null}
+            {memberCreateMessage ? (
+              <p className="text-sm text-green-600">{memberCreateMessage}</p>
+            ) : null}
+            <Button type="submit" className="w-full" disabled={pending}>
+              {pending ? "保存中..." : "保存成员"}
             </Button>
           </form>
         </CardContent>
@@ -115,6 +173,12 @@ export function TeamMemberTable({
           <CardTitle>成员列表</CardTitle>
         </CardHeader>
         <CardContent>
+          {memberActionError ? (
+            <p className="mb-3 text-sm text-destructive">{memberActionError}</p>
+          ) : null}
+          {memberActionMessage ? (
+            <p className="mb-3 text-sm text-green-600">{memberActionMessage}</p>
+          ) : null}
           <Table>
             <TableHeader>
               <TableRow>
@@ -143,12 +207,15 @@ export function TeamMemberTable({
                   </TableCell>
                   <TableCell className="text-right">
                     {member.id !== currentUserId && member.status === "ACTIVE" ? (
-                      <form action={deactivateTeamMember}>
-                        <input type="hidden" name="userId" value={member.id} />
-                        <Button type="submit" variant="outline" size="sm">
-                          停用
-                        </Button>
-                      </form>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={pending}
+                        onClick={() => deactivateMember(member.id)}
+                      >
+                        停用
+                      </Button>
                     ) : (
                       <span className="text-xs text-muted-foreground">-</span>
                     )}

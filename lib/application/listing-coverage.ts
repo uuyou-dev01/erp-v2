@@ -1,8 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import {
-  getStoreStockBreakdown,
-  type StockLocationBreakdown,
-} from "@/lib/application/inventory";
+  CORE_SELLING_PLATFORM_CODES,
+  isCoreSellingPlatform,
+  sortCoreSellingPlatforms,
+} from "@/lib/core-platforms";
+import { getStoreStockBreakdown, type StockLocationBreakdown } from "@/lib/application/inventory";
 import {
   parseSkuCatalogMeta,
   resolveCoverImageUrl,
@@ -13,11 +15,7 @@ import {
 const STALE_DAYS = 30;
 
 export type ListingCoverageProductType = "SKU" | "ITEM_UNIT";
-export type ListingCoveragePlatformState =
-  | "active"
-  | "delisted"
-  | "sold_out"
-  | "missing";
+export type ListingCoveragePlatformState = "active" | "delisted" | "sold_out" | "missing";
 
 export interface ListingCoverageRisk {
   key: string;
@@ -70,6 +68,22 @@ export interface SellableItemUnitRow {
   inTransit: boolean;
   imageUrl: string | null;
   status: string;
+  photoCount: number;
+  labelStatus: string;
+}
+
+export interface StockChannelSummary {
+  sellableQty: number;
+  activeListingCount: number;
+  pendingListingCount: number;
+}
+
+export interface ItemUnitChannelSummary {
+  sellableCount: number;
+  activeListingCount: number;
+  pendingListingCount: number;
+  pendingPhotoCount: number;
+  pendingLabelCount: number;
 }
 
 export interface ListingCoverageProduct {
@@ -92,6 +106,8 @@ export interface ListingCoverageProduct {
   sellableLocations: StockLocationBreakdown[];
   inTransitLocations: StockLocationBreakdown[];
   itemUnits: SellableItemUnitRow[];
+  newStockSummary: StockChannelSummary;
+  itemUnitSummary: ItemUnitChannelSummary;
   hasLotStock: boolean;
   hasItemUnits: boolean;
   /** 仅已有上架记录，供可售库存页使用 */
@@ -129,12 +145,24 @@ export interface SellableInventoryStats {
 
 type ProductDraft = Omit<
   ListingCoverageProduct,
-  "platforms" | "records" | "aggregateRisks" | "latestListedAt" | "latestUpdatedAt"
+  | "platforms"
+  | "records"
+  | "aggregateRisks"
+  | "latestListedAt"
+  | "latestUpdatedAt"
+  | "newStockSummary"
+  | "itemUnitSummary"
 > & {
   listings: ListingRow[];
 };
 
 type ListingRow = Awaited<ReturnType<typeof getListingRows>>[number];
+type StoreStockBreakdown = Awaited<ReturnType<typeof getStoreStockBreakdown>> extends Map<
+  string,
+  infer T
+>
+  ? T
+  : never;
 
 function firstPhoto(value: unknown) {
   if (Array.isArray(value) && typeof value[0] === "string") {
@@ -175,8 +203,7 @@ function buildRisks(
   if (!listing.listedPrice) {
     risks.push({ key: "unpriced", label: "未定价", tone: "red" });
   }
-  const ageInDays =
-    (Date.now() - new Date(listing.listedAt).getTime()) / (1000 * 60 * 60 * 24);
+  const ageInDays = (Date.now() - new Date(listing.listedAt).getTime()) / (1000 * 60 * 60 * 24);
   if (ageInDays > STALE_DAYS) {
     risks.push({ key: "stale", label: "长期未售", tone: "slate" });
   }
@@ -197,12 +224,12 @@ async function getListingRows(storeId: string) {
         },
       },
       sku: {
-        select: { id: true, code: true, name: true, imageUrl: true },
+        select: { id: true, parentSkuId: true, code: true, name: true, imageUrl: true },
       },
       itemUnit: {
         include: {
           sku: {
-            select: { id: true, code: true, name: true, imageUrl: true },
+            select: { id: true, parentSkuId: true, code: true, name: true, imageUrl: true },
           },
           location: {
             select: { name: true },
@@ -231,8 +258,7 @@ function listingRowToRecord(
 ): ListingRecord {
   const scope: ListingCoverageProductType =
     listing.listingType === "ITEM_UNIT" ? "ITEM_UNIT" : "SKU";
-  const qtyForRisk =
-    scope === "ITEM_UNIT" ? (itemUnitSellable ? 1 : 0) : productSellableQty;
+  const qtyForRisk = scope === "ITEM_UNIT" ? (itemUnitSellable ? 1 : 0) : productSellableQty;
 
   return {
     listingId: listing.id,
@@ -244,9 +270,7 @@ function listingRowToRecord(
     listedPrice: listing.listedPrice?.toString() ?? null,
     currency: listing.currency,
     platformFeeRate:
-      listing.feeRateOverride?.toString() ??
-      listing.platform.defaultFeeRate?.toString() ??
-      null,
+      listing.feeRateOverride?.toString() ?? listing.platform.defaultFeeRate?.toString() ?? null,
     defaultShippingFee:
       listing.shippingFeeOverride?.toString() ??
       listing.platform.defaultShippingFee?.toString() ??
@@ -288,15 +312,15 @@ function skuDraftKey(skuId: string) {
 export async function getListingCoverageProducts(storeId: string) {
   const [platforms, listings, skus, itemUnits, stockBreakdown] = await Promise.all([
     prisma.platform.findMany({
-      where: { storeId },
+      where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
       select: { id: true, name: true, code: true },
-      orderBy: { code: "asc" },
     }),
     getListingRows(storeId),
     prisma.sKU.findMany({
       where: { storeId },
       select: {
         id: true,
+        parentSkuId: true,
         code: true,
         name: true,
         imageUrl: true,
@@ -321,6 +345,7 @@ export async function getListingCoverageProducts(storeId: string) {
     getStoreStockBreakdown(storeId),
   ]);
 
+  const corePlatforms = sortCoreSellingPlatforms(platforms);
   const drafts = new Map<string, ProductDraft>();
   const skuCatalogById = new Map(
     skus.map((sku) => {
@@ -355,15 +380,52 @@ export async function getListingCoverageProducts(storeId: string) {
 
   const skuById = new Map(skus.map((sku) => [sku.id, sku]));
 
+  function coverageSkuId(skuId: string) {
+    return skuById.get(skuId)?.parentSkuId ?? skuId;
+  }
+
+  function mergeLocationBreakdowns(
+    existing: StockLocationBreakdown[],
+    next: StockLocationBreakdown[]
+  ) {
+    const byLocation = new Map(existing.map((location) => [location.locationId, { ...location }]));
+    for (const location of next) {
+      const current = byLocation.get(location.locationId);
+      if (current) {
+        current.qty += location.qty;
+      } else {
+        byLocation.set(location.locationId, { ...location });
+      }
+    }
+    return [...byLocation.values()];
+  }
+
+  function addStockBreakdown(draft: ProductDraft, breakdown: StoreStockBreakdown) {
+    draft.sellableLotQty += breakdown.sellableLotQty;
+    draft.inTransitQty += breakdown.inTransitLotQty;
+    draft.sellableLocations = mergeLocationBreakdowns(
+      draft.sellableLocations,
+      breakdown.sellableLocations
+    );
+    draft.inTransitLocations = mergeLocationBreakdowns(
+      draft.inTransitLocations,
+      breakdown.inTransitLocations
+    );
+    draft.hasLotStock =
+      draft.hasLotStock || breakdown.sellableLotQty > 0 || breakdown.inTransitLotQty > 0;
+    draft.sellableQty = draft.sellableLotQty + draft.sellableItemUnitCount;
+  }
+
   function ensureSkuDraft(skuId: string) {
-    const key = skuDraftKey(skuId);
+    const draftSkuId = coverageSkuId(skuId);
+    const key = skuDraftKey(draftSkuId);
     let draft = drafts.get(key);
     if (draft) return draft;
 
-    const sku = skuById.get(skuId);
+    const sku = skuById.get(draftSkuId);
     if (!sku) return null;
 
-    const catalog = catalogFieldsForSku(skuId);
+    const catalog = catalogFieldsForSku(draftSkuId);
     draft = {
       key,
       listingType: "SKU",
@@ -397,13 +459,7 @@ export async function getListingCoverageProducts(storeId: string) {
     const draft = ensureSkuDraft(sku.id);
     if (!draft) continue;
 
-    draft.sellableLotQty = breakdown.sellableQty;
-    draft.inTransitQty = breakdown.inTransitQty;
-    draft.sellableLocations = breakdown.sellableLocations;
-    draft.inTransitLocations = breakdown.inTransitLocations;
-    draft.hasLotStock =
-      breakdown.sellableQty > 0 || breakdown.inTransitQty > 0;
-    draft.sellableQty = draft.sellableLotQty + draft.sellableItemUnitCount;
+    addStockBreakdown(draft, breakdown);
   }
 
   for (const item of itemUnits) {
@@ -414,9 +470,8 @@ export async function getListingCoverageProducts(storeId: string) {
     const draft = ensureSkuDraft(item.skuId);
     if (!draft) continue;
 
-    const catalog = catalogFieldsForSku(item.skuId);
-    const unitImage =
-      firstPhoto(item.photos) ?? catalog.imageUrl ?? item.sku.imageUrl;
+    const catalog = catalogFieldsForSku(coverageSkuId(item.skuId));
+    const unitImage = firstPhoto(item.photos) ?? catalog.imageUrl ?? item.sku.imageUrl;
 
     draft.itemUnits.push({
       id: item.id,
@@ -426,6 +481,8 @@ export async function getListingCoverageProducts(storeId: string) {
       inTransit,
       imageUrl: unitImage,
       status: item.status,
+      photoCount: Array.isArray(item.photos) ? item.photos.length : 0,
+      labelStatus: item.labelStatus,
     });
 
     if (isSellable) {
@@ -442,32 +499,21 @@ export async function getListingCoverageProducts(storeId: string) {
   }
 
   for (const listing of listings) {
+    if (!isCoreSellingPlatform(listing.platform.code)) continue;
+
     const sku = listing.sku ?? listing.itemUnit?.sku;
     if (!sku) continue;
 
     const draft = ensureSkuDraft(sku.id);
     if (!draft) continue;
 
-    const breakdown = stockBreakdown.get(sku.id);
-    if (!draft.hasLotStock && breakdown) {
-      draft.sellableLotQty = breakdown.sellableQty;
-      draft.inTransitQty = breakdown.inTransitQty;
-      draft.sellableLocations = breakdown.sellableLocations;
-      draft.inTransitLocations = breakdown.inTransitLocations;
-      draft.hasLotStock =
-        breakdown.sellableQty > 0 || breakdown.inTransitQty > 0;
-      draft.sellableQty = draft.sellableLotQty + draft.sellableItemUnitCount;
-    }
-
     draft.listings.push(listing);
   }
 
   return [...drafts.values()].map((draft) => {
     const { listings: draftListings, itemUnits: draftItemUnits, ...product } = draft;
-    const sellableItemUnitIds = new Set(
-      draftItemUnits.filter((u) => u.sellable).map((u) => u.id)
-    );
-    const platformsWithState = platforms.map((platform) => {
+    const sellableItemUnitIds = new Set(draftItemUnits.filter((u) => u.sellable).map((u) => u.id));
+    const platformsWithState = corePlatforms.map((platform) => {
       const listing = newestListingForPlatform(draftListings, platform.id);
       const risks = listing ? buildRisks(listing, product.sellableQty) : [];
       return {
@@ -505,15 +551,46 @@ export async function getListingCoverageProducts(storeId: string) {
         .sort()
         .at(-1) ?? null;
 
-    const records = buildListedRecords(
-      draftListings,
-      product.sellableQty,
-      sellableItemUnitIds
+    const records = buildListedRecords(draftListings, product.sellableQty, sellableItemUnitIds);
+    const activeSkuListingPlatformIds = new Set(
+      records
+        .filter((record) => record.listingScope === "SKU" && record.status === "ACTIVE")
+        .map((record) => record.platformId)
     );
+    const activeItemUnitListingCount = records.filter(
+      (record) => record.listingScope === "ITEM_UNIT" && record.status === "ACTIVE"
+    ).length;
+    const activeListedItemUnitIds = new Set(
+      records
+        .filter(
+          (record) =>
+            record.listingScope === "ITEM_UNIT" &&
+            record.status === "ACTIVE" &&
+            record.itemUnitId
+        )
+        .map((record) => record.itemUnitId as string)
+    );
+    const sellableItemUnits = draftItemUnits.filter((unit) => unit.sellable);
 
     return {
       ...product,
       itemUnits: draftItemUnits,
+      newStockSummary: {
+        sellableQty: product.sellableLotQty,
+        activeListingCount: activeSkuListingPlatformIds.size,
+        pendingListingCount:
+          product.sellableLotQty > 0
+            ? Math.max(0, corePlatforms.length - activeSkuListingPlatformIds.size)
+            : 0,
+      },
+      itemUnitSummary: {
+        sellableCount: sellableItemUnits.length,
+        activeListingCount: activeItemUnitListingCount,
+        pendingListingCount: sellableItemUnits.filter((unit) => !activeListedItemUnitIds.has(unit.id))
+          .length,
+        pendingPhotoCount: sellableItemUnits.filter((unit) => unit.photoCount === 0).length,
+        pendingLabelCount: sellableItemUnits.filter((unit) => unit.labelStatus !== "ATTACHED").length,
+      },
       records,
       platforms: platformsWithState,
       aggregateRisks: [...risks.values()],

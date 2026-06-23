@@ -1,8 +1,10 @@
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
 
+const FIXED_BASE_CURRENCY = "CNY";
+
 function normalizeCurrency(currency?: string | null): string {
-  return (currency || "CNY").trim().toUpperCase();
+  return (currency || FIXED_BASE_CURRENCY).trim().toUpperCase();
 }
 
 const FX_BRIDGE_CANDIDATES = ["CNY", "JPY", "USD"] as const;
@@ -135,12 +137,9 @@ interface ConvertToStoreBaseOptions {
   preferredRate?: Decimal.Value | null;
 }
 
-export async function createStoreMoneyConverter(storeId: string) {
-  const store = await prisma.store.findUnique({
-    where: { id: storeId },
-    select: { currency: true },
-  });
-  const baseCurrency = normalizeCurrency(store?.currency);
+export async function createStoreMoneyConverter(_storeId: string) {
+  // 业务约定：全局统计统一折算为 CNY，不再按店铺币种切换
+  const baseCurrency = FIXED_BASE_CURRENCY;
   const rateCache = new Map<string, Promise<Decimal | null>>();
 
   async function convertToBase(

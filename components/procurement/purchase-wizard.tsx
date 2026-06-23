@@ -17,8 +17,11 @@ import {
 } from "@/components/ui/table";
 import { Stepper } from "@/components/shared/stepper";
 import { CSVImportDialog } from "@/components/shared/csv-import-dialog";
-import { createPurchaseOrder, addPurchaseLine } from "@/app/actions/purchase-orders";
-import { createSKU, getSKUs } from "@/app/actions/skus";
+import {
+  addPurchaseLineAction,
+  createPurchaseOrderAction,
+} from "@/app/actions/purchase-orders";
+import { createSKUAction, getSKUs } from "@/app/actions/skus";
 import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal, formatCurrency } from "@/lib/decimal";
 import { t, CURRENCIES } from "@/lib/i18n";
@@ -82,6 +85,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [skus, setSKUs] = useState<SKUOption[]>([]);
   const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
@@ -112,6 +116,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     brand: "",
     parentSkuId: "",
   });
+  const [quickSkuError, setQuickSkuError] = useState<string | null>(null);
 
   useEffect(() => {
     getSKUs(storeId).then(setSKUs);
@@ -207,14 +212,15 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
 
   const handleCreateSku = async (e: React.FormEvent) => {
     e.preventDefault();
+    setQuickSkuError(null);
     if (!quickSku.code.trim() || !quickSku.name.trim()) {
-      alert("SKU代码和名称为必填项");
+      setQuickSkuError("SKU代码和名称为必填项");
       return;
     }
 
     setCreatingSku(true);
     try {
-      const sku = await createSKU({
+      const result = await createSKUAction({
         storeId,
         code: quickSku.code.trim().toUpperCase(),
         name: quickSku.name.trim(),
@@ -222,11 +228,16 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         category: quickSku.category.trim() || undefined,
         brand: quickSku.brand.trim() || undefined,
       });
+      if (!result.success) {
+        setQuickSkuError(result.error);
+        return;
+      }
       const refreshed = await getSKUs(storeId);
       setSKUs(refreshed);
-      setNewLine((prev) => ({ ...prev, skuId: sku.id }));
-      setSkuSearch(`${sku.code} ${sku.name}`);
+      setNewLine((prev) => ({ ...prev, skuId: result.id }));
+      setSkuSearch(`${result.code} ${result.name}`);
       setQuickSku({ code: "", name: "", category: "", brand: "", parentSkuId: "" });
+      setQuickSkuError(null);
       setSkuCreateOpen(false);
       setLineErrors((prev) => {
         const next = { ...prev };
@@ -234,8 +245,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         return next;
       });
     } catch (error) {
-      console.error("Failed to create SKU:", error);
-      alert(error instanceof Error ? error.message : "创建SKU失败，请重试");
+      setQuickSkuError(error instanceof Error ? error.message : "创建SKU失败，请重试");
     } finally {
       setCreatingSku(false);
     }
@@ -299,6 +309,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
 
   // ---- Navigation ----
   const goNext = () => {
+    setSubmitError(null);
     if (step === 0 && !validateStep1()) return;
     if (step === 1 && lines.length === 0) {
       setLineErrors({ global: "请至少添加一项商品" });
@@ -307,13 +318,17 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     setStep((s) => Math.min(s + 1, 2));
   };
 
-  const goBack = () => setStep((s) => Math.max(s - 1, 0));
+  const goBack = () => {
+    setSubmitError(null);
+    setStep((s) => Math.max(s - 1, 0));
+  };
 
   // ---- Submit ----
   const handleSubmit = async () => {
     setSubmitting(true);
+    setSubmitError(null);
     try {
-      const order = await createPurchaseOrder({
+      const order = await createPurchaseOrderAction({
         storeId,
         orderNo: basicInfo.orderNo,
         supplierName: basicInfo.supplierName || undefined,
@@ -322,21 +337,28 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         orderedAt: new Date(basicInfo.orderedAt),
         destinationLocationId: basicInfo.destinationLocationId || undefined,
       });
+      if (!order.success) {
+        setSubmitError(order.error);
+        return;
+      }
 
       for (const line of lines) {
-        await addPurchaseLine({
+        const result = await addPurchaseLineAction({
           purchaseOrderId: order.id,
           skuId: line.skuId,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
         });
+        if (!result.success) {
+          setSubmitError(`${line.skuCode}: ${result.error}`);
+          return;
+        }
       }
 
       router.push(`/procurement/${order.id}`);
       router.refresh();
     } catch (err) {
-      console.error("Failed to create purchase order:", err);
-      alert("创建采购订单失败，请重试");
+      setSubmitError(err instanceof Error ? err.message : "创建采购订单失败，请重试");
     } finally {
       setSubmitting(false);
     }
@@ -537,22 +559,29 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                           });
                         }
 
-                        const hasChildren = group.children.length > 0;
+                        const isParentGroup = (group.parent.childSkus?.length ?? 0) > 0;
                         const parentActive = group.parent.id === newLine.skuId;
 
                         return (
                           <div key={group.parent.id} className={gi > 0 ? "border-t" : ""}>
                             <button
                               type="button"
-                              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${parentActive ? "bg-blue-50 text-blue-700" : ""}`}
-                              onClick={() => selectSku(group.parent!)}
+                              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${
+                                isParentGroup
+                                  ? "cursor-default bg-muted/40 text-muted-foreground"
+                                  : `hover:bg-blue-50 ${parentActive ? "bg-blue-50 text-blue-700" : ""}`
+                              }`}
+                              onClick={() => {
+                                if (!isParentGroup) selectSku(group.parent!);
+                              }}
+                              disabled={isParentGroup}
                             >
                               <span className="min-w-0">
                                 <span className="block truncate font-mono font-medium">
                                   {group.parent.code}
-                                  {hasChildren && (
+                                  {isParentGroup && (
                                     <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                      ({group.children.length} 个子款)
+                                      ({group.parent.childSkus?.length ?? group.children.length} 个子款，请选具体子 SKU)
                                     </span>
                                   )}
                                 </span>
@@ -790,6 +819,16 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
               </div>
             </CardContent>
           </Card>
+
+          {submitError ? (
+            <div
+              role="alert"
+              className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{submitError}</p>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -871,6 +910,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     id="quickParentSku"
                     value={quickSku.parentSkuId}
                     onChange={(e) => {
+                      setQuickSkuError(null);
                       const pid = e.target.value;
                       const parent = skus.find((s) => s.id === pid);
                       if (parent) {
@@ -911,9 +951,10 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     <Input
                       id="quickSkuCode"
                       value={quickSku.code}
-                      onChange={(e) =>
-                        setQuickSku({ ...quickSku, code: e.target.value.toUpperCase() })
-                      }
+                      onChange={(e) => {
+                        setQuickSkuError(null);
+                        setQuickSku({ ...quickSku, code: e.target.value.toUpperCase() });
+                      }}
                       placeholder={
                         quickSku.parentSkuId ? "自动生成，可修改" : "例如：IPHONE15-CASE-CLEAR"
                       }
@@ -925,7 +966,10 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     <Input
                       id="quickSkuName"
                       value={quickSku.name}
-                      onChange={(e) => setQuickSku({ ...quickSku, name: e.target.value })}
+                      onChange={(e) => {
+                        setQuickSkuError(null);
+                        setQuickSku({ ...quickSku, name: e.target.value });
+                      }}
                       placeholder="例如：iPhone 15 透明手机壳"
                       required
                     />
@@ -937,7 +981,10 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     <Input
                       id="quickSkuCategory"
                       value={quickSku.category}
-                      onChange={(e) => setQuickSku({ ...quickSku, category: e.target.value })}
+                      onChange={(e) => {
+                        setQuickSkuError(null);
+                        setQuickSku({ ...quickSku, category: e.target.value });
+                      }}
                       placeholder="例如：手机配件"
                     />
                   </div>
@@ -946,7 +993,10 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                     <Input
                       id="quickSkuBrand"
                       value={quickSku.brand}
-                      onChange={(e) => setQuickSku({ ...quickSku, brand: e.target.value })}
+                      onChange={(e) => {
+                        setQuickSkuError(null);
+                        setQuickSku({ ...quickSku, brand: e.target.value });
+                      }}
                       placeholder="例如：Apple / 无品牌"
                     />
                   </div>
@@ -954,6 +1004,15 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <p className="text-xs text-muted-foreground">
                   这里只创建采购所需的最小SKU信息，图片和详细属性可后续在商品SKU页面补充。
                 </p>
+                {quickSkuError ? (
+                  <div
+                    role="alert"
+                    className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  >
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p>{quickSkuError}</p>
+                  </div>
+                ) : null}
                 <div className="flex justify-end gap-2">
                   <Button
                     type="button"

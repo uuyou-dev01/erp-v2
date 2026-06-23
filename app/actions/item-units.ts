@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { stringToDecimal } from "@/lib/decimal";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 
 /**
  * Get all item units for a store
@@ -11,8 +14,16 @@ export async function getItemUnits(storeId: string) {
   const items = await prisma.itemUnit.findMany({
     where: { storeId },
     include: {
-      sku: true,
+      sku: {
+        include: {
+          parentSku: { select: { code: true, name: true } },
+        },
+      },
       location: true,
+      listings: {
+        where: { status: "ACTIVE" },
+        select: { id: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -20,6 +31,8 @@ export async function getItemUnits(storeId: string) {
   return items.map((item) => ({
     ...item,
     unitCost: item.unitCost.toString(),
+    photoCount: Array.isArray(item.photos) ? item.photos.length : 0,
+    activeListingCount: item.listings.length,
   }));
 }
 
@@ -96,11 +109,18 @@ export async function createItemUnit(data: {
   holderId?: string;
   notes?: string;
 }) {
+  await assertOperationalSku(prisma, {
+    storeId: data.storeId,
+    skuId: data.skuId,
+    actionLabel: "创建单件库存",
+  });
+
   const unitCostDecimal = stringToDecimal(data.unitCost);
 
   const item = await prisma.$transaction(async (tx) => {
     // Create item unit
-    const newItem = await tx.itemUnit.create({
+    const newItem = await createItemUnitWithIdentity(tx, {
+      storeId: data.storeId,
       data: {
         storeId: data.storeId,
         skuId: data.skuId,
@@ -138,6 +158,26 @@ export async function createItemUnit(data: {
 
   revalidatePath("/inventory/items");
   return item;
+}
+
+export async function createItemUnitAction(data: {
+  storeId: string;
+  skuId: string;
+  locationId: string;
+  unitCost: string;
+  costCurrency: string;
+  conditionGrade?: string;
+  photos?: string[];
+  ownerId?: string;
+  holderId?: string;
+  notes?: string;
+}) {
+  try {
+    const item = await createItemUnit(data);
+    return actionSuccess({ id: item.id });
+  } catch (error) {
+    return toActionFailure(error, "创建单品失败，请重试");
+  }
 }
 
 /**
@@ -186,6 +226,24 @@ export async function updateItemUnit(
   return item;
 }
 
+export async function updateItemUnitAction(
+  id: string,
+  data: {
+    conditionGrade?: string;
+    photos?: string[];
+    ownerId?: string;
+    holderId?: string;
+    notes?: string;
+  }
+) {
+  try {
+    const item = await updateItemUnit(id, data);
+    return actionSuccess({ id: item.id });
+  } catch (error) {
+    return toActionFailure(error, "保存单品失败，请重试");
+  }
+}
+
 /**
  * Delete item unit when it has no blocking relations.
  */
@@ -227,6 +285,15 @@ export async function deleteItemUnit(id: string, storeId: string) {
   revalidatePath("/inventory/items");
   revalidatePath(`/inventory/items/${id}`);
   revalidatePath("/inventory/sellable");
+}
+
+export async function deleteItemUnitAction(id: string, storeId: string) {
+  try {
+    await deleteItemUnit(id, storeId);
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "删除单品失败，请重试");
+  }
 }
 
 /**

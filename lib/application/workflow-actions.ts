@@ -181,8 +181,6 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
       { name: "actualSalePrice", label: "实际售价", type: "number" },
       { name: "platformFee", label: "实际手续费", type: "number" },
       { name: "shippingFee", label: "实际邮费", type: "number" },
-      { name: "actualReceived", label: "实际到账", type: "number" },
-      { name: "fxRate", label: "汇率", type: "number" },
     ],
   },
   resolveException: {

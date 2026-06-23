@@ -17,9 +17,9 @@ type LotRow = Awaited<ReturnType<typeof getInventoryLots>>[number];
 export default async function LotsPage() {
   const lots = await getInventoryLots(STORE_ID);
 
-  const activeLots = lots.filter((l) => l.status === "ACTIVE");
+  const activeLots = lots.filter((l) => Number(l.onHandQuantity) > 0);
   const totalValue = lots.reduce((sum, lot) => {
-    return sum + parseFloat(lot.unitCost.toString());
+    return sum + parseFloat(lot.inventoryValue);
   }, 0);
 
   const columns: Column<LotRow>[] = [
@@ -30,8 +30,18 @@ export default async function LotsPage() {
         <div>
           <p className="font-medium font-mono">{row.sku.code}</p>
           <p className="text-sm text-muted-foreground">{row.sku.name}</p>
+          {row.sku.parentSku ? (
+            <p className="text-xs text-muted-foreground">
+              父 SKU：{row.sku.parentSku.code}
+            </p>
+          ) : null}
         </div>
       ),
+    },
+    {
+      key: "onHandQuantity",
+      header: "账面数量",
+      cell: (row) => <span className="font-mono">{row.onHandQuantity}</span>,
     },
     {
       key: "location",
@@ -83,15 +93,17 @@ export default async function LotsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">入库库存</h1>
-          <p className="text-muted-foreground">按来源、位置和成本追踪可用库存</p>
+          <h1 className="text-3xl font-bold">库存批次</h1>
+          <p className="text-muted-foreground">
+            新品数量型库存；数量和价值按 StockLedger 流水汇总。
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <LotImportButton />
           <Link href="/inventory/lots/new">
             <Button>
               <Plus className="mr-2 h-4 w-4" />
-              新增入库库存
+              新增库存批次
             </Button>
           </Link>
         </div>
@@ -105,7 +117,7 @@ export default async function LotsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{lots.length}</div>
-            <p className="text-xs text-muted-foreground">所有入库库存</p>
+            <p className="text-xs text-muted-foreground">所有批次记录</p>
           </CardContent>
         </Card>
 
@@ -116,7 +128,7 @@ export default async function LotsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{activeLots.length}</div>
-            <p className="text-xs text-muted-foreground">状态为活跃</p>
+            <p className="text-xs text-muted-foreground">账面数量大于 0</p>
           </CardContent>
         </Card>
 
@@ -127,7 +139,7 @@ export default async function LotsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">¥{totalValue.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">库存总成本</p>
+            <p className="text-xs text-muted-foreground">按流水数量计算</p>
           </CardContent>
         </Card>
 

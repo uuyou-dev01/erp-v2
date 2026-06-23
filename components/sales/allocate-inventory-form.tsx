@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { allocateInventory } from "@/app/actions/customer-orders";
+import { allocateInventoryAction } from "@/app/actions/customer-orders";
 import { getInventoryLots, getAvailableQuantity } from "@/app/actions/inventory-lots";
 import { isValidDecimal } from "@/lib/decimal";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
@@ -59,6 +59,15 @@ export function AllocateInventoryForm({
     });
   }, [storeId, skuId]);
 
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setErrors((prev) => {
+      const rest = { ...prev };
+      delete rest.form;
+      return rest;
+    });
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
@@ -80,19 +89,29 @@ export function AllocateInventoryForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrors((prev) => {
+      const rest = { ...prev };
+      delete rest.form;
+      return rest;
+    });
     if (!validateForm()) return;
 
     setLoading(true);
     try {
-      await allocateInventory({
+      const result = await allocateInventoryAction({
         orderLineId,
         lotId: formData.lotId,
         quantity: formData.quantity,
       });
+      if (!result.success) {
+        setErrors({ form: result.error });
+        return;
+      }
       router.refresh();
     } catch (error) {
-      console.error("Failed to allocate inventory:", error);
-      alert("分配库存失败，请重试");
+      setErrors({
+        form: error instanceof Error ? error.message : "分配库存失败，请重试",
+      });
     } finally {
       setLoading(false);
     }
@@ -109,6 +128,12 @@ export function AllocateInventoryForm({
           </p>
         </div>
       </div>
+      {errors.form && (
+        <p className="flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          {errors.form}
+        </p>
+      )}
 
       {lots.length === 0 ? (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm">
@@ -124,7 +149,7 @@ export function AllocateInventoryForm({
             <Select
               id="lotId"
               value={formData.lotId}
-              onChange={(e) => setFormData({ ...formData, lotId: e.target.value })}
+              onChange={(e) => updateFormData({ lotId: e.target.value })}
               required
             >
               <option value="">选择入库库存</option>
@@ -164,7 +189,7 @@ export function AllocateInventoryForm({
               id="quantity"
               type="text"
               value={formData.quantity}
-              onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+              onChange={(e) => updateFormData({ quantity: e.target.value })}
               placeholder="例如：10"
               required
             />

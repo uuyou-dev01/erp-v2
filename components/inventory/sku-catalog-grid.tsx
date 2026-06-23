@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { ProductImage } from "@/components/ui/product-image";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ResponsiveTable, type Column } from "@/components/shared/responsive-table";
-import { formatCurrency } from "@/lib/decimal";
+import { formatCurrency, formatQuantity } from "@/lib/decimal";
 
 interface SkuCatalogGridProps {
   items: SkuCatalogListItem[];
@@ -77,9 +77,14 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
     },
     {
       key: "kind",
-      header: "类型",
+      header: "类型 / 层级",
       cell: (row) => (
-        <Badge variant="outline">{productKindLabel(row.productKind)}</Badge>
+        <div className="flex flex-wrap gap-1">
+          <Badge variant="outline">{productKindLabel(row.productKind)}</Badge>
+          <Badge variant={row.variantCount > 0 ? "default" : "secondary"}>
+            {row.variantCount > 0 ? "父 SKU" : row.parentSkuId ? "子 SKU" : "独立 SKU"}
+          </Badge>
+        </div>
       ),
     },
     {
@@ -93,16 +98,81 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
     },
     {
       key: "variants",
-      header: "变体",
-      cell: (row) => (row.variantCount > 0 ? `${row.variantCount}` : "—"),
+      header: "子款",
+      cell: (row) =>
+        row.variantCount > 0 ? `${row.variantCount} 个子 SKU` : row.parentSkuId ? "具体规格" : "—",
     },
     {
       key: "price",
-      header: "参考售价",
-      cell: (row) =>
-        row.referencePrice
-          ? formatCurrency(row.referencePrice, row.currency ?? "CNY")
-          : "—",
+      header: "价格参考",
+      cell: (row) => (
+        <div className="min-w-[132px] text-sm">
+          <p>
+            <span className="text-muted-foreground">参考 </span>
+            {row.referencePrice
+              ? formatCurrency(row.referencePrice, row.currency ?? "CNY")
+              : "—"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            近销{" "}
+            {row.business.latestSalePrice
+              ? formatCurrency(row.business.latestSalePrice, row.business.salesCurrency ?? "CNY")
+              : "—"}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "stock",
+      header: "库存",
+      cell: (row) => (
+        <div className="min-w-[112px] text-sm">
+          <p>
+            <span className="text-muted-foreground">可售 </span>
+            <span className={Number(row.business.sellableQty) > 0 ? "font-medium" : ""}>
+              {formatQuantity(row.business.sellableQty)}
+            </span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {row.variantCount > 0 ? "子款汇总 · " : ""}
+            在途 {formatQuantity(row.business.inTransitQty)}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "sales",
+      header: "销售",
+      cell: (row) => (
+        <div className="min-w-[128px] text-sm">
+          <p>
+            <span className="text-muted-foreground">次数 </span>
+            <span className={row.business.salesCount > 0 ? "font-medium" : ""}>
+              {row.business.salesCount}
+            </span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            均价{" "}
+            {row.business.averageSalePrice
+              ? formatCurrency(row.business.averageSalePrice, row.business.salesCurrency ?? "CNY")
+              : "—"}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "platform",
+      header: "平台",
+      cell: (row) => (
+        <div className="min-w-[112px] text-sm">
+          <p className="truncate">
+            {row.business.primaryPlatformName ?? "—"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            上架中 {row.business.activeListingCount}
+          </p>
+        </div>
+      ),
     },
     {
       key: "status",

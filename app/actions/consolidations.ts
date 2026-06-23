@@ -1,7 +1,36 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { prisma } from "@/lib/prisma";
+
+type ConsolidationStatus = "OPEN" | "SEALED" | "SHIPPED" | "RECEIVED";
+
+const requiredPreviousStatus: Partial<Record<ConsolidationStatus, ConsolidationStatus>> = {
+  SEALED: "OPEN",
+  SHIPPED: "SEALED",
+  RECEIVED: "SHIPPED",
+};
+
+const statusActionLabels: Partial<Record<ConsolidationStatus, string>> = {
+  SEALED: "封箱",
+  SHIPPED: "发出",
+  RECEIVED: "确认到货",
+};
+
+function assertConsolidationStatusTransition(
+  currentStatus: string,
+  nextStatus: ConsolidationStatus
+) {
+  const required = requiredPreviousStatus[nextStatus];
+  if (!required) {
+    throw new Error("集运批次状态不可回退");
+  }
+
+  if (currentStatus !== required) {
+    throw new Error(`当前状态不可${statusActionLabels[nextStatus] ?? "更新"}`);
+  }
+}
 
 async function addPurchaseOrdersToBatch(batchId: string, purchaseOrderIds: string[]) {
   const ids = Array.from(new Set(purchaseOrderIds)).filter(Boolean);
@@ -137,9 +166,18 @@ export async function createConsolidationForPurchaseOrders(data: {
 
 export async function updateConsolidationStatus(
   id: string,
-  status: "OPEN" | "SEALED" | "SHIPPED" | "RECEIVED",
+  status: ConsolidationStatus,
   data?: { outboundTrackingNo?: string; carrier?: string }
 ) {
+  const batch = await prisma.consolidationBatch.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+  if (!batch) {
+    throw new Error("集运批次不存在");
+  }
+  assertConsolidationStatusTransition(batch.status, status);
+
   await prisma.consolidationBatch.update({
     where: { id },
     data: {
@@ -153,4 +191,17 @@ export async function updateConsolidationStatus(
   revalidatePath("/logistics/consolidations");
   revalidatePath(`/logistics/consolidations/${id}`);
   revalidatePath("/workbench");
+}
+
+export async function updateConsolidationStatusAction(
+  id: string,
+  status: ConsolidationStatus,
+  data?: { outboundTrackingNo?: string; carrier?: string }
+) {
+  try {
+    await updateConsolidationStatus(id, status, data);
+    return actionSuccess({ id, status });
+  } catch (error) {
+    return toActionFailure(error, "更新集运状态失败，请重试");
+  }
 }

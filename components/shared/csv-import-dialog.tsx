@@ -33,23 +33,35 @@ export function CSVImportDialog({ open, onClose, title, targetFields, onImport }
   const [mappings, setMappings] = useState<ColumnMapping[]>([]);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [error, setError] = useState("");
 
   if (!open) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setError("");
+    setResult(null);
 
     Papa.parse(file, {
       complete: (results) => {
         const data = results.data as string[][];
         if (data.length < 2) {
-          alert("CSV文件至少需要包含标题行和一行数据");
+          setError("CSV文件至少需要包含标题行和一行数据");
           return;
         }
         const headers = data[0].map((h) => h.trim());
+        const bodyRows = data
+          .slice(1)
+          .filter((row) => row.some((cell) => cell.trim()));
+
+        if (bodyRows.length === 0) {
+          setError("CSV文件没有可导入的数据");
+          return;
+        }
+
         setCsvHeaders(headers);
-        setCsvData(data.slice(1).filter((row) => row.some((cell) => cell.trim())));
+        setCsvData(bodyRows);
 
         const autoMappings = targetFields.map((field) => {
           const match = headers.find(
@@ -61,7 +73,7 @@ export function CSVImportDialog({ open, onClose, title, targetFields, onImport }
         setStep("preview");
       },
       error: () => {
-        alert("CSV解析失败，请检查文件格式");
+        setError("CSV解析失败，请检查文件格式");
       },
     });
   };
@@ -73,6 +85,27 @@ export function CSVImportDialog({ open, onClose, title, targetFields, onImport }
   };
 
   const handleImport = async () => {
+    setError("");
+    const missingRequiredFields = targetFields.filter((field) => {
+      if (!field.required) return false;
+      const mapping = mappings.find((m) => m.targetField === field.key);
+      return !mapping?.csvColumn;
+    });
+
+    if (missingRequiredFields.length > 0) {
+      setError(
+        `请先映射必填字段：${missingRequiredFields
+          .map((field) => field.label)
+          .join("、")}`
+      );
+      return;
+    }
+
+    if (csvData.length === 0) {
+      setError("CSV文件没有可导入的数据");
+      return;
+    }
+
     setImporting(true);
     try {
       const rows = csvData.map((row) => {
@@ -92,7 +125,7 @@ export function CSVImportDialog({ open, onClose, title, targetFields, onImport }
       setResult(importResult);
       setStep("result");
     } catch {
-      alert("导入失败，请重试");
+      setError("导入失败，请重试");
     } finally {
       setImporting(false);
     }
@@ -104,6 +137,7 @@ export function CSVImportDialog({ open, onClose, title, targetFields, onImport }
     setCsvHeaders([]);
     setMappings([]);
     setResult(null);
+    setError("");
     onClose();
   };
 
@@ -120,6 +154,13 @@ export function CSVImportDialog({ open, onClose, title, targetFields, onImport }
           </div>
         </CardHeader>
         <CardContent>
+          {error ? (
+            <p className="mb-4 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </p>
+          ) : null}
+
           {step === "upload" && (
             <div className="flex flex-col items-center gap-4 py-8">
               <Upload className="h-12 w-12 text-muted-foreground" />

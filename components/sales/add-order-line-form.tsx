@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { addOrderLine } from "@/app/actions/customer-orders";
+import { addOrderLineAction } from "@/app/actions/customer-orders";
 import { getSKUs } from "@/app/actions/skus";
 import { isValidDecimal } from "@/lib/decimal";
 import { AlertCircle } from "lucide-react";
@@ -28,10 +28,16 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
     unitPrice: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     getSKUs(storeId).then(setSKUs);
   }, [storeId]);
+
+  const updateFormData = (updates: Partial<typeof formData>) => {
+    setSubmitError(null);
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -52,22 +58,26 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!validateForm()) return;
 
     setLoading(true);
     try {
-      await addOrderLine({
+      const result = await addOrderLineAction({
         orderId,
         skuId: formData.skuId,
         quantity: formData.quantity,
         unitPrice: formData.unitPrice || undefined,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
 
       setFormData({ skuId: "", quantity: "", unitPrice: "" });
       router.refresh();
     } catch (error) {
-      console.error("Failed to add order line:", error);
-      alert("添加商品行失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "添加商品行失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -81,7 +91,7 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
           <Select
             id="skuId"
             value={formData.skuId}
-            onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
+            onChange={(e) => updateFormData({ skuId: e.target.value })}
             required
           >
             <option value="">{t("inventory.select_sku")}</option>
@@ -102,7 +112,7 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
             id="quantity"
             type="text"
             value={formData.quantity}
-            onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+            onChange={(e) => updateFormData({ quantity: e.target.value })}
             placeholder="例如：10"
             required
           />
@@ -119,7 +129,7 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
             id="unitPrice"
             type="text"
             value={formData.unitPrice}
-            onChange={(e) => setFormData({ ...formData, unitPrice: e.target.value })}
+            onChange={(e) => updateFormData({ unitPrice: e.target.value })}
             placeholder="例如：149.99"
           />
           {errors.unitPrice && (
@@ -130,6 +140,16 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
           <p className="text-xs text-muted-foreground">选填 - 可稍后设置</p>
         </div>
       </div>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <Button type="submit" disabled={loading}>
         {loading ? t("common.saving") : t("purchase.add_line")}

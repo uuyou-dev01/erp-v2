@@ -3,11 +3,15 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { createStoreMoneyConverter } from "@/lib/fx";
 import {
   createInboundInventoryLot,
   getStoreStockBreakdown,
   type SkuStockBreakdown,
 } from "@/lib/application/inventory";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 
 /**
  * 获取 store 内每个 SKU 的可售/转运库存细分（plain object 版，可跨 server action 边界传输）
@@ -38,14 +42,60 @@ export interface UpdateInventoryLotInput {
 }
 
 export async function getInventoryLots(storeId: string) {
-  return await prisma.inventoryLot.findMany({
+  const lots = await prisma.inventoryLot.findMany({
     where: { storeId },
     include: {
-      sku: true,
+      sku: {
+        include: {
+          parentSku: { select: { code: true, name: true } },
+        },
+      },
       location: true,
     },
     orderBy: { receivedAt: "desc" },
   });
+
+  const lotIds = lots.map((lot) => lot.id);
+  const ledgerTotals =
+    lotIds.length > 0
+      ? await prisma.stockLedger.groupBy({
+          by: ["entityId"],
+          where: {
+            storeId,
+            entityType: "LOT",
+            entityId: { in: lotIds },
+          },
+          _sum: {
+            deltaQty: true,
+          },
+        })
+      : [];
+  const qtyByLotId = new Map(
+    ledgerTotals.map((row) => [
+      row.entityId,
+      new Decimal(row._sum.deltaQty?.toString() ?? "0"),
+    ])
+  );
+  const converter = await createStoreMoneyConverter(storeId);
+
+  return Promise.all(
+    lots.map(async (lot) => {
+      const onHandQuantity = qtyByLotId.get(lot.id) ?? new Decimal(0);
+      const rawValue = onHandQuantity.gt(0)
+        ? new Decimal(lot.unitCost.toString()).mul(onHandQuantity)
+        : new Decimal(0);
+      const inventoryValue = await converter.convertToBase(rawValue, lot.costCurrency, {
+        effectiveAt: lot.receivedAt,
+      });
+
+      return {
+        ...lot,
+        onHandQuantity: onHandQuantity.toString(),
+        inventoryValue: inventoryValue.toFixed(2),
+        inventoryValueCurrency: converter.baseCurrency,
+      };
+    })
+  );
 }
 
 export async function getInventoryLotById(id: string) {
@@ -100,6 +150,12 @@ export async function getAvailableQuantity(lotId: string): Promise<string> {
 }
 
 export async function createInventoryLot(data: CreateInventoryLotInput) {
+  await assertOperationalSku(prisma, {
+    storeId: data.storeId,
+    skuId: data.skuId,
+    actionLabel: "入库",
+  });
+
   const result = await prisma.$transaction(async (tx) => {
     return createInboundInventoryLot(tx, {
       storeId: data.storeId,
@@ -116,6 +172,15 @@ export async function createInventoryLot(data: CreateInventoryLotInput) {
 
   revalidatePath("/inventory/lots");
   return result;
+}
+
+export async function createInventoryLotAction(data: CreateInventoryLotInput) {
+  try {
+    const lot = await createInventoryLot(data);
+    return actionSuccess({ id: lot.id });
+  } catch (error) {
+    return toActionFailure(error, "创建入库库存失败，请重试");
+  }
 }
 
 export async function updateInventoryLot(data: UpdateInventoryLotInput) {
@@ -174,7 +239,8 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
       },
     });
 
-    const itemUnit = await tx.itemUnit.create({
+    const itemUnit = await createItemUnitWithIdentity(tx, {
+      storeId,
       data: {
         storeId,
         skuId: lot.skuId,
@@ -231,6 +297,18 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
   revalidatePath(`/inventory/lots/${lotId}`);
   revalidatePath("/inventory/items");
   return result;
+}
+
+export async function convertLotToItemUnitAction(data: ConvertLotToItemUnitInput) {
+  try {
+    const result = await convertLotToItemUnit(data);
+    return actionSuccess({
+      splitId: result.split.id,
+      itemUnitId: result.itemUnit.id,
+    });
+  } catch (error) {
+    return toActionFailure(error, "拆出单品失败，请重试");
+  }
 }
 
 export async function deleteInventoryLot(id: string) {

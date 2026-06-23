@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { deleteItemUnit } from "@/app/actions/item-units";
+import { deleteItemUnitAction } from "@/app/actions/item-units";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { formatShortEntityId } from "@/lib/format-id";
 
@@ -18,17 +18,21 @@ export function ItemUnitRowActions({ id, skuCode, storeId }: ItemUnitRowActionsP
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleDelete = async () => {
+    setError(null);
     setLoading(true);
     try {
-      await deleteItemUnit(id, storeId);
+      const result = await deleteItemUnitAction(id, storeId);
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
       setConfirming(false);
       router.refresh();
     } catch (error) {
-      console.error("Failed to delete item unit:", error);
-      const message = error instanceof Error ? error.message : "删除失败，请重试";
-      alert(message);
+      setError(error instanceof Error ? error.message : "删除失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -53,7 +57,10 @@ export function ItemUnitRowActions({ id, skuCode, storeId }: ItemUnitRowActionsP
           variant="outline"
           size="sm"
           className="text-red-600 hover:text-red-700"
-          onClick={() => setConfirming(true)}
+          onClick={() => {
+            setError(null);
+            setConfirming(true);
+          }}
         >
           删除
         </Button>
@@ -68,8 +75,12 @@ export function ItemUnitRowActions({ id, skuCode, storeId }: ItemUnitRowActionsP
           cancelText="取消"
           loading={loading}
           tone="danger"
+          error={error}
           onConfirm={handleDelete}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => {
+            setError(null);
+            setConfirming(false);
+          }}
         />
       )}
     </>

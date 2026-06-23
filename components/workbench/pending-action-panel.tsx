@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
 import type { WorkItem } from "@/lib/application/next-actions";
@@ -34,6 +34,9 @@ import {
   TaskAssignmentCard,
   type AssignableMemberOption,
 } from "./task-assignment-card";
+import { Button } from "@/components/ui/button";
+import { AlertCircle, ArrowRight, CheckCircle2 } from "lucide-react";
+import { isActionFailure } from "@/lib/application/action-result";
 
 interface PendingActionPanelProps {
   detail: WorkItemDetail;
@@ -51,6 +54,13 @@ interface PendingActionPanelProps {
   onComplete?: () => void;
 }
 
+type PanelNotice = {
+  tone: "success" | "error";
+  message: string;
+  href?: string;
+  actionLabel?: string;
+};
+
 export function PendingActionPanel({
   detail,
   taskItem = null,
@@ -63,6 +73,7 @@ export function PendingActionPanel({
 }: PendingActionPanelProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [notice, setNotice] = useState<PanelNotice | null>(null);
   const actionSpec = getWorkflowActionSpec(detail.primaryAction);
   const detailHref =
     detail.detailHref && detail.detailHref !== "/workbench"
@@ -80,7 +91,12 @@ export function PendingActionPanel({
   ) => {
     startTransition(async () => {
       try {
+        setNotice(null);
         const result = await fn();
+        if (isActionFailure(result)) {
+          setNotice({ tone: "error", message: result.error });
+          return;
+        }
         if (result && typeof result === "object") {
           if (
             detail.primaryAction === "createListing" &&
@@ -95,9 +111,14 @@ export function PendingActionPanel({
             if (created.ids.length > 0) {
               const skuHint = created.skuCode ? `（SKU：${created.skuCode}）` : "";
               const href = created.listingPageHref ?? "/inventory/sellable";
-              alert(
-                `已添加 ${created.ids.length} 条上架记录${skuHint}。\n\n查看位置：库存 → 可售库存\n${href}`
-              );
+              setNotice({
+                tone: "success",
+                message: `已添加 ${created.ids.length} 条上架记录${skuHint}。`,
+                href,
+                actionLabel: "查看可售库存",
+              });
+              router.refresh();
+              return;
             }
           }
           if (
@@ -108,25 +129,29 @@ export function PendingActionPanel({
               "string"
           ) {
             const { sellablePageHref } = result as { sellablePageHref: string };
-            const go = confirm(
-              "入库已确认，商品已进入可售库存。\n\n是否前往「可售库存」为新入库商品添加上架记录？"
-            );
-            if (go) {
-              router.push(sellablePageHref);
-              return;
-            }
+            setNotice({
+              tone: "success",
+              message: "入库已确认，商品已进入可售库存。",
+              href: sellablePageHref,
+              actionLabel: "前往可售库存",
+            });
+            router.refresh();
+            return;
           }
         }
         if (options?.keepOpen) {
           router.refresh();
           if (options.successMessage) {
-            alert(options.successMessage);
+            setNotice({ tone: "success", message: options.successMessage });
           }
           return;
         }
         refresh();
       } catch (error) {
-        alert(error instanceof Error ? error.message : "操作失败");
+        setNotice({
+          tone: "error",
+          message: error instanceof Error ? error.message : "操作失败",
+        });
       }
     });
   };
@@ -220,6 +245,39 @@ export function PendingActionPanel({
         <h3 className="text-sm font-semibold">操作表单</h3>
         <p className="mt-1 text-xs text-muted-foreground">只填写完成当前动作所需的信息。</p>
       </div>
+      {notice ? (
+        <div
+          role={notice.tone === "error" ? "alert" : "status"}
+          className={
+            notice.tone === "error"
+              ? "mb-3 rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"
+              : "mb-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+          }
+        >
+          <div className="flex items-start gap-2">
+            {notice.tone === "error" ? (
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p>{notice.message}</p>
+              {notice.href ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-8 border-current bg-transparent text-current hover:bg-white/60"
+                  onClick={() => router.push(notice.href!)}
+                >
+                  {notice.actionLabel ?? "查看详情"}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {renderActionForm()}
     </ActionDrawerLayout>
   );

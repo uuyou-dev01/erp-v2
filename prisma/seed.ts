@@ -79,22 +79,36 @@ async function main() {
     },
   });
 
-  // Create default platforms (China and Japan marketplaces)
+  // Create default platforms for the current Japan + China resale flow.
   const platforms = [
-    { code: "TAOBAO", name: "淘宝（Taobao）", country: "CN", defaultFeeRate: 0, defaultCurrency: "CNY" },
-    { code: "TMALL", name: "天猫（Tmall）", country: "CN", defaultFeeRate: 0.05, defaultCurrency: "CNY" },
-    { code: "JD", name: "京东（JD.com）", country: "CN", defaultFeeRate: 0.06, defaultCurrency: "CNY" },
-    { code: "PINDUODUO", name: "拼多多（Pinduoduo）", country: "CN", defaultFeeRate: 0.006, defaultCurrency: "CNY" },
-    { code: "XIAN_YU", name: "闲鱼（Xianyu）", country: "CN", defaultFeeRate: 0, defaultCurrency: "CNY" },
-    { code: "DOUYIN", name: "抖音电商（Douyin）", country: "CN", defaultFeeRate: 0.05, defaultCurrency: "CNY" },
-    { code: "XIAOHONGSHU", name: "小红书（Xiaohongshu）", country: "CN", defaultFeeRate: 0.05, defaultCurrency: "CNY" },
-    { code: "ALIBABA_1688", name: "1688", country: "CN", defaultFeeRate: 0, defaultCurrency: "CNY" },
-    { code: "MERCARI", name: "Mercari（メルカリ）", country: "JP", defaultFeeRate: 0.1, defaultCurrency: "JPY" },
-    { code: "YAHOO_AUCTION", name: "Yahoo拍卖（ヤフオク）", country: "JP", defaultFeeRate: 0.088, defaultCurrency: "JPY" },
-    { code: "YAHOO_SHOPPING", name: "Yahoo购物（Yahoo!ショッピング）", country: "JP", defaultFeeRate: 0.08, defaultCurrency: "JPY" },
-    { code: "RAKUTEN", name: "乐天（楽天）", country: "JP", defaultFeeRate: 0.065, defaultCurrency: "JPY" },
-    { code: "AMAZON_JP", name: "亚马逊日本（Amazon.co.jp）", country: "JP", defaultFeeRate: 0.15, defaultCurrency: "JPY" },
-    { code: "ZOZOTOWN", name: "ZOZOTOWN", country: "JP", defaultFeeRate: 0.1, defaultCurrency: "JPY" },
+    {
+      code: "MERCARI",
+      name: "Mercari（メルカリ）",
+      country: "JP",
+      defaultFeeRate: 0.1,
+      defaultCurrency: "JPY",
+    },
+    {
+      code: "YAHOO_AUCTION",
+      name: "Yahoo拍卖（ヤフオク）",
+      country: "JP",
+      defaultFeeRate: 0.088,
+      defaultCurrency: "JPY",
+    },
+    {
+      code: "SNKRDUNK",
+      name: "SNKRDUNK",
+      country: "JP",
+      defaultFeeRate: 0.099,
+      defaultCurrency: "JPY",
+    },
+    {
+      code: "XIAN_YU",
+      name: "闲鱼（Xianyu）",
+      country: "CN",
+      defaultFeeRate: 0,
+      defaultCurrency: "CNY",
+    },
   ];
 
   for (const p of platforms) {

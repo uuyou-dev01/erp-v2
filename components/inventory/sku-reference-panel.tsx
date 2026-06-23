@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ExternalLink, PackageCheck, ShoppingCart, Truck } from "lucide-react";
+import { ExternalLink, PackageCheck, ShoppingCart, Tags, Truck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import type { SkuCatalogDetail } from "@/lib/application/sku-catalog";
@@ -31,8 +31,17 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
             <p className="text-[10px] text-muted-foreground">可售数量</p>
             <p className="text-base font-semibold leading-tight">{sellableTotal}</p>
             <p className="text-[10px] text-muted-foreground">
-              入库 {formatQuantity(reference.sellableLotQty)} · 单件{" "}
+              批次 {formatQuantity(reference.sellableLotQty)} · 单件{" "}
               {reference.availableItemUnits}
+            </p>
+          </div>
+          <div className="rounded-md border px-2.5 py-2">
+            <p className="text-[10px] text-muted-foreground">在途数量</p>
+            <p className="text-base font-semibold leading-tight">
+              {formatQuantity(reference.inTransitQty)}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              转入可售仓后进入库存看板
             </p>
           </div>
           <div className="rounded-md border px-2.5 py-2">
@@ -54,6 +63,12 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
             <Button variant="outline" size="sm" className="h-8 text-xs">
               <ShoppingCart className="mr-1 h-3.5 w-3.5" />
               销售
+            </Button>
+          </Link>
+          <Link href={`/listing?q=${encodeURIComponent(sku.code)}`}>
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              <Tags className="mr-1 h-3.5 w-3.5" />
+              上架
             </Button>
           </Link>
           <Link href={`/inventory/lots?skuId=${sku.id}`}>

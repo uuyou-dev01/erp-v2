@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { getPlatforms } from "@/app/actions/platforms";
 import { ListingCoverageGrid } from "@/components/listing/listing-coverage-grid";
+import { BatchListingDialog } from "@/components/listing/batch-listing-dialog";
 import { SellableInventoryStats } from "@/components/listing/sellable-inventory-stats";
 import { ListingOpsToolbar } from "@/components/listing/listing-ops-toolbar";
 import { Button } from "@/components/ui/button";
@@ -144,20 +145,48 @@ export default async function SellableInventoryPage({
   const guide = summarizeSellableGuides(sellableProducts);
   const fromWorkbench = params.from === "workbench";
   const returnTo = currentHref(params);
+  const batchListingSkus =
+    params.unlisted === "1"
+      ? pageProducts
+          .filter(
+            (product) =>
+              product.listingType === "SKU" &&
+              product.records.length === 0 &&
+              product.sellableLotQty > 0,
+          )
+          .map((product) => ({
+            id: product.skuId,
+            code: product.skuCode,
+            name: product.skuName,
+            sellableQty: product.sellableLotQty,
+            inTransitQty: product.inTransitQty,
+          }))
+      : [];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">可售库存</h1>
+          <h1 className="text-3xl font-bold">库存看板</h1>
           <p className="text-muted-foreground">
             查看可发货库存、已有上架记录，并从这里添加上架或登记售出。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {batchListingSkus.length > 0 ? (
+            <BatchListingDialog
+              storeId={STORE_ID}
+              platforms={platforms.map((platform) => ({
+                id: platform.id,
+                name: platform.name,
+                code: platform.code,
+              }))}
+              skus={batchListingSkus}
+            />
+          ) : null}
           <Link href="/inventory/sellable?unlisted=1">
             <Button variant="outline">
-              待添加上架 ({stats.withoutListings})
+              待上架 ({stats.withoutListings})
             </Button>
           </Link>
           <Link href={withReturnTo("/listing/new", returnTo)}>

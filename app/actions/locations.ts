@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { isValidLocationRegion } from "@/lib/inventory/location-regions";
 import { revalidatePath } from "next/cache";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 export type LocationType = "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT";
 
@@ -67,6 +68,15 @@ export async function createLocation(data: CreateLocationInput) {
   return location;
 }
 
+export async function createLocationAction(data: CreateLocationInput) {
+  try {
+    const location = await createLocation(data);
+    return actionSuccess({ id: location.id });
+  } catch (error) {
+    return toActionFailure(error, "保存仓库位置失败，请重试");
+  }
+}
+
 async function generateLocationCode(storeId: string, type: LocationType) {
   const prefixMap: Record<LocationType, string> = {
     WAREHOUSE: "WH",
@@ -124,6 +134,15 @@ export async function updateLocation(data: UpdateLocationInput) {
   revalidatePath("/inventory/locations");
   revalidatePath(`/inventory/locations/${data.id}`);
   return location;
+}
+
+export async function updateLocationAction(data: UpdateLocationInput) {
+  try {
+    const location = await updateLocation(data);
+    return actionSuccess({ id: location.id });
+  } catch (error) {
+    return toActionFailure(error, "保存仓库位置失败，请重试");
+  }
 }
 
 export async function getLocationStats(locationId: string) {
@@ -222,4 +241,13 @@ export async function deleteLocation(id: string, storeId: string) {
   if (deleted.count === 0) throw new Error("位置不存在或无权删除");
 
   revalidatePath("/inventory/locations");
+}
+
+export async function deleteLocationAction(id: string, storeId: string) {
+  try {
+    await deleteLocation(id, storeId);
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "删除仓库位置失败，请重试");
+  }
 }

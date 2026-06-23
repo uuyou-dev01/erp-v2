@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
@@ -7,14 +8,25 @@ import {
   computeOrderFees,
   feeResultToStrings,
 } from "@/lib/application/order-fees";
-import { resolveFifoShipFromLocation } from "@/lib/application/inventory";
+import {
+  actionFailure,
+  actionSuccess,
+  toActionFailure,
+} from "@/lib/application/action-result";
+import {
+  getSkuStockBreakdown,
+  resolveFifoShipFromLocation,
+} from "@/lib/application/inventory";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
+import { requiresSellableStockForListing } from "@/lib/core-platforms";
 import { requireUserContext } from "@/lib/auth/user-context";
 import {
   completeTasksForRef,
   createTaskIfMissing,
   TASK_TYPE,
 } from "@/lib/application/tasks";
+import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -27,6 +39,64 @@ function revalidateListingSurfaces(listingId?: string) {
   revalidatePath("/inventory/sold");
   revalidatePath("/reports/team");
   if (listingId) revalidatePath(`/listing/${listingId}`);
+}
+
+function parseDecimalInput(
+  value: string | undefined,
+  fieldLabel: string,
+  options: {
+    fallback?: string;
+    requiredPositive?: boolean;
+    nonNegative?: boolean;
+    max?: Decimal.Value;
+  } = {}
+):
+  | { success: true; value: Decimal }
+  | { success: false; error: string } {
+  const raw = value?.trim() || options.fallback;
+  if (!raw) {
+    return { success: false, error: `${fieldLabel}必须是有效数字` };
+  }
+
+  let decimal: Decimal;
+  try {
+    decimal = new Decimal(raw);
+  } catch {
+    return { success: false, error: `${fieldLabel}必须是有效数字` };
+  }
+
+  if (!decimal.isFinite()) {
+    return { success: false, error: `${fieldLabel}必须是有效数字` };
+  }
+  if (options.requiredPositive && decimal.lte(0)) {
+    return { success: false, error: `${fieldLabel}必须大于 0` };
+  }
+  if (options.nonNegative && decimal.lt(0)) {
+    return { success: false, error: `${fieldLabel}不能为负数` };
+  }
+  if (options.max !== undefined && decimal.gt(options.max)) {
+    return { success: false, error: `${fieldLabel}不能大于 ${options.max}` };
+  }
+
+  return { success: true, value: decimal };
+}
+
+function parseOptionalDecimalInput(
+  value: string | undefined,
+  fieldLabel: string,
+  options: {
+    requiredPositive?: boolean;
+    nonNegative?: boolean;
+    max?: Decimal.Value;
+  } = {}
+):
+  | { success: true; value: Decimal | null }
+  | { success: false; error: string } {
+  if (value == null || value.trim() === "") {
+    return { success: true, value: null };
+  }
+
+  return parseDecimalInput(value, fieldLabel, options);
 }
 
 async function recordListingCreateTask(input: {
@@ -110,6 +180,49 @@ async function getSkuReferencePrice(skuId: string) {
   return null;
 }
 
+async function assertListingHasSellableStock(input: {
+  storeId: string;
+  platformCode: string;
+  platformName: string;
+  listingType: "SKU" | "ITEM_UNIT";
+  skuId?: string;
+  itemUnitId?: string;
+}) {
+  if (input.listingType === "SKU") {
+    if (!input.skuId) throw new Error("请选择要上架的 SKU");
+    await assertOperationalSku(prisma, {
+      storeId: input.storeId,
+      skuId: input.skuId,
+      actionLabel: "上架",
+    });
+    if (!requiresSellableStockForListing(input.platformCode)) return;
+    const breakdown = await getSkuStockBreakdown(input.storeId, input.skuId);
+    if (breakdown.sellableQty <= 0) {
+      throw new Error(`${input.platformName} 上架需要可售库存，请先到日本可售仓或代发仓入库`);
+    }
+    return;
+  }
+
+  if (!requiresSellableStockForListing(input.platformCode)) return;
+
+  if (!input.itemUnitId) throw new Error("请选择要上架的单件商品");
+  const itemUnit = await prisma.itemUnit.findFirst({
+    where: {
+      id: input.itemUnitId,
+      storeId: input.storeId,
+    },
+    include: {
+      location: {
+        select: { isSellableDefault: true },
+      },
+    },
+  });
+
+  if (!itemUnit || itemUnit.status !== "AVAILABLE" || !itemUnit.location.isSellableDefault) {
+    throw new Error(`${input.platformName} 上架需要可售库存，请先到日本可售仓或代发仓入库`);
+  }
+}
+
 export async function getListings(storeId: string, platformId?: string) {
   const context = await requireUserContext({ storeId });
   return await prisma.listing.findMany({
@@ -161,84 +274,120 @@ export async function createListing(data: {
   shippingFeeOverride?: string;
   estimatedNet?: string;
 }) {
-  const context = await requireUserContext({ storeId: data.storeId });
-  const platform = await prisma.platform.findFirst({
-    where: { id: data.platformId, storeId: context.activeStoreId },
-    select: {
-      defaultFeeRate: true,
-      defaultCurrency: true,
-      defaultShippingFee: true,
-      shippingRules: true,
-    },
-  });
-  if (!platform) {
-    throw new Error("平台不存在或无权操作");
-  }
-  const platformDefaults = platform ? resolvePlatformListingDefaults(platform) : null;
-
-  let pricingSkuId = data.skuId;
-  if (!pricingSkuId && data.itemUnitId) {
-    const itemUnit = await prisma.itemUnit.findUnique({
-      where: { id: data.itemUnitId },
-      select: { skuId: true },
+  try {
+    const context = await requireUserContext({ storeId: data.storeId });
+    const platform = await prisma.platform.findFirst({
+      where: { id: data.platformId, storeId: context.activeStoreId },
+      select: {
+        code: true,
+        name: true,
+        defaultFeeRate: true,
+        defaultCurrency: true,
+        defaultShippingFee: true,
+        shippingRules: true,
+      },
     });
-    pricingSkuId = itemUnit?.skuId;
-  }
+    if (!platform) {
+      throw new Error("平台不存在或无权操作");
+    }
+    const listedPriceInput = parseOptionalDecimalInput(data.listedPrice, "Listing 价格", {
+      requiredPositive: true,
+    });
+    if (!listedPriceInput.success) {
+      return actionFailure(listedPriceInput.error);
+    }
+    const feeRateInput = parseOptionalDecimalInput(data.feeRateOverride, "平台费率", {
+      nonNegative: true,
+      max: 1,
+    });
+    if (!feeRateInput.success) {
+      return actionFailure(feeRateInput.error);
+    }
+    const shippingFeeInput = parseOptionalDecimalInput(data.shippingFeeOverride, "运费", {
+      nonNegative: true,
+    });
+    if (!shippingFeeInput.success) {
+      return actionFailure(shippingFeeInput.error);
+    }
+    const estimatedNetInput = parseOptionalDecimalInput(data.estimatedNet, "预估净收入");
+    if (!estimatedNetInput.success) {
+      return actionFailure(estimatedNetInput.error);
+    }
 
-  const referencePrice =
-    !data.listedPrice && pricingSkuId
-      ? await getSkuReferencePrice(pricingSkuId)
-      : null;
-  const listedPriceDecimal = data.listedPrice
-    ? new Decimal(data.listedPrice)
-    : referencePrice?.price || null;
-  const resolvedCurrency =
-    data.currency ||
-    referencePrice?.currency ||
-    platformDefaults?.currency ||
-    null;
-  const feeRateDecimal = data.feeRateOverride
-    ? new Decimal(data.feeRateOverride)
-    : platformDefaults?.feeRate
-      ? new Decimal(platformDefaults.feeRate)
-      : new Decimal(0);
-  const shippingFeeDecimal = data.shippingFeeOverride
-    ? new Decimal(data.shippingFeeOverride)
-    : platformDefaults?.shippingFee
-      ? new Decimal(platformDefaults.shippingFee)
-      : new Decimal(0);
-  const estimatedNetDecimal = data.estimatedNet
-    ? new Decimal(data.estimatedNet)
-    : listedPriceDecimal
-      ? listedPriceDecimal.mul(new Decimal(1).minus(feeRateDecimal)).minus(shippingFeeDecimal)
-      : null;
-
-  const listing = await prisma.listing.create({
-    data: {
+    await assertListingHasSellableStock({
       storeId: context.activeStoreId,
-      platformId: data.platformId,
+      platformCode: platform.code,
+      platformName: platform.name,
       listingType: data.listingType,
       skuId: data.skuId,
       itemUnitId: data.itemUnitId,
-      listedPrice: listedPriceDecimal,
-      currency: resolvedCurrency,
-      feeRateOverride: data.feeRateOverride ? new Decimal(data.feeRateOverride) : null,
-      shippingFeeOverride: data.shippingFeeOverride ? new Decimal(data.shippingFeeOverride) : null,
-      estimatedNet: estimatedNetDecimal,
-      status: "ACTIVE",
-      listedAt: new Date(),
-    },
-  });
+    });
+    const platformDefaults = platform ? resolvePlatformListingDefaults(platform) : null;
 
-  await recordListingCreateTask({
-    organizationId: context.organizationId,
-    storeId: context.activeStoreId,
-    userId: context.userId,
-    listingId: listing.id,
-  });
+    let pricingSkuId = data.skuId;
+    if (!pricingSkuId && data.itemUnitId) {
+      const itemUnit = await prisma.itemUnit.findUnique({
+        where: { id: data.itemUnitId },
+        select: { skuId: true },
+      });
+      pricingSkuId = itemUnit?.skuId;
+    }
 
-  revalidateListingSurfaces();
-  return { id: listing.id };
+    const referencePrice =
+      !data.listedPrice && pricingSkuId
+        ? await getSkuReferencePrice(pricingSkuId)
+        : null;
+    const listedPriceDecimal = listedPriceInput.value ?? referencePrice?.price ?? null;
+    const resolvedCurrency =
+      data.currency ||
+      referencePrice?.currency ||
+      platformDefaults?.currency ||
+      null;
+    const feeRateDecimal = feeRateInput.value
+      ? feeRateInput.value
+      : platformDefaults?.feeRate
+        ? new Decimal(platformDefaults.feeRate)
+        : new Decimal(0);
+    const shippingFeeDecimal = shippingFeeInput.value
+      ? shippingFeeInput.value
+      : platformDefaults?.shippingFee
+        ? new Decimal(platformDefaults.shippingFee)
+        : new Decimal(0);
+    const estimatedNetDecimal = estimatedNetInput.value
+      ? estimatedNetInput.value
+      : listedPriceDecimal
+        ? listedPriceDecimal.mul(new Decimal(1).minus(feeRateDecimal)).minus(shippingFeeDecimal)
+        : null;
+
+    const listing = await prisma.listing.create({
+      data: {
+        storeId: context.activeStoreId,
+        platformId: data.platformId,
+        listingType: data.listingType,
+        skuId: data.skuId,
+        itemUnitId: data.itemUnitId,
+        listedPrice: listedPriceDecimal,
+        currency: resolvedCurrency,
+        feeRateOverride: feeRateInput.value,
+        shippingFeeOverride: shippingFeeInput.value,
+        estimatedNet: estimatedNetDecimal,
+        status: "ACTIVE",
+        listedAt: new Date(),
+      },
+    });
+
+    await recordListingCreateTask({
+      organizationId: context.organizationId,
+      storeId: context.activeStoreId,
+      userId: context.userId,
+      listingId: listing.id,
+    });
+
+    revalidateListingSurfaces();
+    return actionSuccess({ id: listing.id });
+  } catch (error) {
+    return toActionFailure(error, "添加上架记录失败，请重试");
+  }
 }
 
 export async function getListingFifoShipFromLocation(listingId: string) {
@@ -273,10 +422,45 @@ export async function quickSellListing(data: {
   externalOrderNo?: string;
 }) {
   try {
-    const requestedQuantity = new Decimal(data.quantity || "1");
+    const requestedQuantityResult = parseDecimalInput(data.quantity, "售出数量", {
+      fallback: "1",
+      requiredPositive: true,
+    });
+    if (!requestedQuantityResult.success) {
+      return actionFailure(requestedQuantityResult.error);
+    }
+    const requestedQuantity = requestedQuantityResult.value;
 
-    if (requestedQuantity.lte(0)) {
-      return { success: false, error: "售出数量必须大于 0" };
+    const unitPriceInput = parseOptionalDecimalInput(data.unitPrice, "售出单价", {
+      requiredPositive: true,
+    });
+    if (!unitPriceInput.success) {
+      return actionFailure(unitPriceInput.error);
+    }
+
+    const platformFeeRateInput = parseOptionalDecimalInput(
+      data.platformFeeRate,
+      "平台费率",
+      { nonNegative: true },
+    );
+    if (!platformFeeRateInput.success) {
+      return actionFailure(platformFeeRateInput.error);
+    }
+
+    const platformFeeAmountInput = parseOptionalDecimalInput(
+      data.platformFeeAmount,
+      "平台手续费",
+      { nonNegative: true },
+    );
+    if (!platformFeeAmountInput.success) {
+      return actionFailure(platformFeeAmountInput.error);
+    }
+
+    const shippingFeeInput = parseOptionalDecimalInput(data.shippingFee, "运费", {
+      nonNegative: true,
+    });
+    if (!shippingFeeInput.success) {
+      return actionFailure(shippingFeeInput.error);
     }
 
     const saleResult = await prisma.$transaction(async (tx) => {
@@ -308,11 +492,14 @@ export async function quickSellListing(data: {
 
     const quantity =
       listing.listingType === "ITEM_UNIT" ? new Decimal(1) : requestedQuantity;
-    const unitPrice = data.unitPrice
-      ? new Decimal(data.unitPrice)
+    const unitPrice = unitPriceInput.value
+      ? unitPriceInput.value
       : listing.listedPrice
         ? new Decimal(listing.listedPrice.toString())
         : new Decimal(0);
+    if (unitPrice.lte(0)) {
+      throw new Error("售出单价必须大于 0");
+    }
     const currency =
       listing.currency || listing.platform.defaultCurrency || "CNY";
     const subtotal = quantity.mul(unitPrice);
@@ -321,14 +508,10 @@ export async function quickSellListing(data: {
       : listing.platform.defaultFeeRate
         ? new Decimal(listing.platform.defaultFeeRate.toString())
         : new Decimal(0);
-    const effectiveFeeRate = data.platformFeeRate
-      ? new Decimal(data.platformFeeRate)
-      : feeRate;
-    const platformFeeAmount = data.platformFeeAmount
-      ? new Decimal(data.platformFeeAmount)
-      : null;
-    const shippingFee = data.shippingFee
-      ? new Decimal(data.shippingFee)
+    const effectiveFeeRate = platformFeeRateInput.value ?? feeRate;
+    const platformFeeAmount = platformFeeAmountInput.value;
+    const shippingFee = shippingFeeInput.value
+      ? shippingFeeInput.value
       : listing.shippingFeeOverride
         ? new Decimal(listing.shippingFeeOverride.toString())
         : listing.platform.defaultShippingFee
@@ -340,7 +523,7 @@ export async function quickSellListing(data: {
     const customerOrder = await tx.customerOrder.create({
       data: {
         storeId: listing.storeId,
-        orderNumber: `SALE-${Date.now()}`,
+        orderNumber: `SALE-${Date.now()}-${randomUUID().slice(0, 8)}`,
         platformId: listing.platformId,
         externalOrderNo: data.externalOrderNo || undefined,
         customerName: data.customerName || "散客",
@@ -373,6 +556,16 @@ export async function quickSellListing(data: {
     if (listing.listingType === "ITEM_UNIT") {
       if (!listing.itemUnit || listing.itemUnit.status !== "AVAILABLE") {
         throw new Error("关联单品已不可售");
+      }
+      const reservedItemUnit = await tx.orderAllocation.findFirst({
+        where: {
+          itemUnitId: listing.itemUnit.id,
+          status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+        },
+        select: { id: true },
+      });
+      if (reservedItemUnit) {
+        throw new Error("关联单品已被预留");
       }
 
       const unitCost = new Decimal(listing.itemUnit.unitCost.toString());
@@ -416,10 +609,22 @@ export async function quickSellListing(data: {
           (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
           new Decimal(0)
         );
+        const activeAllocations = await tx.orderAllocation.findMany({
+          where: {
+            lotId: lot.id,
+            status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+          },
+          select: { quantity: true },
+        });
+        const reserved = activeAllocations.reduce(
+          (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
+          new Decimal(0)
+        );
+        const availableAfterReservations = available.minus(reserved);
 
-        if (available.lte(0) || remainingToAllocate.lte(0)) continue;
+        if (availableAfterReservations.lte(0) || remainingToAllocate.lte(0)) continue;
 
-        const allocatedQty = Decimal.min(available, remainingToAllocate);
+        const allocatedQty = Decimal.min(availableAfterReservations, remainingToAllocate);
         const unitCost = new Decimal(lot.unitCost.toString());
         inventoryCost = inventoryCost.plus(allocatedQty.mul(unitCost));
 
@@ -444,6 +649,11 @@ export async function quickSellListing(data: {
             storeId: listing.storeId,
             skuId: sku.id,
             status: "AVAILABLE",
+            allocations: {
+              none: {
+                status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+              },
+            },
             ...(data.shipFromLocationId
               ? { locationId: data.shipFromLocationId }
               : {}),
@@ -519,12 +729,9 @@ export async function quickSellListing(data: {
     revalidatePath(`/sales/${saleResult.orderId}`);
     revalidatePath("/inventory/lots");
     revalidatePath("/inventory/items");
-    return { success: true, orderId: saleResult.orderId };
+    return actionSuccess({ orderId: saleResult.orderId });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "登记售出失败，请重试",
-    };
+    return toActionFailure(error, "登记售出失败，请重试");
   }
 }
 
@@ -535,71 +742,91 @@ export async function batchCreateListings(data: {
   listedPrice?: string;
   currency?: string;
 }) {
-  const context = await requireUserContext({ storeId: data.storeId });
-  const platform = await prisma.platform.findUnique({
-    where: { id: data.platformId },
-  });
-  if (!platform || platform.storeId !== context.activeStoreId) {
-    throw new Error("平台不存在或无权操作");
-  }
-
-  const referenceBySku = new Map<
-    string,
-    { price: Decimal; currency: string | null } | null
-  >();
-  if (!data.listedPrice) {
-    const references = await Promise.all(
-      data.skuIds.map(async (skuId) => ({
-        skuId,
-        reference: await getSkuReferencePrice(skuId),
-      }))
-    );
-    for (const item of references) {
-      referenceBySku.set(item.skuId, item.reference);
+  try {
+    const context = await requireUserContext({ storeId: data.storeId });
+    const platform = await prisma.platform.findUnique({
+      where: { id: data.platformId },
+    });
+    if (!platform || platform.storeId !== context.activeStoreId) {
+      throw new Error("平台不存在或无权操作");
     }
-  }
+    const listedPriceInput = parseOptionalDecimalInput(data.listedPrice, "Listing 价格", {
+      requiredPositive: true,
+    });
+    if (!listedPriceInput.success) {
+      return actionFailure(listedPriceInput.error);
+    }
 
-  const listings = await prisma.$transaction(
-    data.skuIds.map((skuId) => {
-      const reference = referenceBySku.get(skuId) || null;
-      const resolvedPrice = data.listedPrice
-        ? new Decimal(data.listedPrice)
-        : reference?.price || null;
-      const resolvedCurrency =
-        data.currency || reference?.currency || platform?.defaultCurrency || null;
-      let estimatedNet: Decimal | null = null;
-      if (resolvedPrice && platform) {
-        const feeRate = platform.defaultFeeRate ? new Decimal(platform.defaultFeeRate) : new Decimal(0);
-        estimatedNet = resolvedPrice.mul(new Decimal(1).minus(feeRate));
-      }
-
-      return prisma.listing.create({
-        data: {
+    await Promise.all(
+      data.skuIds.map((skuId) =>
+        assertListingHasSellableStock({
           storeId: context.activeStoreId,
-          platformId: data.platformId,
+          platformCode: platform.code,
+          platformName: platform.name,
           listingType: "SKU",
           skuId,
-          listedPrice: resolvedPrice,
-          currency: resolvedCurrency,
-          estimatedNet,
-          status: "ACTIVE",
-          listedAt: new Date(),
-        },
+        }),
+      ),
+    );
+
+    const referenceBySku = new Map<
+      string,
+      { price: Decimal; currency: string | null } | null
+    >();
+    if (!data.listedPrice) {
+      const references = await Promise.all(
+        data.skuIds.map(async (skuId) => ({
+          skuId,
+          reference: await getSkuReferencePrice(skuId),
+        }))
+      );
+      for (const item of references) {
+        referenceBySku.set(item.skuId, item.reference);
+      }
+    }
+
+    const listings = await prisma.$transaction(
+      data.skuIds.map((skuId) => {
+      const reference = referenceBySku.get(skuId) || null;
+        const resolvedPrice = listedPriceInput.value ?? reference?.price ?? null;
+        const resolvedCurrency =
+          data.currency || reference?.currency || platform?.defaultCurrency || null;
+        let estimatedNet: Decimal | null = null;
+        if (resolvedPrice && platform) {
+          const feeRate = platform.defaultFeeRate ? new Decimal(platform.defaultFeeRate) : new Decimal(0);
+          estimatedNet = resolvedPrice.mul(new Decimal(1).minus(feeRate));
+        }
+
+        return prisma.listing.create({
+          data: {
+            storeId: context.activeStoreId,
+            platformId: data.platformId,
+            listingType: "SKU",
+            skuId,
+            listedPrice: resolvedPrice,
+            currency: resolvedCurrency,
+            estimatedNet,
+            status: "ACTIVE",
+            listedAt: new Date(),
+          },
+        });
+      })
+    );
+
+    for (const listing of listings) {
+      await recordListingCreateTask({
+        organizationId: context.organizationId,
+        storeId: context.activeStoreId,
+        userId: context.userId,
+        listingId: listing.id,
       });
-    })
-  );
+    }
 
-  for (const listing of listings) {
-    await recordListingCreateTask({
-      organizationId: context.organizationId,
-      storeId: context.activeStoreId,
-      userId: context.userId,
-      listingId: listing.id,
-    });
+    revalidateListingSurfaces();
+    return actionSuccess({ count: listings.length });
+  } catch (error) {
+    return toActionFailure(error, "批量上架失败，请重试");
   }
-
-  revalidateListingSurfaces();
-  return { count: listings.length };
 }
 
 export async function updateListing(
@@ -617,13 +844,20 @@ export async function updateListing(
   if (!existing) throw new Error("上架记录不存在或无权修改");
   await requireUserContext({ storeId: existing.storeId });
 
+  const listedPriceInput = parseOptionalDecimalInput(data.listedPrice, "Listing 价格", {
+    requiredPositive: true,
+  });
+  if (!listedPriceInput.success) {
+    throw new Error(listedPriceInput.error);
+  }
+
   const updateData: Record<string, unknown> = {
     status: data.status,
     currency: data.currency,
   };
 
-  if (data.listedPrice) {
-    updateData.listedPrice = new Decimal(data.listedPrice);
+  if (listedPriceInput.value) {
+    updateData.listedPrice = listedPriceInput.value;
   }
 
   if (data.status === "DELISTED") {
@@ -637,6 +871,22 @@ export async function updateListing(
 
   revalidateListingSurfaces(id);
   return listing;
+}
+
+export async function updateListingAction(
+  id: string,
+  data: {
+    listedPrice?: string;
+    currency?: string;
+    status?: string;
+  }
+) {
+  try {
+    const listing = await updateListing(id, data);
+    return actionSuccess({ id: listing.id });
+  } catch (error) {
+    return toActionFailure(error, "更新 Listing 失败，请重试");
+  }
 }
 
 export async function delistListing(id: string) {
@@ -657,6 +907,15 @@ export async function delistListing(id: string) {
 
   revalidateListingSurfaces(id);
   return listing;
+}
+
+export async function delistListingAction(id: string) {
+  try {
+    const listing = await delistListing(id);
+    return actionSuccess({ id: listing.id });
+  } catch (error) {
+    return toActionFailure(error, "下架失败，请重试");
+  }
 }
 
 export async function deleteListing(id: string) {

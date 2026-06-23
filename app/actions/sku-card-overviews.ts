@@ -3,6 +3,11 @@
 import { prisma } from "@/lib/prisma";
 import Decimal from "decimal.js";
 import { getStoreStockBreakdown } from "@/lib/application/inventory";
+import {
+  CORE_SELLING_PLATFORM_CODES,
+  isCoreSellingPlatform,
+  sortCoreSellingPlatforms,
+} from "@/lib/core-platforms";
 import type { ProductLifecycleStage } from "@/lib/application/next-actions";
 import { LIFECYCLE_LABELS } from "@/lib/application/next-actions";
 
@@ -58,7 +63,11 @@ function deriveVariantLifecycle(input: {
     lifecycleStage = "PROCURING";
     nextActionLabel = "查看物流";
     riskTags.push("在途待确认");
-  } else if (input.usedSoldCount > 0 && input.usedAvailableCount === 0 && input.newStockCount === 0) {
+  } else if (
+    input.usedSoldCount > 0 &&
+    input.usedAvailableCount === 0 &&
+    input.newStockCount === 0
+  ) {
     lifecycleStage = "COMPLETED";
     nextActionLabel = "查看利润";
   } else if (input.usedSoldCount > 0) {
@@ -127,7 +136,10 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
       },
       itemUnits: {
         where: { status: { in: ["AVAILABLE", "ALLOCATED", "RETURN_CHECK"] } },
-        include: { location: true, listings: { where: { status: "ACTIVE" }, include: { platform: true } } },
+        include: {
+          location: true,
+          listings: { where: { status: "ACTIVE" }, include: { platform: true } },
+        },
       },
       listings: {
         where: { status: "ACTIVE" },
@@ -139,9 +151,9 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
 
   const stockMap = await getStoreStockBreakdown(storeId);
   const platforms = await prisma.platform.findMany({
-    where: { storeId },
-    orderBy: { createdAt: "asc" },
+    where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
   });
+  const corePlatforms = sortCoreSellingPlatforms(platforms);
 
   const lotIds = skus.flatMap((s) => s.inventoryLots.map((l) => l.id));
 
@@ -174,7 +186,9 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
     const root = members.find((m) => !m.parentSkuId) ?? members[0];
     const displayName = root.parentSku
       ? root.parentSku.name
-      : root.name.replace(/\s+(佩恩|蝎|小南|端盒|鼬|鬼鲛|迪达拉|41|42|43|44|s|m|l).*$/i, "").trim() || root.name;
+      : root.name
+          .replace(/\s+(佩恩|蝎|小南|端盒|鼬|鬼鲛|迪达拉|41|42|43|44|s|m|l).*$/i, "")
+          .trim() || root.name;
 
     const variants: Array<SkuCardVariantStock & { _inTransit: boolean }> = members.map((sku) => {
       const attr = (sku.attributes || {}) as Record<string, unknown>;
@@ -202,6 +216,8 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
       }
 
       for (const listing of sku.listings) {
+        if (!isCoreSellingPlatform(listing.platform.code)) continue;
+
         platformSet.set(listing.platform.id, {
           code: listing.platform.code,
           name: listing.platform.name,
@@ -214,10 +230,12 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
       const newStatus = listingStatusLabel(platformSet.size > 0, locType, newStockCount);
 
       const usedItems = sku.itemUnits.map((item, idx) => {
-        const platforms = item.listings.map((l) => ({
-          code: l.platform.code,
-          name: l.platform.name,
-        }));
+        const platforms = item.listings
+          .map((l) => ({
+            code: l.platform.code,
+            name: l.platform.name,
+          }))
+          .filter((platform) => isCoreSellingPlatform(platform.code));
         for (const platform of platforms) {
           itemPlatformSet.set(platform.code, platform);
         }
@@ -249,7 +267,7 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
           allPlatforms.set(platform.code, platform);
         }
       }
-      const platformStatuses = platforms.map((platform) => {
+      const platformStatuses = corePlatforms.map((platform) => {
         const hasSkuListing = platformSet.has(platform.id);
         const hasItemListing = itemPlatformSet.has(platform.code);
         if (hasSkuListing) {
@@ -284,8 +302,7 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
         skuCode: sku.code,
         variantName,
         newStockCount,
-        newStockAvgCost:
-          costCount > 0 ? costSum.div(costCount).toFixed(2) : null,
+        newStockAvgCost: costCount > 0 ? costSum.div(costCount).toFixed(2) : null,
         newStockCurrency: currency,
         newStockLocation: locationName,
         newStockStatus: newStatus,
@@ -302,7 +319,9 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
                 .map((p) => `${p.name} ${p.statusLabel}`)
                 .join(" / ")
             : allPlatforms.size > 0
-              ? Array.from(allPlatforms.values()).map((p) => p.name).join(" / ")
+              ? Array.from(allPlatforms.values())
+                  .map((p) => p.name)
+                  .join(" / ")
               : "暂无平台",
         platformStatuses,
         lockedCount,

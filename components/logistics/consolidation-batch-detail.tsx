@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { updateConsolidationStatus } from "@/app/actions/consolidations";
+import { updateConsolidationStatusAction } from "@/app/actions/consolidations";
 import { ConsolidationTimeline } from "./consolidation-timeline";
+import { AlertTriangle } from "lucide-react";
 
 interface Batch {
   id: string;
@@ -25,11 +26,25 @@ export function ConsolidationBatchDetail({ batch }: { batch: Batch }) {
   const [isPending, startTransition] = useTransition();
   const [trackingNo, setTrackingNo] = useState(batch.outboundTrackingNo ?? "");
   const [carrier, setCarrier] = useState(batch.carrier ?? "");
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const run = (status: "SEALED" | "SHIPPED" | "RECEIVED") => {
     startTransition(async () => {
-      await updateConsolidationStatus(batch.id, status, { outboundTrackingNo: trackingNo, carrier });
-      router.refresh();
+      setStatusError(null);
+      try {
+        const result = await updateConsolidationStatusAction(batch.id, status, {
+          outboundTrackingNo: trackingNo,
+          carrier,
+        });
+        if (!result.success) {
+          setStatusError(result.error);
+          return;
+        }
+
+        router.refresh();
+      } catch (error) {
+        setStatusError(error instanceof Error ? error.message : "更新集运状态失败，请重试");
+      }
     });
   };
 
@@ -75,6 +90,15 @@ export function ConsolidationBatchDetail({ batch }: { batch: Batch }) {
             <Label>承运商</Label>
             <Input value={carrier} onChange={(e) => setCarrier(e.target.value)} />
           </div>
+          {statusError ? (
+            <div
+              role="alert"
+              className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{statusError}</p>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-2">
             <Button variant="outline" disabled={isPending || batch.status !== "OPEN"} onClick={() => run("SEALED")}>
               封箱

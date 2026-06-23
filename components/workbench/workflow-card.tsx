@@ -6,6 +6,7 @@ import { QUEUE_LABELS } from "@/lib/application/next-actions";
 import {
   BadgeCheck,
   ClipboardCheck,
+  Package,
   PackageCheck,
   Send,
   Store,
@@ -21,21 +22,35 @@ interface WorkflowCardProps {
   onClick?: () => void;
 }
 
-const CARD_META: Partial<Record<WorkQueue, { icon: LucideIcon; className: string; mark: string }>> = {
-  missingLogistics: { icon: Truck, className: "text-blue-600", mark: "🛒" },
-  inTransit: { icon: Truck, className: "text-amber-600", mark: "🚚" },
-  pendingArrival: { icon: PackageCheck, className: "text-orange-600", mark: "📦" },
-  pendingListing: { icon: Store, className: "text-violet-600", mark: "🏷️" },
-  listed: { icon: Store, className: "text-purple-600", mark: "🛍️" },
-  pendingShipment: { icon: Send, className: "text-emerald-600", mark: "🚀" },
-  shipped: { icon: Truck, className: "text-teal-600", mark: "📬" },
-  returnInspection: { icon: ClipboardCheck, className: "text-orange-600", mark: "🔍" },
-  pendingSettlement: { icon: BadgeCheck, className: "text-cyan-600", mark: "💸" },
-  exception: { icon: ClipboardCheck, className: "text-red-600", mark: "⚠️" },
-};
+const CARD_META: Partial<Record<WorkQueue, { icon: LucideIcon; className: string; mark: string }>> =
+  {
+    missingLogistics: { icon: Truck, className: "text-blue-600", mark: "🛒" },
+    inTransit: { icon: Truck, className: "text-amber-600", mark: "🚚" },
+    pendingArrival: { icon: PackageCheck, className: "text-orange-600", mark: "📦" },
+    pendingDisposition: { icon: Package, className: "text-teal-600", mark: "•" },
+    inspectionException: { icon: ClipboardCheck, className: "text-red-600", mark: "⚠️" },
+    inStock: { icon: PackageCheck, className: "text-sky-600", mark: "📦" },
+    pendingListing: { icon: Store, className: "text-violet-600", mark: "🏷️" },
+    listed: { icon: Store, className: "text-purple-600", mark: "🛍️" },
+    pendingShipment: { icon: Send, className: "text-emerald-600", mark: "🚀" },
+    shipped: { icon: Truck, className: "text-teal-600", mark: "📬" },
+    returnInspection: { icon: ClipboardCheck, className: "text-orange-600", mark: "🔍" },
+    pendingSettlement: { icon: BadgeCheck, className: "text-cyan-600", mark: "💸" },
+    exception: { icon: ClipboardCheck, className: "text-red-600", mark: "⚠️" },
+  };
 
-export function WorkflowCard({ queue, count, oldestWaitLabel, selected, onClick }: WorkflowCardProps) {
-  const meta = CARD_META[queue] ?? { icon: BadgeCheck, className: "text-muted-foreground", mark: "•" };
+export function WorkflowCard({
+  queue,
+  count,
+  oldestWaitLabel,
+  selected,
+  onClick,
+}: WorkflowCardProps) {
+  const meta = CARD_META[queue] ?? {
+    icon: BadgeCheck,
+    className: "text-muted-foreground",
+    mark: "•",
+  };
   const Icon = meta.icon;
 
   return (
@@ -54,7 +69,9 @@ export function WorkflowCard({ queue, count, oldestWaitLabel, selected, onClick 
         </span>
         <Icon className={cn("h-3.5 w-3.5", meta.className)} />
       </div>
-      <span className={cn("mt-0.5 text-lg font-semibold tabular-nums", meta.className)}>{count}</span>
+      <span className={cn("mt-0.5 text-lg font-semibold tabular-nums", meta.className)}>
+        {count}
+      </span>
       {oldestWaitLabel && count > 0 && (
         <span className="mt-0.5 text-[10px] text-muted-foreground">{oldestWaitLabel}</span>
       )}
@@ -67,7 +84,9 @@ export function getOldestWaitLabel(items: { waitingSince: string }[]) {
   const oldest = items.reduce((min, item) =>
     new Date(item.waitingSince) < new Date(min.waitingSince) ? item : min
   );
-  const days = Math.floor((Date.now() - new Date(oldest.waitingSince).getTime()) / (1000 * 60 * 60 * 24));
+  const days = Math.floor(
+    (Date.now() - new Date(oldest.waitingSince).getTime()) / (1000 * 60 * 60 * 24)
+  );
   if (days <= 0) return "今天";
   return `最久 ${days} 天`;
 }

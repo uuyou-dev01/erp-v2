@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { addPurchaseLine } from "@/app/actions/purchase-orders";
+import { addPurchaseLineAction } from "@/app/actions/purchase-orders";
 import { getSKUs } from "@/app/actions/skus";
 import { isValidDecimal } from "@/lib/decimal";
 import { AlertCircle } from "lucide-react";
@@ -25,13 +25,14 @@ export function AddPurchaseLineForm({
 }: AddPurchaseLineFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string; parentSkuId?: string | null }>>([]);
+  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string; parentSkuId?: string | null; childSkus?: { id: string }[] }>>([]);
   const [formData, setFormData] = useState({
     skuId: "",
     quantity: "",
     unitPrice: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     getSKUs(storeId).then(setSKUs);
@@ -58,22 +59,26 @@ export function AddPurchaseLineForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!validateForm()) return;
 
     setLoading(true);
     try {
-      await addPurchaseLine({
+      const result = await addPurchaseLineAction({
         purchaseOrderId,
         skuId: formData.skuId,
         quantity: formData.quantity,
         unitPrice: formData.unitPrice,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
 
       setFormData({ skuId: "", quantity: "", unitPrice: "" });
       router.refresh();
     } catch (error) {
-      console.error("Failed to add purchase line:", error);
-      alert("添加商品失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "添加商品失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -87,7 +92,10 @@ export function AddPurchaseLineForm({
           <Select
             id="skuId"
             value={formData.skuId}
-            onChange={(e) => setFormData({ ...formData, skuId: e.target.value })}
+            onChange={(e) => {
+              setSubmitError(null);
+              setFormData({ ...formData, skuId: e.target.value });
+            }}
             required
           >
             <option value="">{t("inventory.select_sku")}</option>
@@ -100,9 +108,6 @@ export function AddPurchaseLineForm({
                 <>
                   {groups.map((parent) => (
                     <optgroup key={parent.id} label={`${parent.code} · ${parent.name}`}>
-                      <option value={parent.id}>
-                        {parent.code} (父 SKU)
-                      </option>
                       {skus
                         .filter((s) => s.parentSkuId === parent.id)
                         .map((child) => (
@@ -135,7 +140,10 @@ export function AddPurchaseLineForm({
             id="quantity"
             type="text"
             value={formData.quantity}
-            onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+            onChange={(e) => {
+              setSubmitError(null);
+              setFormData({ ...formData, quantity: e.target.value });
+            }}
             placeholder="例如：100"
             required
           />
@@ -153,7 +161,10 @@ export function AddPurchaseLineForm({
             id="unitPrice"
             type="text"
             value={formData.unitPrice}
-            onChange={(e) => setFormData({ ...formData, unitPrice: e.target.value })}
+            onChange={(e) => {
+              setSubmitError(null);
+              setFormData({ ...formData, unitPrice: e.target.value });
+            }}
             placeholder="例如：99.99"
             required
           />
@@ -165,6 +176,16 @@ export function AddPurchaseLineForm({
           )}
         </div>
       </div>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <Button type="submit" disabled={loading}>
         {loading ? t("common.saving") : t("purchase.add_line")}

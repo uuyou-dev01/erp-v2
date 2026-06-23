@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
 import {
@@ -106,5 +107,14 @@ export async function createManagedStore(formData: FormData) {
       throw new Error(`店铺代码「${code}」已存在，请使用其他代码`);
     }
     throw error;
+  }
+}
+
+export async function createManagedStoreAction(formData: FormData) {
+  try {
+    await createManagedStore(formData);
+    return actionSuccess({});
+  } catch (error) {
+    return toActionFailure(error, "创建店铺失败，请稍后重试");
   }
 }

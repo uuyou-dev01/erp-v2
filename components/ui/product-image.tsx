@@ -39,12 +39,8 @@ export function ProductImage({ src, alt, size = "md", className = "" }: ProductI
     <div
       className={`${sizeClasses[size]} rounded border bg-muted flex items-center justify-center overflow-hidden ${className}`}
     >
-      <img
-        src={src}
-        alt={alt}
-        className="w-full h-full object-cover"
-        onError={() => setImageError(true)}
-      />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} className="w-full h-full object-cover" onError={() => setImageError(true)} />
     </div>
   );
 }

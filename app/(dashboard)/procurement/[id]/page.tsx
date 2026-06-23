@@ -16,6 +16,7 @@ import { AddPurchaseLineForm } from "@/components/procurement/add-purchase-line-
 import { ReceiveGoodsForm } from "@/components/procurement/receive-goods-form";
 import { PurchaseOrderActions } from "@/components/procurement/purchase-order-actions";
 import { QuickReceiveButton } from "@/components/procurement/quick-receive-button";
+import { DeletePurchaseLineButton } from "@/components/procurement/delete-purchase-line-button";
 import { BackButton } from "@/components/shared/back-button";
 import { ProductImage } from "@/components/ui/product-image";
 import { ShoppingCart, Package, Calendar, DollarSign } from "lucide-react";
@@ -204,14 +205,11 @@ export default async function PurchaseOrderDetailPage({
                     </TableCell>
                     <TableCell className="text-right">
                       {canEdit && (
-                        <form action={`/api/purchase-lines/${line.id}/delete`} method="POST">
-                          <button
-                            type="submit"
-                            className="text-sm text-destructive hover:underline"
-                          >
-                            删除
-                          </button>
-                        </form>
+                        <DeletePurchaseLineButton
+                          lineId={line.id}
+                          orderId={order.id}
+                          skuName={line.sku.name}
+                        />
                       )}
                     </TableCell>
                   </TableRow>

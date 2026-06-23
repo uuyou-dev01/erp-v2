@@ -100,6 +100,13 @@ CONSUMED
 
 中古商品依然通过 OrderLine 表示，差异体现在库存分配阶段。
 
+SKU 与 ItemUnit 的账务关系：
+
+- OrderLine.skuId 始终是商品、收入、费用分摊和销售统计维度。
+- 即使销售的是某个中古/瑕疵单件，也不把 ItemUnit 当成独立商品行。
+- ItemUnit 只在 Allocation 阶段提供具体库存身份、冻结成本、照片/标签追踪和履约定位。
+- SKU 详情页可展示利润参考；正式财务口径以 OrderAllocation 与报表中的成本换算为准。
+
 三、库存分配（Allocation）—— 销售模块的核心
 为什么必须有 Allocation？
 

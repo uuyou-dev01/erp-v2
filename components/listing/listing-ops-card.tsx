@@ -2,15 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { delistListing } from "@/app/actions/listings";
+import { delistListingAction } from "@/app/actions/listings";
 import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { QuickSellButton } from "@/components/listing/quick-sell-button";
 import type { ListingOpsItem, ListingOpsRisk } from "@/components/listing/listing-ops-types";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProductImage } from "@/components/ui/product-image";
 import { TableCell, TableRow } from "@/components/ui/table";
-import { AlertTriangle, PowerOff } from "lucide-react";
+import { AlertCircle, AlertTriangle, PowerOff } from "lucide-react";
 
 interface ListingOpsCardProps {
   listing: ListingOpsItem;
@@ -44,16 +45,22 @@ function formatDate(value: string) {
 export function ListingOpsCard({ listing }: ListingOpsCardProps) {
   const router = useRouter();
   const [delisting, setDelisting] = useState(false);
+  const [confirmDelistOpen, setConfirmDelistOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handleDelist = async () => {
-    if (!confirm("确认下架这个 Listing？")) return;
+    setActionError(null);
     setDelisting(true);
     try {
-      await delistListing(listing.id);
+      const result = await delistListingAction(listing.id);
+      if (!result.success) {
+        setActionError(result.error);
+        return;
+      }
+      setConfirmDelistOpen(false);
       router.refresh();
     } catch (error) {
-      console.error("Failed to delist listing:", error);
-      alert("下架失败，请重试");
+      setActionError(error instanceof Error ? error.message : "下架失败，请重试");
     } finally {
       setDelisting(false);
     }
@@ -73,7 +80,8 @@ export function ListingOpsCard({ listing }: ListingOpsCardProps) {
     : "未设置邮费";
 
   return (
-    <TableRow>
+    <>
+      <TableRow>
       <TableCell>
         <div className="flex min-w-0 items-center gap-3">
           <ProductImage
@@ -142,36 +150,66 @@ export function ListingOpsCard({ listing }: ListingOpsCardProps) {
         )}
       </TableCell>
       <TableCell>
-        <div className="flex justify-end gap-1.5">
-          <QuickSellButton
-            listingId={listing.id}
-            listingType={listing.listingType}
-            status={listing.status}
-            productLabel={productLabel}
-            listedPrice={listing.listedPrice}
-            currency={listing.currency}
-            platformName={listing.platform.name}
-            platformFeeRate={listing.platformFeeRate}
-            defaultShippingFee={listing.defaultShippingFee}
-            sellableLocations={
-              listing.listingType === "SKU" ? listing.sellableLocations : []
-            }
-          />
-          {listing.status === "ACTIVE" ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={handleDelist}
-              disabled={delisting}
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex justify-end gap-1.5">
+            <QuickSellButton
+              listingId={listing.id}
+              listingType={listing.listingType}
+              status={listing.status}
+              productLabel={productLabel}
+              listedPrice={listing.listedPrice}
+              currency={listing.currency}
+              platformName={listing.platform.name}
+              platformFeeRate={listing.platformFeeRate}
+              defaultShippingFee={listing.defaultShippingFee}
+              sellableLocations={
+                listing.listingType === "SKU" ? listing.sellableLocations : []
+              }
+            />
+            {listing.status === "ACTIVE" ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={() => {
+                  setActionError(null);
+                  setConfirmDelistOpen(true);
+                }}
+                disabled={delisting}
+              >
+                <PowerOff className="mr-1 h-3.5 w-3.5" />
+                {delisting ? "下架中..." : "下架"}
+              </Button>
+            ) : null}
+          </div>
+          {actionError ? (
+            <div
+              role="alert"
+              className="flex max-w-56 gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-left text-xs text-destructive"
             >
-              <PowerOff className="mr-1 h-3.5 w-3.5" />
-              {delisting ? "下架中..." : "下架"}
-            </Button>
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>{actionError}</span>
+            </div>
           ) : null}
         </div>
       </TableCell>
-    </TableRow>
+      </TableRow>
+      <ConfirmDialog
+        open={confirmDelistOpen}
+        title="确认下架 Listing"
+        description={`确认要下架「${listing.platform.name}」上的 ${productLabel} 吗？下架后不会再作为在售库存参与登记售出。`}
+        confirmText="确认下架"
+        cancelText="取消"
+        loading={delisting}
+        tone="danger"
+        error={actionError}
+        onConfirm={handleDelist}
+        onCancel={() => {
+          setActionError(null);
+          setConfirmDelistOpen(false);
+        }}
+      />
+    </>
   );
 }

@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { USER_CONTEXT_COOKIE } from "@/lib/auth/user-context";
+import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 export async function getLoginUsers() {
   const users = await prisma.user.findMany({
@@ -36,8 +37,8 @@ export async function getLoginUsers() {
   }));
 }
 
-export async function switchCurrentUser(formData: FormData) {
-  const email = String(formData.get("email") || "").trim().toLowerCase();
+async function setCurrentUserFromEmail(emailInput: FormDataEntryValue | null) {
+  const email = String(emailInput || "").trim().toLowerCase();
   if (!email) {
     throw new Error("请选择用户");
   }
@@ -64,7 +65,22 @@ export async function switchCurrentUser(formData: FormData) {
     path: "/",
   });
 
+  return user.email;
+}
+
+export async function switchCurrentUser(formData: FormData) {
+  await setCurrentUserFromEmail(formData.get("email"));
+
   redirect("/workbench");
+}
+
+export async function switchCurrentUserAction(formData: FormData) {
+  try {
+    const email = await setCurrentUserFromEmail(formData.get("email"));
+    return actionSuccess({ email });
+  } catch (error) {
+    return toActionFailure(error, "切换操作人失败，请重试");
+  }
 }
 
 export async function clearCurrentUser() {

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { createPurchaseOrder } from "@/app/actions/purchase-orders";
+import { createPurchaseOrderAction } from "@/app/actions/purchase-orders";
 import { isValidDecimal } from "@/lib/decimal";
 import { AlertCircle } from "lucide-react";
 import { t, CURRENCIES } from "@/lib/i18n";
@@ -27,6 +27,7 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
     orderedAt: new Date().toISOString().split("T")[0],
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -42,11 +43,12 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!validateForm()) return;
 
     setLoading(true);
     try {
-      const order = await createPurchaseOrder({
+      const result = await createPurchaseOrderAction({
         storeId,
         orderNo: formData.orderNo,
         supplierName: formData.supplierName || undefined,
@@ -54,12 +56,15 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
         fxRate: formData.fxRate || undefined,
         orderedAt: new Date(formData.orderedAt),
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
 
-      router.push(`/procurement/${order.id}`);
+      router.push(`/procurement/${result.id}`);
       router.refresh();
     } catch (error) {
-      console.error("Failed to create purchase order:", error);
-      alert("创建采购订单失败，请重试");
+      setSubmitError(error instanceof Error ? error.message : "创建采购订单失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -78,7 +83,10 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
               <Input
                 id="orderNo"
                 value={formData.orderNo}
-                onChange={(e) => setFormData({ ...formData, orderNo: e.target.value })}
+                onChange={(e) => {
+                  setSubmitError(null);
+                  setFormData({ ...formData, orderNo: e.target.value });
+                }}
                 placeholder={t("purchase.order_no_placeholder")}
                 required
               />
@@ -95,7 +103,10 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
               <Input
                 id="supplierName"
                 value={formData.supplierName}
-                onChange={(e) => setFormData({ ...formData, supplierName: e.target.value })}
+                onChange={(e) => {
+                  setSubmitError(null);
+                  setFormData({ ...formData, supplierName: e.target.value });
+                }}
                 placeholder={t("purchase.supplier_placeholder")}
               />
             </div>
@@ -107,7 +118,10 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
               <Select
                 id="currency"
                 value={formData.currency}
-                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                onChange={(e) => {
+                  setSubmitError(null);
+                  setFormData({ ...formData, currency: e.target.value });
+                }}
                 required
               >
                 {CURRENCIES.map((c) => (
@@ -124,7 +138,10 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
                 id="fxRate"
                 type="text"
                 value={formData.fxRate}
-                onChange={(e) => setFormData({ ...formData, fxRate: e.target.value })}
+                onChange={(e) => {
+                  setSubmitError(null);
+                  setFormData({ ...formData, fxRate: e.target.value });
+                }}
                 placeholder={t("purchase.fx_rate_placeholder")}
               />
               {errors.fxRate && (
@@ -143,12 +160,25 @@ export function PurchaseOrderForm({ storeId }: PurchaseOrderFormProps) {
               id="orderedAt"
               type="date"
               value={formData.orderedAt}
-              onChange={(e) => setFormData({ ...formData, orderedAt: e.target.value })}
+              onChange={(e) => {
+                setSubmitError(null);
+                setFormData({ ...formData, orderedAt: e.target.value });
+              }}
               required
             />
           </div>
         </CardContent>
       </Card>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="mt-4 flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{submitError}</p>
+        </div>
+      ) : null}
 
       <div className="mt-6 flex gap-2">
         <Button type="submit" disabled={loading}>

@@ -7,7 +7,7 @@ import { Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SKUForm, type ParentOption } from "@/components/inventory/sku-form";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { deleteSKU } from "@/app/actions/skus";
+import { deleteSKUAction } from "@/app/actions/skus";
 
 interface SKUDetailActionsProps {
   storeId: string;
@@ -38,6 +38,7 @@ export function SKUDetailActions({
   const [editOpen, setEditOpen] = useState(initialEditOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialEditOpen) setEditOpen(true);
@@ -51,13 +52,18 @@ export function SKUDetailActions({
   };
 
   const handleDelete = async () => {
+    setDeleteError(null);
     setDeleteLoading(true);
     try {
-      await deleteSKU(sku.id);
+      const result = await deleteSKUAction(sku.id);
+      if (!result.success) {
+        setDeleteError(result.error);
+        return;
+      }
       router.push(returnHref);
       router.refresh();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "删除失败，请重试");
+      setDeleteError(error instanceof Error ? error.message : "删除失败，请重试");
     } finally {
       setDeleteLoading(false);
     }
@@ -74,7 +80,10 @@ export function SKUDetailActions({
           variant="outline"
           size="sm"
           className="text-red-600 hover:text-red-700"
-          onClick={() => setDeleteOpen(true)}
+          onClick={() => {
+            setDeleteError(null);
+            setDeleteOpen(true);
+          }}
         >
           <Trash2 className="mr-1 h-3.5 w-3.5" />
           删除
@@ -119,8 +128,12 @@ export function SKUDetailActions({
         cancelText="取消"
         loading={deleteLoading}
         tone="danger"
+        error={deleteError}
         onConfirm={handleDelete}
-        onCancel={() => setDeleteOpen(false)}
+        onCancel={() => {
+          setDeleteError(null);
+          setDeleteOpen(false);
+        }}
       />
     </>
   );

@@ -42,6 +42,7 @@ export function QuickAddListingDialog({
   const [currency, setCurrency] = useState(
     product.referenceCurrency ?? "CNY"
   );
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [platformMeta, setPlatformMeta] = useState<
     Record<string, { defaultCurrency: string | null }>
   >({});
@@ -62,6 +63,7 @@ export function QuickAddListingDialog({
     setListingScope(product.hasItemUnits && !product.hasLotStock ? "ITEM_UNIT" : "SKU");
     setItemUnitId(sellableUnits[0]?.id ?? "");
     setCurrency(product.referenceCurrency ?? "CNY");
+    setSubmitError(null);
     getPlatforms(STORE_ID).then((rows) => {
       const map: Record<string, { defaultCurrency: string | null }> = {};
       for (const row of rows) {
@@ -84,6 +86,7 @@ export function QuickAddListingDialog({
 
   const handlePlatformChange = (id: string) => {
     setPlatformId(id);
+    setSubmitError(null);
     const meta = platformMeta[id];
     if (meta?.defaultCurrency) setCurrency(meta.defaultCurrency);
   };
@@ -92,8 +95,9 @@ export function QuickAddListingDialog({
     e.preventDefault();
     if (!platformId) return;
     setLoading(true);
+    setSubmitError(null);
     try {
-      await createListing({
+      const result = await createListing({
         storeId: STORE_ID,
         platformId,
         listingType: listingScope,
@@ -102,10 +106,14 @@ export function QuickAddListingDialog({
         listedPrice: listedPrice || undefined,
         currency: currency || undefined,
       });
+      if (!result.success) {
+        setSubmitError(result.error);
+        return;
+      }
       onClose();
       router.refresh();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "添加上架记录失败");
+      setSubmitError(error instanceof Error ? error.message : "添加上架记录失败");
     } finally {
       setLoading(false);
     }
@@ -241,6 +249,15 @@ export function QuickAddListingDialog({
               <p className="text-xs text-muted-foreground">
                 将记录为已在 {selectedPlatform.name} 上架
               </p>
+            ) : null}
+
+            {submitError ? (
+              <div
+                role="alert"
+                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              >
+                {submitError}
+              </div>
             ) : null}
 
             <div className="flex justify-end gap-2 pt-1">

@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { getPlatformFallbackLabel, getPlatformVisual } from "@/lib/platform-icons";
 
 interface ListingPlatformMarkProps {
   code: string;
@@ -6,40 +7,38 @@ interface ListingPlatformMarkProps {
   className?: string;
 }
 
-const PLATFORM_LABELS: Record<string, string> = {
-  mercari: "Me",
-  xianyu: "闲",
-  ebay: "eB",
-  rakuten: "Ra",
-  yahoo: "Ya",
-};
-
-export function ListingPlatformMark({
-  code,
-  name,
-  className,
-}: ListingPlatformMarkProps) {
-  const normalizedCode = code.toLowerCase();
-  const label =
-    PLATFORM_LABELS[normalizedCode] ??
-    code
-      .split(/[-_\s]/)
-      .filter(Boolean)
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() ??
-    name.slice(0, 1);
+export function ListingPlatformMark({ code, name, className }: ListingPlatformMarkProps) {
+  const visual = getPlatformVisual(code, name);
+  const label = visual?.fallbackLabel ?? getPlatformFallbackLabel(code, name);
 
   return (
     <span
       className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-full border bg-muted text-xs font-semibold",
+        "inline-flex h-8 w-8 items-center justify-center rounded-full border bg-background p-0.5 shadow-sm",
         className
       )}
+      aria-label={name}
       title={name}
     >
-      {label || name.slice(0, 1)}
+      {visual?.iconSrc ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={visual.iconSrc}
+          alt=""
+          className="h-full w-full rounded-full object-contain"
+          loading="lazy"
+        />
+      ) : (
+        <span
+          className={cn(
+            "grid h-full w-full place-items-center rounded-full text-[11px] font-bold leading-none",
+            visual?.fallbackClassName ?? "bg-muted text-muted-foreground"
+          )}
+          style={visual?.fallbackStyle}
+        >
+          {label}
+        </span>
+      )}
     </span>
   );
 }

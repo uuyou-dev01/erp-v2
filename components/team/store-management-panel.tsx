@@ -1,4 +1,8 @@
-import { createManagedStore } from "@/app/actions/store-settings";
+"use client";
+
+import { FormEvent, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { createManagedStoreAction } from "@/app/actions/store-settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,6 +35,32 @@ export function StoreManagementPanel({
   stores: StoreRow[];
   currentStoreId: string;
 }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [storeCreateError, setStoreCreateError] = useState<string | null>(null);
+  const [storeCreateMessage, setStoreCreateMessage] = useState<string | null>(null);
+
+  const submitStoreCreate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setStoreCreateError(null);
+    setStoreCreateMessage(null);
+
+    startTransition(() => {
+      void (async () => {
+        const result = await createManagedStoreAction(new FormData(form));
+        if (!result.success) {
+          setStoreCreateError(result.error);
+          return;
+        }
+
+        form.reset();
+        setStoreCreateMessage("店铺已创建");
+        router.refresh();
+      })();
+    });
+  };
+
   return (
     <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
       <Card>
@@ -38,7 +68,7 @@ export function StoreManagementPanel({
           <CardTitle>新增店铺</CardTitle>
         </CardHeader>
         <CardContent>
-          <form action={createManagedStore} className="space-y-4">
+          <form onSubmit={submitStoreCreate} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">店铺名称</Label>
               <Input id="name" name="name" required placeholder="如：日本 Mercari 店" />
@@ -51,8 +81,14 @@ export function StoreManagementPanel({
               <Label htmlFor="currency">默认币种</Label>
               <Input id="currency" name="currency" defaultValue="CNY" maxLength={3} />
             </div>
-            <Button type="submit" className="w-full">
-              创建店铺
+            {storeCreateError ? (
+              <p className="text-sm text-destructive">{storeCreateError}</p>
+            ) : null}
+            {storeCreateMessage ? (
+              <p className="text-sm text-green-600">{storeCreateMessage}</p>
+            ) : null}
+            <Button type="submit" className="w-full" disabled={pending}>
+              {pending ? "创建中..." : "创建店铺"}
             </Button>
           </form>
         </CardContent>

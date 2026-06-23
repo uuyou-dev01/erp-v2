@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type { getSKUs } from "@/app/actions/skus";
-import { deleteSKU } from "@/app/actions/skus";
+import { deleteSKUAction } from "@/app/actions/skus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,6 +57,7 @@ export function SKUManagementTable({ skus, categories, brands }: SKUManagementTa
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const [deletingSku, setDeletingSku] = useState<SKURow | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const filteredSkus = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -148,14 +149,18 @@ export function SKUManagementTable({ skus, categories, brands }: SKUManagementTa
   const handleDelete = async () => {
     if (!deletingSku) return;
 
+    setDeleteError(null);
     setDeleteLoading(true);
     try {
-      await deleteSKU(deletingSku.id);
+      const result = await deleteSKUAction(deletingSku.id);
+      if (!result.success) {
+        setDeleteError(result.error);
+        return;
+      }
       setDeletingSku(null);
       router.refresh();
     } catch (error) {
-      console.error("Failed to delete SKU:", error);
-      alert(error instanceof Error ? error.message : "删除失败，请重试");
+      setDeleteError(error instanceof Error ? error.message : "删除失败，请重试");
     } finally {
       setDeleteLoading(false);
     }
@@ -333,7 +338,10 @@ export function SKUManagementTable({ skus, categories, brands }: SKUManagementTa
             variant="outline"
             size="sm"
             className="text-red-600 hover:text-red-700"
-            onClick={() => setDeletingSku(row)}
+            onClick={() => {
+              setDeleteError(null);
+              setDeletingSku(row);
+            }}
           >
             <Trash2 className="mr-1.5 h-4 w-4" />
             删除
@@ -453,8 +461,12 @@ export function SKUManagementTable({ skus, categories, brands }: SKUManagementTa
         cancelText="取消"
         loading={deleteLoading}
         tone="danger"
+        error={deleteError}
         onConfirm={handleDelete}
-        onCancel={() => setDeletingSku(null)}
+        onCancel={() => {
+          setDeleteError(null);
+          setDeletingSku(null);
+        }}
       />
     </>
   );

@@ -24,48 +24,111 @@ const statusColors = {
   RETURN_CHECK: "secondary",
 } as const;
 
+const labelStatusLabels: Record<string, string> = {
+  PENDING: "待贴标",
+  PRINTED: "已打印",
+  ATTACHED: "已贴标",
+};
+
 type ItemRow = Awaited<ReturnType<typeof getItemUnits>>[number];
 
 export default async function ItemUnitsPage() {
   const items = await getItemUnits(STORE_ID);
 
   const stats = {
-    total: items.length,
-    available: items.filter((i) => i.status === "AVAILABLE").length,
-    allocated: items.filter((i) => i.status === "ALLOCATED").length,
-    consumed: items.filter((i) => i.status === "CONSUMED").length,
+    pendingLabel: items.filter((i) => i.labelStatus !== "ATTACHED").length,
+    pendingPhoto: items.filter((i) => i.photoCount === 0).length,
+    sellable: items.filter(
+      (i) => i.status === "AVAILABLE" && i.location.isSellableDefault
+    ).length,
+    activeListingUnits: items.filter((i) => i.activeListingCount > 0).length,
+    activeListings: items.reduce((sum, i) => sum + i.activeListingCount, 0),
   };
 
   const columns: Column<ItemRow>[] = [
     {
-      key: "id",
-      header: "单品编号",
-      hideOnMobile: true,
-      cell: (row) => <EntityId id={row.id} />,
-    },
-    {
-      key: "sku",
-      header: "SKU",
+      key: "unit",
+      header: "单件库存",
       cell: (row) => (
-        <div>
-          <p className="font-medium">{row.sku.code}</p>
-          <p className="text-xs text-muted-foreground">{row.sku.name}</p>
+        <div className="space-y-1">
+          <p className="font-medium">{row.unitCode || <EntityId id={row.id} />}</p>
+          <p className="text-xs text-muted-foreground">
+            标签：{row.labelCode || "未生成"}
+          </p>
         </div>
       ),
     },
     {
-      key: "location",
-      header: "位置",
-      cell: (row) => row.location.code,
+      key: "sku",
+      header: "SKU 层级",
+      cell: (row) =>
+        row.sku.parentSku ? (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              {row.sku.parentSku.code} · {row.sku.parentSku.name}
+            </p>
+            <p className="font-medium">{row.sku.code} · {row.sku.name}</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <p className="font-medium">{row.sku.code} · {row.sku.name}</p>
+            <p className="text-xs text-muted-foreground">独立 SKU</p>
+          </div>
+        ),
     },
     {
-      key: "condition",
-      header: "成色",
+      key: "label",
+      header: "标签",
+      cell: (row) => (
+        <div className="space-y-1">
+          <Badge variant={row.labelStatus === "ATTACHED" ? "default" : "secondary"}>
+            {labelStatusLabels[row.labelStatus] || row.labelStatus}
+          </Badge>
+          {row.labelPrintedAt ? (
+            <p className="text-xs text-muted-foreground">
+              {new Date(row.labelPrintedAt).toLocaleDateString("zh-CN")}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "photos",
+      header: "图片",
       cell: (row) =>
-        row.conditionGrade ? (
-          <Badge variant="outline">{formatItemUnitCondition(row.conditionGrade)}</Badge>
+        row.photoCount > 0 ? (
+          <span>{row.photoCount} 张</span>
         ) : (
-          <span className="text-muted-foreground">-</span>
+          <Badge variant="secondary">待补图</Badge>
+        ),
+    },
+    {
+      key: "location",
+      header: "库位",
+      cell: (row) => (
+        <div className="space-y-1">
+          <p>{row.location.code}</p>
+          <p className="text-xs text-muted-foreground">
+            {row.location.isSellableDefault ? "可售库位" : "非可售库位"}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "conditionStatus",
+      header: "状态",
+      cell: (row) =>
+        (
+          <div className="space-y-1">
+            <Badge variant={statusColors[row.status as keyof typeof statusColors]}>
+              {itemUnitStatusLabels[row.status] || row.status}
+            </Badge>
+            <p className="text-xs text-muted-foreground">
+              {row.conditionGrade
+                ? formatItemUnitCondition(row.conditionGrade)
+                : "未记录成色"}
+            </p>
+          </div>
         ),
     },
     {
@@ -74,19 +137,15 @@ export default async function ItemUnitsPage() {
       cell: (row) => formatCurrency(row.unitCost.toString(), row.costCurrency),
     },
     {
-      key: "status",
-      header: "状态",
-      cell: (row) => (
-        <Badge variant={statusColors[row.status as keyof typeof statusColors]}>
-          {itemUnitStatusLabels[row.status] || row.status}
-        </Badge>
-      ),
-    },
-    {
-      key: "owner",
-      header: "所有者",
+      key: "listings",
+      header: "上架",
       hideOnMobile: true,
-      cell: (row) => row.ownerId || <span className="text-muted-foreground">-</span>,
+      cell: (row) =>
+        row.activeListingCount > 0 ? (
+          <span>{row.activeListingCount} 条</span>
+        ) : (
+          <span className="text-muted-foreground">未上架</span>
+        ),
     },
     {
       key: "actions",
@@ -102,15 +161,15 @@ export default async function ItemUnitsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">单品管理</h1>
+          <h1 className="text-3xl font-bold">单件库存</h1>
           <p className="text-muted-foreground">
-            管理二手、有缺陷或独特的单个商品。列表显示 ID 末 8 位，悬停可查看完整编号。
+            单件库存工作台用于核对 SKU 层级、标签、图片、库位和上架状态。
           </p>
         </div>
         <Link href="/inventory/items/new">
           <Button>
             <Plus className="mr-2 h-4 w-4" />
-            添加单品
+            添加单件库存
           </Button>
         </Link>
       </div>
@@ -118,52 +177,54 @@ export default async function ItemUnitsPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">总单品数</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <p className="text-xs text-muted-foreground">所有单品</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">可用</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.available}</div>
-            <p className="text-xs text-muted-foreground">可售单品</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">已分配</CardTitle>
+            <CardTitle className="text-sm font-medium">待贴标</CardTitle>
             <Clock className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.allocated}</div>
-            <p className="text-xs text-muted-foreground">已分配订单</p>
+            <div className="text-2xl font-bold">{stats.pendingLabel}</div>
+            <p className="text-xs text-muted-foreground">未贴标单件库存</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">已消耗</CardTitle>
-            <XCircle className="h-4 w-4 text-gray-500" />
+            <CardTitle className="text-sm font-medium">待补图</CardTitle>
+            <XCircle className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.consumed}</div>
-            <p className="text-xs text-muted-foreground">已售出</p>
+            <div className="text-2xl font-bold">{stats.pendingPhoto}</div>
+            <p className="text-xs text-muted-foreground">缺少图片单件库存</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">可售单件</CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.sellable}</div>
+            <p className="text-xs text-muted-foreground">状态可用且库位可售</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">上架中</CardTitle>
+            <Package className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.activeListingUnits}</div>
+            <p className="text-xs text-muted-foreground">
+              {stats.activeListings} 条有效上架
+            </p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>所有单品</CardTitle>
+          <CardTitle>单件库存工作台</CardTitle>
         </CardHeader>
         <CardContent>
           <ResponsiveTable
@@ -173,14 +234,14 @@ export default async function ItemUnitsPage() {
             emptyState={
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Package className="mb-4 h-12 w-12 text-muted-foreground" />
-                <h3 className="mb-2 text-lg font-semibold">暂无单品</h3>
+                <h3 className="mb-2 text-lg font-semibold">暂无单件库存</h3>
                 <p className="mb-4 text-sm text-muted-foreground">
-                  创建第一个单品开始追踪独立商品
+                  添加第一件库存后开始核对标签、图片和上架状态。
                 </p>
                 <Link href="/inventory/items/new">
                   <Button>
                     <Plus className="mr-2 h-4 w-4" />
-                    添加单品
+                    添加单件库存
                   </Button>
                 </Link>
               </div>
