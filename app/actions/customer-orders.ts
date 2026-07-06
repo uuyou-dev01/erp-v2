@@ -31,6 +31,7 @@ import {
   TASK_TYPE,
 } from "@/lib/application/tasks";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 
 export type OrderStatus =
   | "DRAFT"
@@ -182,11 +183,11 @@ export async function addOrderLine(data: CreateOrderLineInput) {
   });
   if (!order) throw new Error("订单不存在或无权修改");
   const context = await requireUserContext({ storeId: order.storeId });
-  const sku = await prisma.sKU.findFirst({
-    where: { id: data.skuId, storeId: context.activeStoreId },
-    select: { id: true },
+  await assertOperationalSku(prisma, {
+    storeId: context.activeStoreId,
+    skuId: data.skuId,
+    actionLabel: "销售",
   });
-  if (!sku) throw new Error("SKU 不存在或不属于当前店铺");
 
   const quantity = new Decimal(data.quantity);
   const unitPrice = data.unitPrice ? new Decimal(data.unitPrice) : new Decimal(0);
@@ -517,13 +518,23 @@ function computeReturnFinancialAdjustments(
 export async function cancelCustomerOrder(orderId: string, reason?: string) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
-    include: { lines: { include: { allocations: true } } },
+    include: {
+      lines: { include: { allocations: true } },
+      fulfillmentRequests: {
+        include: {
+          reservation: true,
+        },
+      },
+    },
   });
   if (!order) throw new Error("订单不存在");
 
   const cancellable = ["DRAFT", "PLACED", "PAID", "CONFIRMED"];
   if (!cancellable.includes(order.orderStatus)) {
     throw new Error("当前状态不可取消，已发货订单请走退货流程");
+  }
+  if (order.fulfillmentRequests.some((request) => ["SHIPPED", "DELIVERED"].includes(request.status))) {
+    throw new Error("关联代发已发货，不能直接取消订单");
   }
 
   const cancelReason = reason?.trim();
@@ -587,6 +598,36 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
       });
     }
 
+    for (const request of order.fulfillmentRequests) {
+      if (["CANCELLED", "REJECTED", "DELIVERED"].includes(request.status)) continue;
+
+      if (request.reservation?.status === "ACTIVE") {
+        await tx.supplyReservation.update({
+          where: { id: request.reservation.id },
+          data: { status: "RELEASED", releasedAt: new Date() },
+        });
+        await tx.supplyOffer.update({
+          where: { id: request.supplyOfferId },
+          data: { reservedQty: { decrement: request.quantity } },
+        });
+        if (request.resaleListingId) {
+          await tx.resaleListing.update({
+            where: { id: request.resaleListingId },
+            data: { quantitySold: { decrement: request.quantity } },
+          });
+        }
+      }
+
+      await tx.fulfillmentRequest.update({
+        where: { id: request.id },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+          note: [request.note, `订单取消：${cancelReason}`].filter(Boolean).join("\n"),
+        },
+      });
+    }
+
     const mergedProof = shippingProofToJson(
       mergeShippingProof(order.shippingProof, {
         cancelReason,
@@ -615,6 +656,9 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
   revalidatePath("/inventory/sellable");
+  revalidatePath("/fulfillment/requests");
+  revalidatePath("/resale");
+  revalidatePath("/marketplace");
 }
 
 export interface RegisterReturnInput {

@@ -5,6 +5,7 @@ import {
   getMonthlyPnL,
   getPlatformBreakdown,
   getFeeDetails,
+  getSettlementSummary,
 } from "@/app/actions/reports";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -74,15 +75,23 @@ export default async function ReportsPage({
   );
   const dateRange = { dateFrom, dateTo };
 
-  const [overview, inventoryReport, salesReport, monthlyPnL, platformBreakdown, feeDetails] =
-    await Promise.all([
-      getBusinessOverview(STORE_ID, dateRange),
-      getInventoryReport(STORE_ID, dateRange),
-      getSalesReport(STORE_ID, dateRange),
-      getMonthlyPnL(STORE_ID),
-      getPlatformBreakdown(STORE_ID, dateRange),
-      getFeeDetails(STORE_ID, dateRange),
-    ]);
+  const [
+    overview,
+    inventoryReport,
+    salesReport,
+    monthlyPnL,
+    platformBreakdown,
+    feeDetails,
+    settlementSummary,
+  ] = await Promise.all([
+    getBusinessOverview(STORE_ID, dateRange),
+    getInventoryReport(STORE_ID, dateRange),
+    getSalesReport(STORE_ID, dateRange),
+    getMonthlyPnL(STORE_ID),
+    getPlatformBreakdown(STORE_ID, dateRange),
+    getFeeDetails(STORE_ID, dateRange),
+    getSettlementSummary(STORE_ID, dateRange),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -165,6 +174,82 @@ export default async function ReportsPage({
               </div>
               <p className="text-xs text-muted-foreground">
                 共 {overview.listing.totalCount} 个上架记录
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* 代卖结算 */}
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">代卖结算</h2>
+          <Link
+            href="/finance/settlements"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            结算单
+          </Link>
+        </div>
+        <div className="grid gap-4 md:grid-cols-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">待净应付</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                ¥{settlementSummary.pendingNetPayable}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                应付 ¥{settlementSummary.pendingPayable} / 应收抵扣 ¥
+                {settlementSummary.pendingReceivable}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">已净支付</CardTitle>
+              <CheckCircle className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                ¥{settlementSummary.paidNetPayable}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                已付 {settlementSummary.paidCount} 单
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">待处理结算</CardTitle>
+              <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {settlementSummary.pendingCount}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                草稿 {settlementSummary.statusCounts.draft} / 已确认{" "}
+                {settlementSummary.statusCounts.confirmed}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">结算单数</CardTitle>
+              <Globe className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {settlementSummary.activeSettlementCount}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                作废 {settlementSummary.statusCounts.void} 单
               </p>
             </CardContent>
           </Card>

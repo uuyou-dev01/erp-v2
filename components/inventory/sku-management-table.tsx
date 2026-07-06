@@ -212,19 +212,19 @@ export function SKUManagementTable({ skus, categories, brands }: SKUManagementTa
               <span className="font-medium text-gray-900">{row.name}</span>
               {row.visibleChildCount > 0 && (
                 <Badge variant="outline" className="shrink-0">
-                  {row.visibleChildCount} 个子款
+                  {row.visibleChildCount} 个规格
                 </Badge>
               )}
               {row.groupDepth > 0 && (
                 <Badge variant="secondary" className="shrink-0">
-                  子 SKU
+                  规格 SKU
                 </Badge>
               )}
             </div>
             <div className="mt-1 font-mono text-xs text-muted-foreground">{row.code}</div>
             {row.parentSku && (
               <div className="mt-1 text-xs text-muted-foreground">
-                父 SKU：{row.parentSku.code}
+                商品组：{row.parentSku.code}
               </div>
             )}
           </div>

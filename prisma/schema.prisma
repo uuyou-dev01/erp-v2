@@ -35,24 +35,34 @@ model Store {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  users                User[]
-  storeAccesses        StoreAccess[]
-  skus                 SKU[]
-  locations            Location[]
-  inventoryLots        InventoryLot[]
-  itemUnits            ItemUnit[]
-  stockLedgers         StockLedger[]
-  purchaseOrders       PurchaseOrder[]
-  customerOrders       CustomerOrder[]
-  inventorySplits      InventorySplit[]
-  platforms            Platform[]
-  listings             Listing[]
-  importJobs           ImportJob[]
-  quickEntries         QuickEntry[]
-  inboundShipments     InboundShipment[]
-  consolidationBatches ConsolidationBatch[]
-  inspectionEvents     InspectionEvent[]
+  organization             Organization?                    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  users                    User[]
+  storeAccesses            StoreAccess[]
+  skus                     SKU[]
+  productIntelItems        ProductIntelligenceItem[]
+  productIntelObservations ProductIntelligenceObservation[]
+  locations                Location[]
+  inventoryLots            InventoryLot[]
+  itemUnits                ItemUnit[]
+  stockLedgers             StockLedger[]
+  purchaseOrders           PurchaseOrder[]
+  customerOrders           CustomerOrder[]
+  inventorySplits          InventorySplit[]
+  platforms                Platform[]
+  listings                 Listing[]
+  resaleListings           ResaleListing[]
+  supplyReservations       SupplyReservation[]
+  fulfillmentRequests      FulfillmentRequest[]
+  settlements              Settlement[]
+  partners                 Partner[]
+  tradingRelationships     TradingRelationship[]
+  supplyOffers             SupplyOffer[]
+  offerVisibilityRules     OfferVisibility[]                @relation("OfferVisibilityStore")
+  importJobs               ImportJob[]
+  quickEntries             QuickEntry[]
+  inboundShipments         InboundShipment[]
+  consolidationBatches     ConsolidationBatch[]
+  inspectionEvents         InspectionEvent[]
 
   @@index([organizationId])
   @@map("stores")
@@ -196,34 +206,110 @@ model ActivityLog {
 // ============================================
 
 model SKU {
-  id            String   @id @default(cuid())
-  storeId       String
-  code          String
-  name          String
-  parentSkuId   String?
-  category      String?
-  brand         String?
-  attributes    Json?
-  description   String?
-  imageUrl      String?
-  isAutoCreated Boolean  @default(false)
-  mergeStatus   String? // PENDING, CONFIRMED, MERGED
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String   @id @default(cuid())
+  storeId          String
+  code             String
+  name             String
+  parentSkuId      String?
+  catalogRole      String   @default("SIMPLE") // GROUP, VARIANT, SIMPLE
+  manufacturerCode String?
+  variantLabel     String?
+  variantAxes      Json?
+  variantValues    Json?
+  nameSource       String   @default("AUTO") // AUTO, MANUAL
+  codeSource       String   @default("AUTO") // AUTO, MANUAL
+  category         String?
+  brand            String?
+  attributes       Json?
+  description      String?
+  imageUrl         String?
+  isAutoCreated    Boolean  @default(false)
+  mergeStatus      String? // PENDING, CONFIRMED, MERGED
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  parentSku     SKU?           @relation("SkuVariants", fields: [parentSkuId], references: [id], onDelete: SetNull)
-  childSkus     SKU[]          @relation("SkuVariants")
-  inventoryLots InventoryLot[]
-  itemUnits     ItemUnit[]
-  purchaseLines PurchaseLine[]
-  orderLines    OrderLine[]
-  listings      Listing[]
+  store            Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  parentSku        SKU?              @relation("SkuVariants", fields: [parentSkuId], references: [id], onDelete: SetNull)
+  childSkus        SKU[]             @relation("SkuVariants")
+  inventoryLots    InventoryLot[]
+  itemUnits        ItemUnit[]
+  purchaseLines    PurchaseLine[]
+  orderLines       OrderLine[]
+  listings         Listing[]
+  supplyOffers     SupplyOffer[]
+  supplyOfferItems SupplyOfferItem[]
 
   @@unique([storeId, code])
   @@index([storeId])
+  @@index([storeId, catalogRole])
   @@index([parentSkuId])
+  @@index([manufacturerCode])
   @@map("skus")
+}
+
+model ProductIntelligenceItem {
+  id           String   @id @default(cuid())
+  storeId      String
+  parentItemId String?
+  title        String
+  brand        String?
+  category     String?
+  model        String?
+  productKind  String   @default("NEW") // NEW, USED, MIXED
+  description  String?  @db.Text
+  imageUrl     String?
+  tags         Json?
+  visibility   String   @default("PUBLIC") // PUBLIC, ORGANIZATION, PRIVATE
+  status       String   @default("ACTIVE") // ACTIVE, HIDDEN, ARCHIVED
+  createdById  String?
+  updatedById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  store        Store                            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  parentItem   ProductIntelligenceItem?         @relation("ProductIntelligenceVariants", fields: [parentItemId], references: [id], onDelete: SetNull)
+  childItems   ProductIntelligenceItem[]        @relation("ProductIntelligenceVariants")
+  observations ProductIntelligenceObservation[]
+
+  @@index([storeId])
+  @@index([parentItemId])
+  @@index([visibility])
+  @@index([status])
+  @@index([category])
+  @@index([updatedAt])
+  @@map("product_intelligence_items")
+}
+
+model ProductIntelligenceObservation {
+  id             String   @id @default(cuid())
+  itemId         String
+  storeId        String
+  sourceType     String   @default("MANUAL") // MANUAL, REAL_PURCHASE, REAL_SALE, MARKET_SEEN, PLATFORM_LISTING, SUPPLY_OFFER
+  priceType      String   @default("SALE") // PURCHASE, SALE, WHOLESALE, RESALE, OFFER
+  amount         Decimal  @db.Decimal(19, 4)
+  currency       String
+  quantity       Decimal? @db.Decimal(19, 4)
+  sourceName     String?
+  platformName   String?
+  conditionGrade String?
+  confidence     String   @default("MEDIUM") // LOW, MEDIUM, HIGH
+  visibility     String   @default("PUBLIC") // PUBLIC, ORGANIZATION, PRIVATE
+  observedAt     DateTime @default(now())
+  note           String?  @db.Text
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  item  ProductIntelligenceItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  store Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([storeId])
+  @@index([sourceType])
+  @@index([priceType])
+  @@index([visibility])
+  @@index([observedAt])
+  @@map("product_intelligence_observations")
 }
 
 // ============================================
@@ -286,40 +372,42 @@ model InventoryLot {
 }
 
 model ItemUnit {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   storeId        String
   skuId          String
   locationId     String
-  unitCost       Decimal  @db.Decimal(19, 4)
+  unitCost       Decimal   @db.Decimal(19, 4)
   costCurrency   String
   fxRateId       String?
   unitCode       String?
   labelCode      String?
-  labelStatus    String   @default("PENDING") // PENDING, PRINTED, ATTACHED
+  labelStatus    String    @default("PENDING") // PENDING, PRINTED, ATTACHED
   labelPrintedAt DateTime?
   conditionGrade String?
   photos         Json?
   ownerId        String?
   holderId       String?
-  notes          String?  @db.Text
+  notes          String?   @db.Text
   sourceType     String // PURCHASE, SPLIT
   sourceId       String
-  status         String   @default("AVAILABLE") // AVAILABLE, ALLOCATED, CONSUMED, RETURN_CHECK
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  status         String    @default("AVAILABLE") // AVAILABLE, ALLOCATED, CONSUMED, RETURN_CHECK
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  store       Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  sku         SKU               @relation(fields: [skuId], references: [id], onDelete: Cascade)
-  location    Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  allocations OrderAllocation[]
-  listings    Listing[]
+  store            Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sku              SKU               @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  location         Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  allocations      OrderAllocation[]
+  listings         Listing[]
+  supplyOffers     SupplyOffer[]
+  supplyOfferItems SupplyOfferItem[]
 
+  @@unique([storeId, unitCode])
+  @@unique([storeId, labelCode])
   @@index([storeId])
   @@index([skuId])
   @@index([locationId])
   @@index([status])
-  @@unique([storeId, unitCode])
-  @@unique([storeId, labelCode])
   @@map("item_units")
 }
 
@@ -452,6 +540,7 @@ model CustomerOrder {
   storeId                 String
   orderNumber             String    @unique
   platformId              String?
+  resaleListingId         String?
   externalOrderNo         String?
   customerName            String
   customerEmail           String?
@@ -478,13 +567,17 @@ model CustomerOrder {
   confirmedAt             DateTime?
   updatedAt               DateTime  @updatedAt
 
-  store    Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  platform Platform?   @relation(fields: [platformId], references: [id])
-  lines    OrderLine[]
+  store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  platform            Platform?            @relation(fields: [platformId], references: [id])
+  resaleListing       ResaleListing?       @relation(fields: [resaleListingId], references: [id], onDelete: SetNull)
+  lines               OrderLine[]
+  fulfillmentRequests FulfillmentRequest[]
+  settlements         Settlement[]
 
   @@index([storeId])
   @@index([orderStatus])
   @@index([platformId])
+  @@index([resaleListingId])
   @@map("customer_orders")
 }
 
@@ -572,6 +665,7 @@ model Platform {
 
   store          Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
   listings       Listing[]
+  resaleListings ResaleListing[]
   customerOrders CustomerOrder[]
 
   @@unique([storeId, code])
@@ -597,10 +691,13 @@ model Listing {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  platform Platform  @relation(fields: [platformId], references: [id], onDelete: Cascade)
-  sku      SKU?      @relation(fields: [skuId], references: [id], onDelete: Cascade)
-  itemUnit ItemUnit? @relation(fields: [itemUnitId], references: [id], onDelete: Cascade)
+  store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  platform            Platform             @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  sku                 SKU?                 @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  itemUnit            ItemUnit?            @relation(fields: [itemUnitId], references: [id], onDelete: Cascade)
+  resaleListings      ResaleListing[]
+  reservations        SupplyReservation[]
+  fulfillmentRequests FulfillmentRequest[]
 
   @@index([storeId])
   @@index([platformId])
@@ -608,6 +705,337 @@ model Listing {
   @@index([itemUnitId])
   @@index([status])
   @@map("listings")
+}
+
+// ============================================
+// MARKETPLACE: Partners & supply offers
+// ============================================
+
+model Partner {
+  id              String   @id @default(cuid())
+  storeId         String
+  code            String
+  name            String
+  type            String   @default("SUPPLIER") // SUPPLIER, RESELLER, FULFILLER, CHANNEL, OTHER
+  status          String   @default("ACTIVE") // ACTIVE, INACTIVE
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  defaultCurrency String?
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  store                Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tradingRelationships TradingRelationship[]
+  ownedSupplyOffers    SupplyOffer[]         @relation("SupplyOfferOwnerPartner")
+  visibilityRules      OfferVisibility[]
+  settlements          Settlement[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+  @@index([status])
+  @@map("partners")
+}
+
+model TradingRelationship {
+  id                 String   @id @default(cuid())
+  storeId            String
+  partnerId          String
+  relationshipType   String   @default("SUPPLY") // SUPPLY, RESELL, FULFILLMENT, CHANNEL
+  visibilityScope    String   @default("PRIVATE") // PRIVATE, PARTNER_ONLY, PUBLIC
+  status             String   @default("ACTIVE") // ACTIVE, INACTIVE
+  commissionRate     Decimal? @db.Decimal(8, 4)
+  serviceFeeRate     Decimal? @db.Decimal(8, 4)
+  settlementCurrency String?
+  notes              String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, partnerId, relationshipType])
+  @@index([storeId])
+  @@index([partnerId])
+  @@index([status])
+  @@map("trading_relationships")
+}
+
+model SupplyOffer {
+  id               String    @id @default(cuid())
+  storeId          String
+  ownerPartnerId   String?
+  title            String
+  description      String?   @db.Text
+  visibility       String    @default("PRIVATE") // PRIVATE, PARTNER_ONLY, PUBLIC
+  status           String    @default("DRAFT") // DRAFT, PUBLISHED, PAUSED, DELISTED
+  sourceType       String    @default("MANUAL") // MANUAL, SKU, ITEM_UNIT
+  sourceSkuId      String?
+  sourceItemUnitId String?
+  availableQty     Decimal   @default(0) @db.Decimal(19, 4)
+  reservedQty      Decimal   @default(0) @db.Decimal(19, 4)
+  unitPrice        Decimal?  @db.Decimal(19, 4)
+  currency         String?
+  commissionRate   Decimal?  @db.Decimal(8, 4)
+  fulfillmentMode  String    @default("SUPPLIER_SHIPS") // SUPPLIER_SHIPS, PLATFORM_SHIPS, SELF_PICKUP
+  shipFromLocation String?
+  etaDays          Int?
+  minOrderQty      Decimal?  @db.Decimal(19, 4)
+  maxOrderQty      Decimal?  @db.Decimal(19, 4)
+  publishedAt      DateTime?
+  pausedAt         DateTime?
+  createdById      String?
+  updatedById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  ownerPartner        Partner?             @relation("SupplyOfferOwnerPartner", fields: [ownerPartnerId], references: [id], onDelete: SetNull)
+  sourceSku           SKU?                 @relation(fields: [sourceSkuId], references: [id], onDelete: SetNull)
+  sourceItemUnit      ItemUnit?            @relation(fields: [sourceItemUnitId], references: [id], onDelete: SetNull)
+  items               SupplyOfferItem[]
+  visibilityRules     OfferVisibility[]
+  resaleListings      ResaleListing[]
+  supplyReservations  SupplyReservation[]
+  fulfillmentRequests FulfillmentRequest[]
+
+  @@index([storeId])
+  @@index([ownerPartnerId])
+  @@index([sourceSkuId])
+  @@index([sourceItemUnitId])
+  @@index([status])
+  @@index([visibility])
+  @@map("supply_offers")
+}
+
+model ResaleListing {
+  id                   String    @id @default(cuid())
+  storeId              String
+  supplyOfferId        String
+  platformId           String
+  listingId            String?
+  title                String
+  externalListingNo    String?
+  targetPrice          Decimal   @db.Decimal(19, 4)
+  currency             String
+  quantityPlanned      Decimal   @default(1) @db.Decimal(19, 4)
+  quantitySold         Decimal   @default(0) @db.Decimal(19, 4)
+  supplyUnitPrice      Decimal?  @db.Decimal(19, 4)
+  supplyCurrency       String?
+  commissionRate       Decimal?  @db.Decimal(8, 4)
+  platformFeeRate      Decimal?  @db.Decimal(8, 4)
+  estimatedPlatformFee Decimal?  @db.Decimal(19, 4)
+  estimatedCommission  Decimal?  @db.Decimal(19, 4)
+  estimatedGrossProfit Decimal?  @db.Decimal(19, 4)
+  fulfillmentMode      String    @default("SUPPLIER_SHIPS")
+  status               String    @default("DRAFT") // DRAFT, ACTIVE, PAUSED, SOLD_OUT, DELISTED
+  listedAt             DateTime?
+  pausedAt             DateTime?
+  delistedAt           DateTime?
+  notes                String?   @db.Text
+  createdById          String?
+  updatedById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  supplyOffer         SupplyOffer          @relation(fields: [supplyOfferId], references: [id], onDelete: Cascade)
+  platform            Platform             @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  listing             Listing?             @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  reservations        SupplyReservation[]
+  fulfillmentRequests FulfillmentRequest[]
+  customerOrders      CustomerOrder[]
+
+  @@index([storeId])
+  @@index([supplyOfferId])
+  @@index([platformId])
+  @@index([listingId])
+  @@index([status])
+  @@map("resale_listings")
+}
+
+model SupplyReservation {
+  id              String    @id @default(cuid())
+  storeId         String
+  supplyOfferId   String
+  resaleListingId String?
+  quantity        Decimal   @db.Decimal(19, 4)
+  status          String    @default("ACTIVE") // ACTIVE, RELEASED, CONSUMED, CANCELLED
+  reason          String    @default("FULFILLMENT_REQUEST")
+  note            String?   @db.Text
+  createdById     String?
+  releasedAt      DateTime?
+  consumedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  supplyOffer         SupplyOffer          @relation(fields: [supplyOfferId], references: [id], onDelete: Cascade)
+  resaleListing       ResaleListing?       @relation(fields: [resaleListingId], references: [id], onDelete: SetNull)
+  fulfillmentRequests FulfillmentRequest[]
+  listing             Listing?             @relation(fields: [listingId], references: [id])
+  listingId           String?
+
+  @@index([storeId])
+  @@index([supplyOfferId])
+  @@index([resaleListingId])
+  @@index([status])
+  @@map("supply_reservations")
+}
+
+model FulfillmentRequest {
+  id               String    @id @default(cuid())
+  storeId          String
+  supplyOfferId    String
+  resaleListingId  String?
+  reservationId    String?
+  customerOrderId  String?
+  requestNo        String
+  quantity         Decimal   @db.Decimal(19, 4)
+  status           String    @default("REQUESTED") // REQUESTED, ACCEPTED, REJECTED, SHIPPED, DELIVERED, CANCELLED, EXCEPTION
+  recipientName    String
+  recipientPhone   String?
+  shippingAddress  String    @db.Text
+  shippingCountry  String?
+  carrier          String?
+  trackingNo       String?
+  shippingFee      Decimal?  @db.Decimal(19, 4)
+  shippingCurrency String?
+  requestedAt      DateTime  @default(now())
+  acceptedAt       DateTime?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+  cancelledAt      DateTime?
+  note             String?   @db.Text
+  createdById      String?
+  updatedById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  store         Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  supplyOffer   SupplyOffer        @relation(fields: [supplyOfferId], references: [id], onDelete: Cascade)
+  resaleListing ResaleListing?     @relation(fields: [resaleListingId], references: [id], onDelete: SetNull)
+  reservation   SupplyReservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  customerOrder CustomerOrder?     @relation(fields: [customerOrderId], references: [id], onDelete: SetNull)
+  settlements   Settlement[]
+  listing       Listing?           @relation(fields: [listingId], references: [id])
+  listingId     String?
+
+  @@unique([storeId, requestNo])
+  @@index([storeId])
+  @@index([supplyOfferId])
+  @@index([resaleListingId])
+  @@index([reservationId])
+  @@index([customerOrderId])
+  @@index([status])
+  @@map("fulfillment_requests")
+}
+
+model Settlement {
+  id                   String    @id @default(cuid())
+  storeId              String
+  partnerId            String?
+  fulfillmentRequestId String?
+  customerOrderId      String?
+  settlementNo         String
+  direction            String    @default("PAYABLE") // PAYABLE, RECEIVABLE, MIXED
+  status               String    @default("DRAFT") // DRAFT, CONFIRMED, PAID, VOID
+  currency             String
+  totalAmount          Decimal   @default(0) @db.Decimal(19, 4)
+  baseCurrency         String?
+  fxRate               Decimal?  @db.Decimal(19, 8)
+  baseAmount           Decimal?  @db.Decimal(19, 4)
+  periodStart          DateTime?
+  periodEnd            DateTime?
+  confirmedAt          DateTime?
+  paidAt               DateTime?
+  voidedAt             DateTime?
+  note                 String?   @db.Text
+  createdById          String?
+  updatedById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  store              Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  partner            Partner?            @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  fulfillmentRequest FulfillmentRequest? @relation(fields: [fulfillmentRequestId], references: [id], onDelete: SetNull)
+  customerOrder      CustomerOrder?      @relation(fields: [customerOrderId], references: [id], onDelete: SetNull)
+  lines              SettlementLine[]
+
+  @@unique([storeId, settlementNo])
+  @@index([storeId])
+  @@index([partnerId])
+  @@index([fulfillmentRequestId])
+  @@index([customerOrderId])
+  @@index([status])
+  @@map("settlements")
+}
+
+model SettlementLine {
+  id           String   @id @default(cuid())
+  settlementId String
+  lineType     String // SUPPLY_COST, COMMISSION, PLATFORM_FEE, FULFILLMENT_FEE, SHIPPING_FEE, ADJUSTMENT
+  description  String
+  amount       Decimal  @db.Decimal(19, 4)
+  currency     String
+  direction    String   @default("PAYABLE") // PAYABLE, RECEIVABLE
+  sourceType   String?
+  sourceId     String?
+  baseCurrency String?
+  fxRate       Decimal? @db.Decimal(19, 8)
+  baseAmount   Decimal? @db.Decimal(19, 4)
+  createdAt    DateTime @default(now())
+
+  settlement Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@index([settlementId])
+  @@index([lineType])
+  @@index([sourceType, sourceId])
+  @@map("settlement_lines")
+}
+
+model SupplyOfferItem {
+  id                String   @id @default(cuid())
+  offerId           String
+  skuId             String?
+  itemUnitId        String?
+  title             String
+  variantCode       String?
+  quantityAvailable Decimal  @db.Decimal(19, 4)
+  quantityReserved  Decimal  @default(0) @db.Decimal(19, 4)
+  unitPrice         Decimal? @db.Decimal(19, 4)
+  currency          String?
+  notes             String?  @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  offer    SupplyOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  sku      SKU?        @relation(fields: [skuId], references: [id], onDelete: SetNull)
+  itemUnit ItemUnit?   @relation(fields: [itemUnitId], references: [id], onDelete: SetNull)
+
+  @@index([offerId])
+  @@index([skuId])
+  @@index([itemUnitId])
+  @@map("supply_offer_items")
+}
+
+model OfferVisibility {
+  id            String   @id @default(cuid())
+  offerId       String
+  partnerId     String?
+  viewerStoreId String?
+  scope         String   @default("PARTNER") // PARTNER, STORE
+  createdAt     DateTime @default(now())
+
+  offer       SupplyOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  partner     Partner?    @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  viewerStore Store?      @relation("OfferVisibilityStore", fields: [viewerStoreId], references: [id], onDelete: Cascade)
+
+  @@index([offerId])
+  @@index([partnerId])
+  @@index([viewerStoreId])
+  @@map("offer_visibility")
 }
 
 // ============================================

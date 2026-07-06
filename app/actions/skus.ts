@@ -11,11 +11,29 @@ import {
 } from "@/lib/application/sku-catalog";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import {
+  buildSkuDisplayName,
+  deriveCatalogRole,
+  generateSkuCodeCandidate,
+  normalizeCatalogRole,
+  normalizeManufacturerCode,
+  normalizeIdentitySourceValue,
+  normalizeVariantLabel,
+  type SkuCatalogRole,
+  type SkuIdentitySource,
+} from "@/lib/application/sku-identity";
 
 export interface CreateSKUInput {
   storeId: string;
-  code: string;
-  name: string;
+  code?: string;
+  name?: string;
+  catalogRole?: SkuCatalogRole;
+  manufacturerCode?: string;
+  variantLabel?: string;
+  variantAxes?: string[];
+  variantValues?: Record<string, string>;
+  nameSource?: SkuIdentitySource;
+  codeSource?: SkuIdentitySource;
   parentSkuId?: string | null;
   category?: string;
   brand?: string;
@@ -34,12 +52,18 @@ export async function getSKUParentOptions(storeId: string, excludeId?: string) {
     where: {
       storeId: context.activeStoreId,
       id: excludeId ? { not: excludeId } : undefined,
-      parentSkuId: null,
+      OR: [
+        { catalogRole: "GROUP" },
+        { parentSkuId: null, childSkus: { some: {} } },
+      ],
     },
     select: {
       id: true,
       code: true,
       name: true,
+      catalogRole: true,
+      manufacturerCode: true,
+      variantAxes: true,
       category: true,
       brand: true,
       _count: { select: { childSkus: true } },
@@ -225,18 +249,188 @@ function computeSalesMetrics(
   };
 }
 
-async function assertParentSkuInStore(parentSkuId: string | null | undefined, storeId: string) {
-  if (!parentSkuId) return;
+async function assertParentSkuInStore(
+  parentSkuId: string | null | undefined,
+  storeId: string
+) {
+  if (!parentSkuId) return null;
   const parent = await prisma.sKU.findFirst({
     where: { id: parentSkuId, storeId },
-    select: { id: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      catalogRole: true,
+      manufacturerCode: true,
+      category: true,
+      brand: true,
+      variantAxes: true,
+      _count: { select: { childSkus: true } },
+    },
   });
   if (!parent) {
-    throw new Error("父 SKU 不存在或不属于当前店铺");
+    throw new Error("商品组不存在或不属于当前店铺");
   }
+  const role = deriveCatalogRole({
+    catalogRole: parent.catalogRole,
+    parentSkuId: null,
+    childCount: parent._count.childSkus,
+  });
+  if (role !== "GROUP") {
+    throw new Error("规格 SKU 必须挂到商品组下，不能挂到独立 SKU 或其他规格 SKU");
+  }
+
+  return parent;
 }
 
 const SUPPORTED_SKU_CURRENCIES = new Set(["CNY", "JPY", "USD", "EUR"]);
+
+function normalizeIdentitySource(value: unknown, hasManualValue: boolean): SkuIdentitySource {
+  if (hasManualValue) return "MANUAL";
+  return value === "MANUAL" ? "MANUAL" : "AUTO";
+}
+
+function stringArrayFromJson(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeStringArray(value: string[] | undefined) {
+  const items = (value ?? []).map((item) => item.trim()).filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
+function normalizeStringRecord(value: Record<string, string> | undefined) {
+  const entries = Object.entries(value ?? {})
+    .map(([key, val]) => [key.trim(), String(val ?? "").trim()] as const)
+    .filter(([key, val]) => key && val);
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function stringRecordFromJson(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, val]) => [key.trim(), String(val ?? "").trim()] as const)
+    .filter(([key, val]) => key && val);
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+async function nextStoreSkuSequence(storeId: string) {
+  return (await prisma.sKU.count({ where: { storeId } })) + 1;
+}
+
+async function ensureUniqueSkuCode(
+  storeId: string,
+  candidate: string,
+  options: { ignoreId?: string; allowSuffix?: boolean } = {}
+) {
+  const base = candidate.trim();
+  if (!base) throw new Error("SKU编码不能为空");
+
+  let attempt = base;
+  let suffix = 2;
+  while (true) {
+    const existing = await prisma.sKU.findUnique({
+      where: { storeId_code: { storeId, code: attempt } },
+      select: { id: true },
+    });
+    if (!existing || existing.id === options.ignoreId) return attempt;
+    if (!options.allowSuffix) throw new Error("SKU代码已存在，请换一个编码");
+    attempt = `${base}-${String(suffix).padStart(2, "0")}`;
+    suffix += 1;
+  }
+}
+
+async function resolveSkuCreateIdentity(data: CreateSKUInput, storeId: string) {
+  const explicitRole = normalizeCatalogRole(data.catalogRole);
+  const role = explicitRole ?? (data.parentSkuId ? "VARIANT" : "SIMPLE");
+
+  if (role === "GROUP" && data.parentSkuId) {
+    throw new Error("商品组不能挂到其他商品组下");
+  }
+  if (role === "SIMPLE" && data.parentSkuId) {
+    throw new Error("独立 SKU 不能选择商品组；如需规格请创建规格 SKU");
+  }
+  if (role === "VARIANT" && !data.parentSkuId) {
+    throw new Error("规格 SKU 必须选择商品组");
+  }
+
+  const parent = role === "VARIANT"
+    ? await assertParentSkuInStore(data.parentSkuId, storeId)
+    : null;
+  const parentAxes = stringArrayFromJson(parent?.variantAxes);
+  const variantValues =
+    role === "VARIANT"
+      ? normalizeStringRecord(data.variantValues) ??
+        (parentAxes.length === 1 && data.variantLabel?.trim()
+          ? { [parentAxes[0]]: data.variantLabel.trim() }
+          : null)
+      : null;
+  const variantLabel =
+    role === "VARIANT"
+      ? normalizeVariantLabel({ variantLabel: data.variantLabel, variantValues })
+      : "";
+
+  if (role === "VARIANT" && !variantLabel) {
+    throw new Error("规格 SKU 需要填写规格名称，例如 42码、小南、10cm");
+  }
+
+  const brand = data.brand?.trim() || parent?.brand || undefined;
+  const category = data.category?.trim() || parent?.category || undefined;
+  const manufacturerCode = normalizeManufacturerCode(
+    data.manufacturerCode ?? parent?.manufacturerCode
+  );
+  const variantAxes = role === "GROUP" ? normalizeStringArray(data.variantAxes) : null;
+  const manualName = data.name?.trim();
+  const name =
+    manualName ||
+    buildSkuDisplayName({
+      role,
+      name: data.name,
+      parentName: parent?.name,
+      variantLabel,
+    });
+
+  if (!name) {
+    throw new Error(role === "GROUP" ? "请填写商品组名称" : "请填写商品名称");
+  }
+
+  const sequence =
+    role === "VARIANT" && parent
+      ? parent._count.childSkus + 1
+      : await nextStoreSkuSequence(storeId);
+  const manualCode = data.code?.trim();
+  const codeCandidate =
+    manualCode ||
+    generateSkuCodeCandidate({
+      role,
+      name,
+      brand,
+      manufacturerCode,
+      parentCode: parent?.code,
+      variantLabel,
+      sequence,
+    });
+  const code = await ensureUniqueSkuCode(storeId, codeCandidate, {
+    allowSuffix: !manualCode,
+  });
+
+  return {
+    role,
+    code,
+    name,
+    parentSkuId: role === "VARIANT" ? parent!.id : null,
+    brand,
+    category,
+    manufacturerCode: manufacturerCode || null,
+    variantLabel: variantLabel || null,
+    variantAxes,
+    variantValues,
+    nameSource: normalizeIdentitySource(data.nameSource, Boolean(manualName)),
+    codeSource: normalizeIdentitySource(data.codeSource, Boolean(manualCode)),
+  };
+}
 
 function validateSkuCatalogMeta(attributes: Record<string, unknown>) {
   const meta = parseSkuCatalogMeta(attributes);
@@ -451,8 +645,11 @@ export async function setSkuCatalogStatusAction(id: string, status: CatalogStatu
 
 export async function createSKU(data: CreateSKUInput) {
   const context = await requireUserContext({ storeId: data.storeId });
-  await assertParentSkuInStore(data.parentSkuId, context.activeStoreId);
-  const attributes = data.attributes ?? {};
+  const identity = await resolveSkuCreateIdentity(data, context.activeStoreId);
+  const attributes = {
+    ...(data.attributes ?? {}),
+    ...(identity.variantValues ?? {}),
+  };
   validateSkuCatalogMeta(attributes);
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
@@ -460,11 +657,18 @@ export async function createSKU(data: CreateSKUInput) {
   const sku = await prisma.sKU.create({
     data: {
       storeId: context.activeStoreId,
-      code: data.code,
-      name: data.name,
-      parentSkuId: data.parentSkuId || null,
-      category: data.category,
-      brand: data.brand,
+      code: identity.code,
+      name: identity.name,
+      parentSkuId: identity.parentSkuId,
+      catalogRole: identity.role,
+      manufacturerCode: identity.manufacturerCode,
+      variantLabel: identity.variantLabel,
+      variantAxes: identity.variantAxes as never,
+      variantValues: identity.variantValues as never,
+      nameSource: identity.nameSource,
+      codeSource: identity.codeSource,
+      category: identity.category,
+      brand: identity.brand,
       attributes: attributes as never,
       description: data.description,
       imageUrl,
@@ -478,20 +682,6 @@ export async function createSKU(data: CreateSKUInput) {
 
 export async function createSKUAction(data: CreateSKUInput) {
   try {
-    const context = await requireUserContext({ storeId: data.storeId });
-    const existing = await prisma.sKU.findUnique({
-      where: {
-        storeId_code: {
-          storeId: context.activeStoreId,
-          code: data.code,
-        },
-      },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new Error("SKU代码已存在，请换一个编码");
-    }
-
     const sku = await createSKU(data);
     return actionSuccess(sku);
   } catch (error) {
@@ -502,14 +692,148 @@ export async function createSKUAction(data: CreateSKUInput) {
 export async function updateSKU(data: UpdateSKUInput) {
   const existing = await prisma.sKU.findUnique({
     where: { id: data.id },
-    select: { storeId: true },
+    select: {
+      id: true,
+      storeId: true,
+      code: true,
+      name: true,
+      parentSkuId: true,
+      catalogRole: true,
+      manufacturerCode: true,
+      variantLabel: true,
+      variantAxes: true,
+      variantValues: true,
+      nameSource: true,
+      codeSource: true,
+      category: true,
+      brand: true,
+      _count: {
+        select: {
+          childSkus: true,
+          inventoryLots: true,
+          itemUnits: true,
+          listings: true,
+          orderLines: true,
+          purchaseLines: true,
+        },
+      },
+    },
   });
   if (!existing) throw new Error("SKU不存在");
   await requireUserContext({ storeId: existing.storeId });
-  const parentSkuId = data.parentSkuId === data.id ? null : data.parentSkuId || null;
-  await assertParentSkuInStore(parentSkuId, existing.storeId);
 
-  const attributes = data.attributes ?? {};
+  const existingRole = deriveCatalogRole({
+    catalogRole: existing.catalogRole,
+    parentSkuId: existing.parentSkuId,
+    childCount: existing._count.childSkus,
+  });
+  const role = normalizeCatalogRole(data.catalogRole) ?? existingRole;
+  if (existing._count.childSkus > 0 && role !== "GROUP") {
+    throw new Error("该商品组下仍有规格 SKU，请先删除或迁移规格 SKU 后再变更类型。");
+  }
+
+  const relationCount =
+    existing._count.inventoryLots +
+    existing._count.itemUnits +
+    existing._count.listings +
+    existing._count.orderLines +
+    existing._count.purchaseLines;
+  if (relationCount > 0 && role === "GROUP") {
+    throw new Error("已有库存、采购、销售或刊登记录的 SKU 不能改为商品组。");
+  }
+
+  const requestedParentSkuId =
+    data.parentSkuId === data.id
+      ? null
+      : data.parentSkuId !== undefined
+        ? data.parentSkuId || null
+        : existing.parentSkuId;
+  if (role === "GROUP" && requestedParentSkuId) {
+    throw new Error("商品组不能挂到其他商品组下");
+  }
+  if (role === "SIMPLE" && requestedParentSkuId) {
+    throw new Error("独立 SKU 不能选择商品组；如需规格请创建规格 SKU");
+  }
+  if (role === "VARIANT" && !requestedParentSkuId) {
+    throw new Error("规格 SKU 必须选择商品组");
+  }
+
+  const parent = role === "VARIANT"
+    ? await assertParentSkuInStore(requestedParentSkuId, existing.storeId)
+    : null;
+  const parentAxes = stringArrayFromJson(parent?.variantAxes);
+  const existingVariantValues = stringRecordFromJson(existing.variantValues);
+  const variantValues =
+    role === "VARIANT"
+      ? normalizeStringRecord(data.variantValues) ??
+        existingVariantValues ??
+        (parentAxes.length === 1 && data.variantLabel?.trim()
+          ? { [parentAxes[0]]: data.variantLabel.trim() }
+          : null)
+      : null;
+  const variantLabel =
+    role === "VARIANT"
+      ? normalizeVariantLabel({
+          variantLabel: data.variantLabel ?? existing.variantLabel,
+          variantValues,
+        })
+      : "";
+  if (role === "VARIANT" && !variantLabel) {
+    throw new Error("规格 SKU 需要填写规格名称，例如 42码、小南、10cm");
+  }
+
+  const manualName = data.name?.trim();
+  const manualCode = data.code?.trim();
+  const previousNameSource = normalizeIdentitySourceValue(existing.nameSource);
+  const previousCodeSource = normalizeIdentitySourceValue(existing.codeSource);
+  const nameSource =
+    data.nameSource ??
+    (manualName && manualName !== existing.name ? "MANUAL" : previousNameSource);
+  const codeSource =
+    data.codeSource ??
+    (manualCode && manualCode !== existing.code ? "MANUAL" : previousCodeSource);
+  const brand = data.brand?.trim() || parent?.brand || existing.brand || undefined;
+  const category =
+    data.category?.trim() || parent?.category || existing.category || undefined;
+  const manufacturerCode = normalizeManufacturerCode(
+    data.manufacturerCode ?? existing.manufacturerCode ?? parent?.manufacturerCode
+  );
+  const variantAxes =
+    role === "GROUP"
+      ? normalizeStringArray(data.variantAxes) ?? stringArrayFromJson(existing.variantAxes)
+      : null;
+  const generatedName = buildSkuDisplayName({
+    role,
+    name: manualName || existing.name,
+    parentName: parent?.name,
+    variantLabel,
+  });
+  const name = nameSource === "MANUAL" && manualName ? manualName : generatedName;
+  if (!name) throw new Error(role === "GROUP" ? "请填写商品组名称" : "请填写商品名称");
+
+  const sequence =
+    role === "VARIANT" && parent
+      ? Math.max(parent._count.childSkus, 1)
+      : await nextStoreSkuSequence(existing.storeId);
+  const generatedCode = generateSkuCodeCandidate({
+    role,
+    name,
+    brand,
+    manufacturerCode,
+    parentCode: parent?.code,
+    variantLabel,
+    sequence,
+  });
+  const codeCandidate = codeSource === "MANUAL" && manualCode ? manualCode : generatedCode;
+  const code = await ensureUniqueSkuCode(existing.storeId, codeCandidate, {
+    ignoreId: data.id,
+    allowSuffix: codeSource !== "MANUAL",
+  });
+
+  const attributes = {
+    ...(data.attributes ?? {}),
+    ...(variantValues ?? {}),
+  };
   validateSkuCatalogMeta(attributes);
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
@@ -517,11 +841,18 @@ export async function updateSKU(data: UpdateSKUInput) {
   const sku = await prisma.sKU.update({
     where: { id: data.id },
     data: {
-      code: data.code,
-      name: data.name,
-      parentSkuId,
-      category: data.category,
-      brand: data.brand,
+      code,
+      name,
+      parentSkuId: role === "VARIANT" ? parent!.id : null,
+      catalogRole: role,
+      manufacturerCode: manufacturerCode || null,
+      variantLabel: variantLabel || null,
+      variantAxes: variantAxes as never,
+      variantValues: variantValues as never,
+      nameSource,
+      codeSource,
+      category,
+      brand,
       attributes: attributes as never,
       description: data.description,
       imageUrl,
@@ -567,7 +898,7 @@ export async function deleteSKU(id: string) {
   await requireUserContext({ storeId: related.storeId });
 
   if (related._count.childSkus > 0) {
-    throw new Error("该 SKU 下仍有子 SKU，请先删除或迁移子款后再删除父 SKU。");
+    throw new Error("该商品组下仍有规格 SKU，请先删除或迁移规格 SKU 后再删除商品组。");
   }
 
   const relationCount =

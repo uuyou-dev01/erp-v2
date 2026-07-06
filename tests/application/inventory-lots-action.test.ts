@@ -178,7 +178,7 @@ describe("inventory lot action values", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("父 SKU 仅用于分组");
+      expect(result.error).toContain("商品组只用于管理规格");
     }
   });
 

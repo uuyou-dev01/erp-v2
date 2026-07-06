@@ -143,7 +143,7 @@ export interface ListingCoverageProduct {
   sellableLotQty: number;
   /** 中古单件可售件数 */
   sellableItemUnitCount: number;
-  /** 父 SKU / 展示分组下的具体子 SKU */
+  /** 商品组 / 展示分组下的具体规格 SKU */
   variantRows: ListingCoverageVariantRow[];
   inTransitQty: number;
   sellableLocations: StockLocationBreakdown[];

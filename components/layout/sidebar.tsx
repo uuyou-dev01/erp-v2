@@ -54,6 +54,13 @@ const allNavItems = [
   ...flattenNavItems(settingsNavigation),
 ];
 
+function navIconClass(active: boolean) {
+  return cn(
+    "h-4 w-4 shrink-0 transition-colors",
+    active ? "text-primary opacity-100" : "opacity-60"
+  );
+}
+
 function NavLink({
   item,
   active,
@@ -82,7 +89,7 @@ function NavLink({
           : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}
     >
-      <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+      <item.icon className={navIconClass(active)} />
       {!collapsed && (
         <>
           <span className="flex-1 truncate">{item.name}</span>
@@ -224,7 +231,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                             : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         )}
                       >
-                        <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                        <item.icon className={navIconClass(isActive)} />
                         <span className="flex-1 text-left">{item.name}</span>
                         <ChevronDown
                           className={cn(
@@ -270,7 +277,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                             : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         )}
                       >
-                        <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                        <item.icon className={navIconClass(isActive)} />
                         <span className="flex-1 text-left">{item.name}</span>
                         <ChevronDown className={cn("h-3 w-3 opacity-50", expandedItems.includes(item.name) && "rotate-180")} />
                       </button>
@@ -345,7 +352,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                             : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
                         )}
                       >
-                        <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                        <item.icon className={navIconClass(isActive)} />
                         <span className="flex-1 text-left">{item.name}</span>
                         <ChevronDown className={cn("h-3 w-3 opacity-50", expandedItems.includes(item.name) && "rotate-180")} />
                       </button>
@@ -385,7 +392,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                     )}
                     title={collapsed ? item.name : undefined}
                   >
-                    <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                    <item.icon className={navIconClass(isActive)} />
                     {!collapsed && item.name}
                   </Link>
                 );

@@ -17,11 +17,33 @@ describe("navigation structure", () => {
   it("groups routes around the current operating model", () => {
     expect(operationsNavigation.map((group) => group.title)).toEqual([
       "工作台",
-      "采购与补货",
-      "集运与仓配",
-      "库存与商品",
+      "采购与仓配",
+      "商品与库存",
       "上架与订单",
-      "经营分析",
+      "货盘与代卖",
+      "财务与报表",
+    ]);
+  });
+
+  it("keeps dense product and inventory routes under sidebar submenus", () => {
+    const productGroup = operationsNavigation.find((group) => group.title === "商品与库存");
+    expect(productGroup?.items.map((item) => item.name)).toEqual([
+      "商品档案",
+      "库存管理",
+    ]);
+
+    const catalogItem = productGroup?.items.find((item) => item.name === "商品档案");
+    expect(catalogItem?.submenu?.map((item) => item.name)).toEqual([
+      "商品主档",
+      "商品情报",
+    ]);
+
+    const inventoryItem = productGroup?.items.find((item) => item.name === "库存管理");
+    expect(inventoryItem?.submenu?.map((item) => item.name)).toEqual([
+      "库存看板",
+      "单件库存",
+      "库存批次",
+      "库存盘点",
     ]);
   });
 
@@ -34,6 +56,7 @@ describe("navigation structure", () => {
 
     expect(settingsNavigation.map((item) => item.name)).toEqual([
       "销售平台",
+      "合作方",
       "仓库位置",
       "团队成员",
       "店铺管理",
@@ -48,16 +71,23 @@ describe("navigation structure", () => {
     expect(hrefs).toContain("/notifications");
     expect(hrefs).toContain("/procurement");
     expect(hrefs).toContain("/logistics/consolidations");
+    expect(hrefs).toContain("/fulfillment/requests");
     expect(hrefs).toContain("/inventory/sellable");
     expect(hrefs).toContain("/inventory/skus");
+    expect(hrefs).toContain("/product-intelligence");
     expect(hrefs).toContain("/inventory/items");
     expect(hrefs).toContain("/inventory/lots");
     expect(hrefs).toContain("/inventory/stocktake");
     expect(hrefs).toContain("/listing");
     expect(hrefs).toContain("/sales");
+    expect(hrefs).toContain("/marketplace");
+    expect(hrefs).toContain("/marketplace/my-offers");
+    expect(hrefs).toContain("/resale");
+    expect(hrefs).toContain("/finance/settlements");
     expect(hrefs).toContain("/reports");
     expect(hrefs).toContain("/reports/team");
     expect(hrefs).toContain("/listing/platforms");
+    expect(hrefs).toContain("/settings/partners");
     expect(hrefs).toContain("/inventory/locations");
     expect(hrefs).toContain("/settings/team");
     expect(hrefs).toContain("/settings/stores");

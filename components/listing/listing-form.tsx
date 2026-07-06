@@ -39,6 +39,9 @@ interface SKU {
   id: string;
   code: string;
   name: string;
+  catalogRole?: string | null;
+  parentSkuId?: string | null;
+  childSkus?: { id: string }[];
 }
 
 interface ItemUnit {
@@ -251,7 +254,9 @@ export function ListingForm({
             required
           >
             <option value="">选择SKU</option>
-            {skus.map((sku) => {
+            {skus
+              .filter((sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length))
+              .map((sku) => {
               const breakdown = stockMap[sku.id];
               const stockLabel = breakdown
                 ? ` · 可发 ${breakdown.sellableQty}${

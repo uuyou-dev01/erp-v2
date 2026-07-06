@@ -487,7 +487,7 @@ export function ListingCoverageCard({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{product.skuName}</p>
               <p className="truncate text-[10px] text-muted-foreground">
-                {palletLabel} · {visibleVariantViews.length || product.variantRows.length} 个子 SKU
+                {palletLabel} · {visibleVariantViews.length || product.variantRows.length} 个规格 SKU
               </p>
             </div>
           </button>
@@ -582,7 +582,7 @@ export function ListingCoverageCard({
                 onClick={() => setDetailsOpen(true)}
                 className="w-full rounded-md border border-dashed px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
               >
-                更多 {visibleVariantViews.length - displayedVariantViews.length} 个子 SKU
+                更多 {visibleVariantViews.length - displayedVariantViews.length} 个规格 SKU
               </button>
             ) : null}
           </div>
@@ -719,7 +719,7 @@ export function ListingCoverageCard({
 
                   {variantViews.length > 1 ? (
                     <div className="mb-3">
-                      <DetailSection title="子 SKU / 变体">
+                      <DetailSection title="规格 SKU / 变体">
                         <div className="space-y-1.5">
                           {variantViews.map((variant) => {
                             const skuRecords = variant.scopedSkuRecords;

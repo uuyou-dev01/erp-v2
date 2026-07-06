@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
 import {
   getFeeDetails,
@@ -13,6 +13,9 @@ let platformId = "";
 
 describe("report valid sales status filters", () => {
   beforeAll(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T12:00:00.000Z"));
+
     const organization = await prisma.organization.create({
       data: {
         code: organizationCode,
@@ -55,6 +58,7 @@ describe("report valid sales status filters", () => {
   afterAll(async () => {
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
+    vi.useRealTimers();
   });
 
   it("uses only confirmed, shipped, and delivered orders in monthly P&L", async () => {

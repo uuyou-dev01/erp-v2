@@ -113,7 +113,12 @@ export function buildSkuCatalogDisplayGroups(
   for (const item of items) {
     if (item.parentSkuId) continue;
     const children = childrenByParent.get(item.id) ?? [];
-    if (children.length === 0 && !parentIds.has(item.id) && item.variantCount === 0) {
+    if (
+      item.catalogRole !== "GROUP" &&
+      children.length === 0 &&
+      !parentIds.has(item.id) &&
+      item.variantCount === 0
+    ) {
       standaloneCandidates.push(item);
       continue;
     }
@@ -124,11 +129,11 @@ export function buildSkuCatalogDisplayGroups(
       variantItems,
       variantLabel:
         variantItems.length > 0
-          ? `${variantItems.length} 个子 SKU`
+          ? `${variantItems.length} 个规格 SKU`
           : item.variantCount > 0
-            ? `${item.variantCount} 个子 SKU`
-            : "独立 SKU",
-      isSeries: variantItems.length > 0 || item.variantCount > 0,
+            ? `${item.variantCount} 个规格 SKU`
+            : "商品组",
+      isSeries: item.catalogRole === "GROUP" || variantItems.length > 0 || item.variantCount > 0,
       isDisplayGroup: false,
       displayName: item.name,
       displayCode: item.code,
@@ -160,7 +165,7 @@ export function buildSkuCatalogDisplayGroups(
       key: `display:${familyKey(head)}`,
       head,
       variantItems: bucket,
-      variantLabel: `${bucket.length} 个 SKU`,
+      variantLabel: `${bucket.length} 个规格 SKU`,
       isSeries: true,
       isDisplayGroup: true,
       displayName,

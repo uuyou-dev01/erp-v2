@@ -25,7 +25,16 @@ export function AddPurchaseLineForm({
 }: AddPurchaseLineFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [skus, setSKUs] = useState<Array<{ id: string; code: string; name: string; parentSkuId?: string | null; childSkus?: { id: string }[] }>>([]);
+  const [skus, setSKUs] = useState<
+    Array<{
+      id: string;
+      code: string;
+      name: string;
+      catalogRole?: string | null;
+      parentSkuId?: string | null;
+      childSkus?: { id: string }[];
+    }>
+  >([]);
   const [formData, setFormData] = useState({
     skuId: "",
     quantity: "",
@@ -100,9 +109,10 @@ export function AddPurchaseLineForm({
           >
             <option value="">{t("inventory.select_sku")}</option>
             {(() => {
-              const parents = skus.filter((s) => !s.parentSkuId);
-              const standalone = parents.filter((p) => !skus.some((s) => s.parentSkuId === p.id));
-              const groups = parents.filter((p) => skus.some((s) => s.parentSkuId === p.id));
+              const isGroup = (sku: (typeof skus)[number]) =>
+                sku.catalogRole === "GROUP" || (!sku.parentSkuId && skus.some((s) => s.parentSkuId === sku.id));
+              const groups = skus.filter(isGroup);
+              const standalone = skus.filter((sku) => !sku.parentSkuId && !isGroup(sku));
 
               return (
                 <>

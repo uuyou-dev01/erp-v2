@@ -33,7 +33,7 @@ async function main() {
         },
       });
     }
-    console.log(`✓ Nike Air Max 90: 创建 ${shoeChildren.length} 个尺码子 SKU`);
+    console.log(`✓ Nike Air Max 90: 创建 ${shoeChildren.length} 个尺码规格 SKU`);
   }
 
   // --- 2. Pokemon Booster Box → add variant packs ---
@@ -63,7 +63,7 @@ async function main() {
         },
       });
     }
-    console.log(`✓ Pokemon Booster Box: 创建 ${pokemonChildren.length} 个系列子 SKU`);
+    console.log(`✓ Pokemon Booster Box: 创建 ${pokemonChildren.length} 个系列规格 SKU`);
   }
 
   // --- 3. Create a brand new blind-box parent + children ---
@@ -104,7 +104,7 @@ async function main() {
       },
     });
   }
-  console.log(`✓ MOLLY 盲盒: 创建父 SKU + ${mollyChildren.length} 个角色子 SKU`);
+  console.log(`✓ MOLLY 盲盒: 创建商品组 + ${mollyChildren.length} 个角色规格 SKU`);
 
   // --- 4. Create a T-shirt parent + size children ---
   const tshirt = await prisma.sKU.upsert({
@@ -144,7 +144,7 @@ async function main() {
       },
     });
   }
-  console.log(`✓ UNIQLO T恤: 创建父 SKU + ${tshirtChildren.length} 个颜色×尺码子 SKU`);
+  console.log(`✓ UNIQLO T恤: 创建商品组 + ${tshirtChildren.length} 个颜色×尺码规格 SKU`);
 
   console.log("\n假数据创建完成！刷新 SKU 列表页面查看折叠效果。");
 }

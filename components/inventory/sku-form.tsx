@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import {
   type SkuNewFields,
   type SkuUsedFields,
 } from "@/lib/application/sku-catalog";
+import type { SkuCatalogRole, SkuIdentitySource } from "@/lib/application/sku-identity";
 import { AlertCircle, X, Plus, Upload, Link as LinkIcon, GitBranch, Star } from "lucide-react";
 import { t } from "@/lib/i18n";
 
@@ -26,6 +28,9 @@ export interface ParentOption {
   id: string;
   code: string;
   name: string;
+  catalogRole?: string | null;
+  manufacturerCode?: string | null;
+  variantAxes?: unknown;
   category: string | null;
   brand: string | null;
   _count: { childSkus: number };
@@ -34,6 +39,8 @@ export interface ParentOption {
 interface SKUFormProps {
   storeId: string;
   parentOptions?: ParentOption[];
+  defaultCatalogRole?: SkuCatalogRole;
+  defaultParentSkuId?: string;
   /** 紧凑布局，用于详情页编辑弹层 */
   compact?: boolean;
   /** 保存成功后回调；提供时不再跳转到列表页 */
@@ -43,6 +50,13 @@ interface SKUFormProps {
     id: string;
     code: string;
     name: string;
+    catalogRole?: string | null;
+    manufacturerCode?: string | null;
+    variantLabel?: string | null;
+    variantAxes?: unknown;
+    variantValues?: unknown;
+    nameSource?: string | null;
+    codeSource?: string | null;
     parentSkuId?: string | null;
     category?: string | null;
     brand?: string | null;
@@ -59,12 +73,66 @@ const PARENT_PRESET_ATTRIBUTES = [
   { key: "重量", value: "" },
 ];
 
+const VARIANT_AXIS_PRESETS = [
+  { label: "尺码", value: "尺码" },
+  { label: "角色", value: "角色" },
+  { label: "规格", value: "规格" },
+  { label: "容量", value: "容量" },
+];
+
 const CHILD_PRESET_ATTRIBUTES = [
   { key: "颜色", value: "" },
   { key: "尺寸", value: "" },
   { key: "型号", value: "" },
   { key: "款式", value: "" },
 ];
+
+function normalizeCatalogRole(value: unknown, fallback: SkuCatalogRole): SkuCatalogRole {
+  return value === "GROUP" || value === "VARIANT" || value === "SIMPLE"
+    ? value
+    : fallback;
+}
+
+function initialRole(
+  initialData: SKUFormProps["initialData"],
+  defaultCatalogRole: SkuCatalogRole
+): SkuCatalogRole {
+  if (initialData) {
+    return normalizeCatalogRole(
+      initialData.catalogRole,
+      initialData.parentSkuId ? "VARIANT" : "SIMPLE"
+    );
+  }
+  return defaultCatalogRole;
+}
+
+function stringArrayFromUnknown(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function stringRecordFromUnknown(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, val]) => [key.trim(), String(val ?? "").trim()] as const)
+      .filter(([key, val]) => key && val)
+  );
+}
+
+function splitVariantAxes(value: string) {
+  return value
+    .split(/[,，/、]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function labelForRole(role: SkuCatalogRole) {
+  if (role === "GROUP") return "商品组";
+  if (role === "VARIANT") return "规格 SKU";
+  return "独立 SKU";
+}
 
 function initialCatalogState(initialData?: SKUFormProps["initialData"]) {
   const parsed = initialData?.attributes
@@ -99,6 +167,8 @@ function initialCatalogState(initialData?: SKUFormProps["initialData"]) {
 export function SKUForm({
   storeId,
   parentOptions = [],
+  defaultCatalogRole = "GROUP",
+  defaultParentSkuId = "",
   initialData,
   compact = false,
   onSaved,
@@ -111,10 +181,21 @@ export function SKUForm({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [imageUrlInput, setImageUrlInput] = useState("");
   const [catalog, setCatalog] = useState(() => initialCatalogState(initialData));
+  const resolvedInitialRole = initialRole(initialData, defaultCatalogRole);
+  const initialVariantValues = stringRecordFromUnknown(initialData?.variantValues);
   const [formData, setFormData] = useState({
-    parentSkuId: initialData?.parentSkuId || "",
+    catalogRole: resolvedInitialRole,
+    parentSkuId: initialData?.parentSkuId || defaultParentSkuId,
     code: initialData?.code || "",
     name: initialData?.name || "",
+    manufacturerCode: initialData?.manufacturerCode || "",
+    variantLabel:
+      initialData?.variantLabel ||
+      Object.values(initialVariantValues).filter(Boolean).join(" / ") ||
+      "",
+    variantAxesInput: stringArrayFromUnknown(initialData?.variantAxes).join(", "),
+    nameSource: (initialData?.nameSource === "MANUAL" ? "MANUAL" : "AUTO") as SkuIdentitySource,
+    codeSource: (initialData?.codeSource === "MANUAL" ? "MANUAL" : "AUTO") as SkuIdentitySource,
     category: initialData?.category || "",
     brand: initialData?.brand || "",
     description: initialData?.description || "",
@@ -126,28 +207,41 @@ export function SKUForm({
     () => initialCatalogState(initialData).variantEntries
   );
 
-  const isChild = formData.parentSkuId !== "";
+  const isGroup = formData.catalogRole === "GROUP";
+  const isVariant = formData.catalogRole === "VARIANT";
   const selectedParent = useMemo(
     () => parentOptions.find((p) => p.id === formData.parentSkuId),
     [parentOptions, formData.parentSkuId]
   );
-  const showParentCodePrefix = isChild && selectedParent && !initialData;
+  const selectedParentAxes = useMemo(
+    () => stringArrayFromUnknown(selectedParent?.variantAxes),
+    [selectedParent]
+  );
 
-  const presetAttributes = isChild ? CHILD_PRESET_ATTRIBUTES : PARENT_PRESET_ATTRIBUTES;
+  const presetAttributes = isVariant ? CHILD_PRESET_ATTRIBUTES : PARENT_PRESET_ATTRIBUTES;
+
+  const handleRoleChange = (role: SkuCatalogRole) => {
+    setSubmitError(null);
+    setFormData((prev) => ({
+      ...prev,
+      catalogRole: role,
+      parentSkuId: role === "VARIANT" ? prev.parentSkuId : "",
+      variantLabel: role === "VARIANT" ? prev.variantLabel : "",
+      nameSource: role === "VARIANT" ? "AUTO" : prev.nameSource,
+      codeSource: "AUTO",
+    }));
+  };
 
   const handleParentChange = (parentId: string) => {
     setSubmitError(null);
     const parent = parentOptions.find((p) => p.id === parentId);
     if (parent) {
-      const nextIndex = parent._count.childSkus + 1;
-      const suffix = String(nextIndex).padStart(2, "0");
-      const autoCode = initialData?.code || `${parent.code}-${suffix}`;
       setFormData((prev) => ({
         ...prev,
         parentSkuId: parentId,
-        code: autoCode,
         category: prev.category || parent.category || "",
         brand: prev.brand || parent.brand || "",
+        manufacturerCode: prev.manufacturerCode || parent.manufacturerCode || "",
       }));
     } else {
       setFormData((prev) => ({ ...prev, parentSkuId: "" }));
@@ -246,12 +340,38 @@ export function SKUForm({
         parseSkuCatalogMeta(attributesPayload),
         formData.imageUrl
       );
+      const variantAxes = splitVariantAxes(formData.variantAxesInput);
+      const variantValues =
+        formData.catalogRole === "VARIANT" &&
+        selectedParentAxes.length === 1 &&
+        formData.variantLabel.trim()
+          ? { [selectedParentAxes[0]]: formData.variantLabel.trim() }
+          : undefined;
 
       const data = {
         storeId,
-        code: formData.code,
-        name: formData.name,
-        parentSkuId: formData.parentSkuId || undefined,
+        catalogRole: formData.catalogRole,
+        code: formData.code || undefined,
+        name:
+          formData.catalogRole === "VARIANT" && formData.nameSource === "AUTO"
+            ? undefined
+            : formData.name || undefined,
+        manufacturerCode: formData.manufacturerCode || undefined,
+        variantLabel:
+          formData.catalogRole === "VARIANT"
+            ? formData.variantLabel || undefined
+            : undefined,
+        variantAxes:
+          formData.catalogRole === "GROUP" && variantAxes.length > 0
+            ? variantAxes
+            : undefined,
+        variantValues,
+        nameSource: formData.name.trim() ? formData.nameSource : "AUTO",
+        codeSource: formData.code.trim() ? formData.codeSource : "AUTO",
+        parentSkuId:
+          formData.catalogRole === "VARIANT"
+            ? formData.parentSkuId || undefined
+            : undefined,
         category: formData.category || undefined,
         brand: formData.brand || undefined,
         attributes: attributesPayload,
@@ -315,48 +435,126 @@ export function SKUForm({
 
   return (
     <form onSubmit={handleSubmit} className={sectionGap}>
-      {!initialData ? (
-        <Card>
-          <CardHeader className={cardHeaderClass}>
-            <CardTitle className={`flex items-center gap-2 ${cardTitleClass ?? ""}`}>
-              <GitBranch className="h-4 w-4" />
-              SKU 类型
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="parentSkuId" className={compact ? "text-xs" : undefined}>
-                父 SKU（可选）
-              </Label>
-              <select
-                id="parentSkuId"
-                value={formData.parentSkuId}
-                onChange={(e) => handleParentChange(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      <Card>
+        <CardHeader className={cardHeaderClass}>
+          <CardTitle className={`flex items-center gap-2 ${cardTitleClass ?? ""}`}>
+            <GitBranch className="h-4 w-4" />
+            档案层级
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            {(["GROUP", "VARIANT", "SIMPLE"] as SkuCatalogRole[]).map((role) => (
+              <button
+                key={role}
+                type="button"
+                onClick={() => handleRoleChange(role)}
+                className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                  formData.catalogRole === role
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "hover:bg-muted/60"
+                }`}
               >
-                <option value="">独立 / 父 SKU（产品线）</option>
-                {parentOptions.map((sku) => (
-                  <option key={sku.id} value={sku.id}>
-                    {sku.code} · {sku.name}
-                    {sku._count.childSkus > 0 ? ` (${sku._count.childSkus} 子款)` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <span className="font-medium">{labelForRole(role)}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {role === "GROUP"
+                    ? "SPU/系列壳子，不承接库存"
+                    : role === "VARIANT"
+                      ? "挂在商品组下，承接业务"
+                      : "没有规格拆分，直接承接业务"}
+                </span>
+              </button>
+            ))}
+          </div>
 
-            {!compact && isChild && selectedParent ? (
-              <p className="text-xs text-muted-foreground">
-                子款属于「{selectedParent.name}」，代码后缀可自定义。
-              </p>
-            ) : null}
-            {!compact && !isChild ? (
-              <p className="text-xs text-muted-foreground">
-                父 SKU 代表产品线，可后续添加颜色/尺码等子 SKU。
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
+          {isVariant ? (
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(180px,0.6fr)]">
+              <div className="space-y-1.5">
+                <Label htmlFor="parentSkuId" className={compact ? "text-xs" : undefined}>
+                  归属商品组 *
+                </Label>
+                <Select
+                  id="parentSkuId"
+                  value={formData.parentSkuId}
+                  onChange={(e) => handleParentChange(e.target.value)}
+                  required={isVariant}
+                >
+                  <option value="">选择商品组</option>
+                  {parentOptions.map((sku) => (
+                    <option key={sku.id} value={sku.id}>
+                      {sku.name}
+                      {sku.manufacturerCode ? ` · ${sku.manufacturerCode}` : ""}
+                      {sku._count.childSkus > 0 ? ` (${sku._count.childSkus} 个规格)` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="variantLabel" className={compact ? "text-xs" : undefined}>
+                  规格名称 *
+                </Label>
+                <Input
+                  id="variantLabel"
+                  value={formData.variantLabel}
+                  onChange={(e) => updateFormData({ variantLabel: e.target.value })}
+                  placeholder={
+                    selectedParentAxes[0]
+                      ? `例如：42码（${selectedParentAxes[0]}）`
+                      : "例如：42码 / 小南 / 10cm"
+                  }
+                  required={isVariant}
+                />
+              </div>
+              {!compact ? (
+                <p className="text-xs text-muted-foreground md:col-span-2">
+                  只写规格本身即可。系统会按「商品组 · 规格」生成展示名，例如
+                  「AJ1 芝加哥 2015 · 42码」。
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {isGroup ? (
+            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+              <div className="flex flex-wrap gap-2">
+                {VARIANT_AXIS_PRESETS.map((preset) => (
+                  <Button
+                    key={preset.value}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      const axes = splitVariantAxes(formData.variantAxesInput);
+                      if (!axes.includes(preset.value)) {
+                        updateFormData({
+                          variantAxesInput: [...axes, preset.value].join(", "),
+                        });
+                      }
+                    }}
+                  >
+                    + {preset.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="variantAxes">默认规格维度</Label>
+                <Input
+                  id="variantAxes"
+                  value={formData.variantAxesInput}
+                  onChange={(e) => updateFormData({ variantAxesInput: e.target.value })}
+                  placeholder="例如：尺码 / 角色 / 规格"
+                />
+              </div>
+              {!compact ? (
+                <p className="text-xs text-muted-foreground">
+                  商品组类似 SPU：只负责承载系列信息和规格结构，采购、入库、上架、销售时选择下面的规格 SKU。
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className={cardHeaderClass}>
@@ -530,51 +728,53 @@ export function SKUForm({
         </Card>
       )}
 
-      {/* Step 2: Basic info */}
       <Card>
         <CardHeader className={cardHeaderClass}>
-          <CardTitle className={cardTitleClass}>{t("sku.basic_info")}</CardTitle>
+          <CardTitle className={cardTitleClass}>商品基础信息</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="code">{t("sku.code")} *</Label>
-              <div className="flex items-center gap-2">
-                {showParentCodePrefix ? (
-                  <Badge variant="outline" className="shrink-0 font-mono">
-                    {selectedParent.code}-
-                  </Badge>
-                ) : null}
-                <Input
-                  id="code"
-                  value={formData.code}
-                  onChange={(e) => updateFormData({ code: e.target.value })}
-                  placeholder={isChild ? "01, 02, RED-M ..." : t("sku.code_placeholder")}
-                  required
-                />
-              </div>
+              <Label htmlFor="name">
+                {isVariant ? "自定义展示名" : `${labelForRole(formData.catalogRole)}名称 *`}
+              </Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) =>
+                  updateFormData({
+                    name: e.target.value,
+                    nameSource:
+                      isVariant && e.target.value.trim() ? "MANUAL" : formData.nameSource,
+                  })
+                }
+                placeholder={
+                  isVariant && selectedParent
+                    ? `${selectedParent.name} · ${formData.variantLabel || "42码"}`
+                    : isGroup
+                      ? "例如：AJ1 芝加哥 2015"
+                      : "例如：竹筐"
+                }
+                required={!isVariant}
+              />
               <p className="text-xs text-muted-foreground">
-                {initialData
-                  ? "系统编码用于导入、对账和内部追踪；页面展示会优先使用变体名。"
-                  : isChild
-                  ? "子 SKU 代码已自动生成，你也可以改成更有意义的后缀（如颜色-尺码）"
-                  : t("sku.code_hint")}
+                {isVariant
+                  ? "通常不用填；留空时系统会用「商品组 · 规格名称」。"
+                  : "填写用户最自然会记住的商品名称。"}
               </p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="name">{t("sku.name")} *</Label>
+              <Label htmlFor="manufacturerCode">官方货号 / 型号</Label>
               <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => updateFormData({ name: e.target.value })}
-                placeholder={
-                  isChild && selectedParent
-                    ? `${selectedParent.name} · 白色M码`
-                    : t("sku.name_placeholder")
-                }
-                required
+                id="manufacturerCode"
+                value={formData.manufacturerCode}
+                onChange={(e) => updateFormData({ manufacturerCode: e.target.value })}
+                placeholder="例如：555088-101"
               />
+              <p className="text-xs text-muted-foreground">
+                这是品牌或平台识别商品的原始货号，不等于我们系统里的 SKU 编码。
+              </p>
             </div>
           </div>
 
@@ -587,8 +787,8 @@ export function SKUForm({
                 onChange={(e) => updateFormData({ category: e.target.value })}
                 placeholder={t("sku.category_placeholder")}
               />
-              {isChild && selectedParent?.category && formData.category === selectedParent.category && (
-                <p className="text-xs text-green-600">已从父 SKU 继承</p>
+              {isVariant && selectedParent?.category && formData.category === selectedParent.category && (
+                <p className="text-xs text-green-600">已从商品组继承</p>
               )}
             </div>
 
@@ -600,11 +800,51 @@ export function SKUForm({
                 onChange={(e) => updateFormData({ brand: e.target.value })}
                 placeholder={t("sku.brand_placeholder")}
               />
-              {isChild && selectedParent?.brand && formData.brand === selectedParent.brand && (
-                <p className="text-xs text-green-600">已从父 SKU 继承</p>
+              {isVariant && selectedParent?.brand && formData.brand === selectedParent.brand && (
+                <p className="text-xs text-green-600">已从商品组继承</p>
               )}
             </div>
           </div>
+
+          <details className="rounded-md border bg-muted/20 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium">
+              内部编码与高级命名
+            </summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="code">系统 SKU 编码</Label>
+                <Input
+                  id="code"
+                  value={formData.code}
+                  onChange={(e) =>
+                    updateFormData({
+                      code: e.target.value,
+                      codeSource: e.target.value.trim() ? "MANUAL" : "AUTO",
+                    })
+                  }
+                  placeholder={
+                    isVariant
+                      ? "留空自动生成，例如 NIKE-555088-101-42"
+                      : "留空自动生成"
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  用于导入、对账和内部追踪；日常录入可以留空。
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>当前生成方式</Label>
+                <div className="flex h-10 items-center gap-2 rounded-md border bg-background px-3 text-sm">
+                  <Badge variant={formData.nameSource === "MANUAL" ? "secondary" : "outline"}>
+                    名称 {formData.nameSource === "MANUAL" ? "手动" : "自动"}
+                  </Badge>
+                  <Badge variant={formData.codeSource === "MANUAL" ? "secondary" : "outline"}>
+                    编码 {formData.codeSource === "MANUAL" ? "手动" : "自动"}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          </details>
 
           <div className="space-y-2">
             <Label htmlFor="description">{t("sku.description")}</Label>
@@ -753,13 +993,15 @@ export function SKUForm({
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <CardTitle className={cardTitleClass}>
-                {isChild ? "变体规格" : "产品属性"}
+                {isVariant ? "规格属性" : "商品属性"}
               </CardTitle>
               {!compact ? (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {isChild
-                    ? "颜色、尺码等变体维度"
-                    : "产品线共同特征（材质、产地等）"}
+                  {isVariant
+                    ? "规格 SKU 自己的补充属性"
+                    : isGroup
+                      ? "商品组共同特征（材质、产地等）"
+                      : "独立 SKU 的补充属性"}
                 </p>
               ) : null}
             </div>
@@ -800,7 +1042,7 @@ export function SKUForm({
                   />
                   <Input
                     placeholder={
-                      isChild
+                      isVariant
                         ? "具体值（如：白色、M码）"
                         : t("sku.attribute_value_placeholder")
                     }

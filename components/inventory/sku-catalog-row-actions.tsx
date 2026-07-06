@@ -126,7 +126,7 @@ export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
       <ConfirmDialog
         open={deleteOpen}
         title="确认删除 SKU"
-        description={`确认删除「${item.name}（${item.code}）」？若已有业务引用或子 SKU，将无法删除。`}
+        description={`确认删除「${item.name}（${item.code}）」？若已有业务引用或规格 SKU，将无法删除。`}
         confirmText="确认删除"
         cancelText="取消"
         loading={deleteLoading}

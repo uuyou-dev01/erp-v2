@@ -257,7 +257,7 @@ describe("listing quick sell reservations", () => {
     });
     expect(singleResult.success).toBe(false);
     if (!singleResult.success) {
-      expect(singleResult.error).toContain("父 SKU 仅用于分组");
+      expect(singleResult.error).toContain("商品组只用于管理规格");
     }
 
     const batchResult = await batchCreateListings({
@@ -269,7 +269,7 @@ describe("listing quick sell reservations", () => {
     });
     expect(batchResult.success).toBe(false);
     if (!batchResult.success) {
-      expect(batchResult.error).toContain("父 SKU 仅用于分组");
+      expect(batchResult.error).toContain("商品组只用于管理规格");
     }
 
     const listings = await prisma.listing.findMany({

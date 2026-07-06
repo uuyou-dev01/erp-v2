@@ -800,3 +800,98 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
     agentFee: totalAgentFee.toFixed(2),
   };
 }
+
+export async function getSettlementSummary(storeId: string, range?: DateRange) {
+  const converter = await createStoreMoneyConverter(storeId);
+  const dateFilter =
+    range?.dateFrom && range?.dateTo
+      ? { gte: range.dateFrom, lte: range.dateTo }
+      : undefined;
+
+  const settlements = await prisma.settlement.findMany({
+    where: {
+      storeId,
+      ...(dateFilter ? { createdAt: dateFilter } : {}),
+    },
+    select: {
+      id: true,
+      status: true,
+      createdAt: true,
+      lines: {
+        select: {
+          lineType: true,
+          amount: true,
+          currency: true,
+          direction: true,
+          baseAmount: true,
+          baseCurrency: true,
+        },
+      },
+    },
+  });
+
+  const statusCounts = {
+    draft: 0,
+    confirmed: 0,
+    paid: 0,
+    void: 0,
+  };
+  const lineBreakdown = new Map<string, Decimal>();
+  let pendingPayable = new Decimal(0);
+  let pendingReceivable = new Decimal(0);
+  let paidPayable = new Decimal(0);
+  let paidReceivable = new Decimal(0);
+
+  for (const settlement of settlements) {
+    if (settlement.status === "DRAFT") statusCounts.draft += 1;
+    if (settlement.status === "CONFIRMED") statusCounts.confirmed += 1;
+    if (settlement.status === "PAID") statusCounts.paid += 1;
+    if (settlement.status === "VOID") statusCounts.void += 1;
+    if (settlement.status === "VOID") continue;
+
+    for (const line of settlement.lines) {
+      const baseAmount =
+        line.baseAmount && line.baseCurrency === converter.baseCurrency
+          ? new Decimal(line.baseAmount.toString())
+          : await converter.convertToBase(line.amount.toString(), line.currency, {
+              effectiveAt: settlement.createdAt,
+            });
+
+      lineBreakdown.set(
+        line.lineType,
+        (lineBreakdown.get(line.lineType) ?? new Decimal(0)).plus(baseAmount),
+      );
+
+      if (settlement.status === "PAID") {
+        if (line.direction === "RECEIVABLE") {
+          paidReceivable = paidReceivable.plus(baseAmount);
+        } else {
+          paidPayable = paidPayable.plus(baseAmount);
+        }
+      } else if (line.direction === "RECEIVABLE") {
+        pendingReceivable = pendingReceivable.plus(baseAmount);
+      } else {
+        pendingPayable = pendingPayable.plus(baseAmount);
+      }
+    }
+  }
+
+  return {
+    baseCurrency: converter.baseCurrency,
+    settlementCount: settlements.length,
+    activeSettlementCount: settlements.length - statusCounts.void,
+    pendingCount: statusCounts.draft + statusCounts.confirmed,
+    paidCount: statusCounts.paid,
+    statusCounts,
+    pendingPayable: pendingPayable.toFixed(2),
+    pendingReceivable: pendingReceivable.toFixed(2),
+    pendingNetPayable: pendingPayable.minus(pendingReceivable).toFixed(2),
+    paidPayable: paidPayable.toFixed(2),
+    paidReceivable: paidReceivable.toFixed(2),
+    paidNetPayable: paidPayable.minus(paidReceivable).toFixed(2),
+    lineBreakdown: Array.from(lineBreakdown.entries()).map(([lineType, amount]) => ({
+      lineType,
+      amount: amount.toFixed(2),
+    })),
+  };
+}

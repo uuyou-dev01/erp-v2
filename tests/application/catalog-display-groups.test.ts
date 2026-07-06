@@ -10,6 +10,13 @@ function sku(input: Partial<SkuCatalogListItem> & Pick<SkuCatalogListItem, "id" 
   return {
     brand: null,
     category: null,
+    catalogRole: "SIMPLE",
+    manufacturerCode: null,
+    variantLabel: null,
+    variantAxes: [],
+    variantValues: {},
+    nameSource: "AUTO",
+    codeSource: "AUTO",
     imageUrl: null,
     parentSkuId: null,
     variantCount: 0,
@@ -142,7 +149,7 @@ describe("catalog display grouping", () => {
       pain.code,
       konan.code,
     ]);
-    expect(groups[0].variantLabel).toBe("2 个子 SKU");
+    expect(groups[0].variantLabel).toBe("2 个规格 SKU");
   });
 
   it("creates a display group for loose sibling SKUs that do not yet have a parent", () => {

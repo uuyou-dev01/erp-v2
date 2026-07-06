@@ -45,6 +45,10 @@ interface SKUOption {
   id: string;
   code: string;
   name: string;
+  catalogRole?: string | null;
+  variantLabel?: string | null;
+  category?: string | null;
+  brand?: string | null;
   parentSkuId?: string | null;
   parentSku?: { id: string; code: string; name: string } | null;
   childSkus?: { id: string }[];
@@ -81,6 +85,17 @@ function generateLineId(): string {
   return `line-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isCatalogGroupOption(sku: SKUOption, allSkus: SKUOption[]) {
+  return (
+    sku.catalogRole === "GROUP" ||
+    (!sku.parentSkuId && allSkus.some((item) => item.parentSkuId === sku.id))
+  );
+}
+
+function compactSkuLabel(sku: SKUOption) {
+  return sku.variantLabel || sku.name;
+}
+
 export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -112,6 +127,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const [quickSku, setQuickSku] = useState({
     code: "",
     name: "",
+    variantLabel: "",
     category: "",
     brand: "",
     parentSkuId: "",
@@ -131,7 +147,11 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const groupedSkus = useMemo(() => {
     const query = skuSearch.trim().toLowerCase();
     const matched = query
-      ? skus.filter((sku) => [sku.code, sku.name].some((v) => v.toLowerCase().includes(query)))
+      ? skus.filter((sku) =>
+          [sku.code, sku.name, sku.variantLabel ?? ""].some((v) =>
+            v.toLowerCase().includes(query)
+          )
+        )
       : skus;
 
     const matchedIds = new Set(matched.map((s) => s.id));
@@ -213,8 +233,12 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   const handleCreateSku = async (e: React.FormEvent) => {
     e.preventDefault();
     setQuickSkuError(null);
-    if (!quickSku.code.trim() || !quickSku.name.trim()) {
-      setQuickSkuError("SKU代码和名称为必填项");
+    if (quickSku.parentSkuId && !quickSku.variantLabel.trim()) {
+      setQuickSkuError("请选择商品组后，需要填写规格名称");
+      return;
+    }
+    if (!quickSku.parentSkuId && !quickSku.name.trim()) {
+      setQuickSkuError("独立 SKU 需要填写商品名称");
       return;
     }
 
@@ -222,8 +246,10 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     try {
       const result = await createSKUAction({
         storeId,
-        code: quickSku.code.trim().toUpperCase(),
-        name: quickSku.name.trim(),
+        catalogRole: quickSku.parentSkuId ? "VARIANT" : "SIMPLE",
+        code: quickSku.code.trim().toUpperCase() || undefined,
+        name: quickSku.parentSkuId ? undefined : quickSku.name.trim(),
+        variantLabel: quickSku.parentSkuId ? quickSku.variantLabel.trim() : undefined,
         parentSkuId: quickSku.parentSkuId || undefined,
         category: quickSku.category.trim() || undefined,
         brand: quickSku.brand.trim() || undefined,
@@ -236,7 +262,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
       setSKUs(refreshed);
       setNewLine((prev) => ({ ...prev, skuId: result.id }));
       setSkuSearch(`${result.code} ${result.name}`);
-      setQuickSku({ code: "", name: "", category: "", brand: "", parentSkuId: "" });
+      setQuickSku({ code: "", name: "", variantLabel: "", category: "", brand: "", parentSkuId: "" });
       setQuickSkuError(null);
       setSkuCreateOpen(false);
       setLineErrors((prev) => {
@@ -559,7 +585,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                           });
                         }
 
-                        const isParentGroup = (group.parent.childSkus?.length ?? 0) > 0;
+                        const isParentGroup = isCatalogGroupOption(group.parent, skus);
                         const parentActive = group.parent.id === newLine.skuId;
 
                         return (
@@ -581,7 +607,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                                   {group.parent.code}
                                   {isParentGroup && (
                                     <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                      ({group.parent.childSkus?.length ?? group.children.length} 个子款，请选具体子 SKU)
+                                      ({group.parent.childSkus?.length ?? group.children.length} 个规格，请选规格 SKU)
                                     </span>
                                   )}
                                 </span>
@@ -605,7 +631,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                                       {child.code}
                                     </span>
                                     <span className="block truncate text-xs text-muted-foreground">
-                                      {child.name}
+                                      {compactSkuLabel(child)}
                                     </span>
                                   </span>
                                   {childActive && <Check className="h-4 w-4 shrink-0" />}
@@ -891,7 +917,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
           <Card className="relative z-10 w-full max-w-xl">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>快速新建SKU</CardTitle>
+                <CardTitle>快速新建 SKU</CardTitle>
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground"
@@ -905,8 +931,8 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
             <CardContent>
               <form onSubmit={handleCreateSku} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="quickParentSku">关联父 SKU</Label>
-                  <select
+                  <Label htmlFor="quickParentSku">关联商品组</Label>
+                  <Select
                     id="quickParentSku"
                     value={quickSku.parentSkuId}
                     onChange={(e) => {
@@ -914,40 +940,34 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                       const pid = e.target.value;
                       const parent = skus.find((s) => s.id === pid);
                       if (parent) {
-                        const childCount = skus.filter((s) => s.parentSkuId === pid).length;
-                        const suffix = String(childCount + 1).padStart(2, "0");
                         setQuickSku({
                           ...quickSku,
                           parentSkuId: pid,
-                          code: quickSku.code || `${parent.code}-${suffix}`,
-                          category:
-                            quickSku.category ||
-                            (parent as SKUOption & { category?: string }).category ||
-                            "",
-                          brand:
-                            quickSku.brand ||
-                            (parent as SKUOption & { brand?: string }).brand ||
-                            "",
+                          name: "",
+                          category: quickSku.category || parent.category || "",
+                          brand: quickSku.brand || parent.brand || "",
                         });
                       } else {
-                        setQuickSku({ ...quickSku, parentSkuId: "" });
+                        setQuickSku({ ...quickSku, parentSkuId: "", variantLabel: "" });
                       }
                     }}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   >
-                    <option value="">独立 SKU / 父 SKU</option>
+                    <option value="">不关联，创建独立 SKU</option>
                     {skus
-                      .filter((s) => !s.parentSkuId)
+                      .filter((s) => isCatalogGroupOption(s, skus))
                       .map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.code} · {s.name}
+                          {s.name} · {s.code}
                         </option>
                       ))}
-                  </select>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    采购真实商品时请选择规格 SKU；商品组本身不进采购单。
+                  </p>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="quickSkuCode">SKU代码 *</Label>
+                    <Label htmlFor="quickSkuCode">系统 SKU 编码</Label>
                     <Input
                       id="quickSkuCode"
                       value={quickSku.code}
@@ -956,21 +976,26 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                         setQuickSku({ ...quickSku, code: e.target.value.toUpperCase() });
                       }}
                       placeholder={
-                        quickSku.parentSkuId ? "自动生成，可修改" : "例如：IPHONE15-CASE-CLEAR"
+                        quickSku.parentSkuId ? "留空自动生成" : "留空自动生成"
                       }
-                      required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="quickSkuName">商品名称 *</Label>
+                    <Label htmlFor="quickSkuName">
+                      {quickSku.parentSkuId ? "规格名称 *" : "商品名称 *"}
+                    </Label>
                     <Input
                       id="quickSkuName"
-                      value={quickSku.name}
+                      value={quickSku.parentSkuId ? quickSku.variantLabel : quickSku.name}
                       onChange={(e) => {
                         setQuickSkuError(null);
-                        setQuickSku({ ...quickSku, name: e.target.value });
+                        setQuickSku(
+                          quickSku.parentSkuId
+                            ? { ...quickSku, variantLabel: e.target.value }
+                            : { ...quickSku, name: e.target.value }
+                        );
                       }}
-                      placeholder="例如：iPhone 15 透明手机壳"
+                      placeholder={quickSku.parentSkuId ? "例如：42码 / 小南" : "例如：竹筐"}
                       required
                     />
                   </div>
@@ -1002,7 +1027,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  这里只创建采购所需的最小SKU信息，图片和详细属性可后续在商品SKU页面补充。
+                  这里只创建采购所需的最小 SKU 信息，图片和详细属性可后续在商品档案页面补充。
                 </p>
                 {quickSkuError ? (
                   <div

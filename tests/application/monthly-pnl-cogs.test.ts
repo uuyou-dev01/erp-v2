@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { getMonthlyPnL } from "@/app/actions/reports";
 
@@ -8,6 +8,9 @@ const storeId = `store_${runId}`;
 
 describe("monthly P&L inventory cost", () => {
   beforeAll(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T12:00:00.000Z"));
+
     const organization = await prisma.organization.create({
       data: {
         code: organizationCode,
@@ -29,6 +32,7 @@ describe("monthly P&L inventory cost", () => {
   afterAll(async () => {
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
+    vi.useRealTimers();
   });
 
   it("uses allocated sold inventory cost instead of received purchase order total", async () => {

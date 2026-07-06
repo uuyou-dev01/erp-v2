@@ -9,6 +9,7 @@ import type { SkuCatalogListItem } from "@/lib/application/sku-catalog";
 import {
   catalogStatusLabel,
 } from "@/lib/application/sku-catalog";
+import type { SkuCatalogRole } from "@/lib/application/sku-identity";
 import { SkuCatalogRowActions } from "@/components/inventory/sku-catalog-row-actions";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -138,6 +139,8 @@ function words(value: string) {
 }
 
 function compactVariantName(group: SkuCatalogDisplayGroup, variant: SkuCatalogListItem) {
+  if (variant.variantLabel) return variant.variantLabel;
+
   const raw = variant.name.trim();
   const directPrefixes = [group.displayName, group.head.name, group.head.series]
     .filter((item): item is string => Boolean(item?.trim()))
@@ -170,11 +173,25 @@ function compactVariantName(group: SkuCatalogDisplayGroup, variant: SkuCatalogLi
   return raw;
 }
 
+function roleLabel(group: SkuCatalogDisplayGroup) {
+  if (group.head.catalogRole === "GROUP" || group.isSeries) return "商品组";
+  if (group.head.catalogRole === "VARIANT") return "规格 SKU";
+  return "独立 SKU";
+}
+
+function groupMatchesRole(group: SkuCatalogDisplayGroup, role: "all" | SkuCatalogRole) {
+  if (role === "all") return true;
+  if (role === "GROUP") return group.head.catalogRole === "GROUP" || group.isSeries;
+  if (role === "VARIANT") return group.variantItems.length > 0 || group.head.catalogRole === "VARIANT";
+  return !group.isSeries && group.head.catalogRole === "SIMPLE";
+}
+
 export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
   const [query, setQuery] = useState("");
   const [catalogStatus, setCatalogStatusFilter] = useState<
     "all" | "active" | "disabled"
   >("all");
+  const [catalogRole, setCatalogRoleFilter] = useState<"all" | SkuCatalogRole>("all");
   const [brand, setBrand] = useState("all");
   const [category, setCategory] = useState("all");
 
@@ -192,6 +209,7 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
   const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
     return grouped.filter((group) => {
+      if (!groupMatchesRole(group, catalogRole)) return false;
       const candidates = [group.head, ...group.variantItems];
       const matchesFilters = candidates.some((item) => {
         if (catalogStatus !== "all" && item.catalogStatus !== catalogStatus) return false;
@@ -205,13 +223,15 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
         return (
           item.code.toLowerCase().includes(q) ||
           item.name.toLowerCase().includes(q) ||
+          (item.manufacturerCode || "").toLowerCase().includes(q) ||
+          (item.variantLabel || "").toLowerCase().includes(q) ||
           (item.brand || "").toLowerCase().includes(q) ||
           (item.category || "").toLowerCase().includes(q) ||
           (item.series || "").toLowerCase().includes(q)
         );
       });
     });
-  }, [grouped, query, catalogStatus, brand, category]);
+  }, [grouped, query, catalogStatus, catalogRole, brand, category]);
 
   return (
     <div className="space-y-3">
@@ -221,12 +241,22 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="h-9 pl-9"
-              placeholder="搜索 SKU、名称、系列、品牌…"
+              placeholder="搜索商品组、规格、SKU、货号、品牌…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
           <div className="flex flex-wrap gap-2">
+            <select
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+              value={catalogRole}
+              onChange={(e) => setCatalogRoleFilter(e.target.value as "all" | SkuCatalogRole)}
+            >
+              <option value="all">全部类型</option>
+              <option value="GROUP">商品组</option>
+              <option value="VARIANT">含规格 SKU</option>
+              <option value="SIMPLE">独立 SKU</option>
+            </select>
             <select
               className="h-9 rounded-md border bg-background px-3 text-sm"
               value={catalogStatus}
@@ -269,7 +299,7 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
           </div>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          共 {filteredGroups.length} 组档案；这里用于查价格、采购均价、成交表现和利润，库存数量请进入库存看板。
+          共 {filteredGroups.length} 组档案；商品组用于聚合规格，业务单据请选择规格 SKU 或独立 SKU。
         </p>
       </div>
 
@@ -279,11 +309,11 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
           title="暂无商品档案"
           description={
             items.length === 0
-              ? "添加第一个 SKU 开始维护主数据。"
+              ? "添加第一个商品组或独立 SKU 开始维护主数据。"
               : "没有符合筛选条件的商品。"
           }
-          actionHref={items.length === 0 ? "/inventory/skus/new" : undefined}
-          actionLabel={items.length === 0 ? "添加 SKU" : undefined}
+          actionHref={items.length === 0 ? "/inventory/skus/new?mode=group" : undefined}
+          actionLabel={items.length === 0 ? "新增商品组" : undefined}
         />
       ) : (
         <div className="overflow-hidden rounded-lg border bg-card">
@@ -291,7 +321,7 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
             <TableHeader>
               <TableRow>
                 <TableHead className="min-w-[320px]">商品档案</TableHead>
-                <TableHead>层级 / 状态</TableHead>
+                <TableHead className="min-w-[120px]">层级 / 状态</TableHead>
                 <TableHead className="text-right">参考价</TableHead>
                 <TableHead className="text-right">平均进货价</TableHead>
                 <TableHead className="text-right">近销价</TableHead>
@@ -369,11 +399,20 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
-                        <Badge variant={group.isSeries ? "secondary" : "outline"}>
-                          {group.variantLabel}
+                        <Badge
+                          variant={group.isSeries ? "secondary" : "outline"}
+                          className="whitespace-nowrap"
+                        >
+                          {roleLabel(group)}
                         </Badge>
+                        {group.isSeries ? (
+                          <Badge variant="outline" className="whitespace-nowrap">
+                            {group.variantLabel}
+                          </Badge>
+                        ) : null}
                         <Badge
                           variant={head.catalogStatus === "active" ? "default" : "secondary"}
+                          className="whitespace-nowrap"
                         >
                           {catalogStatusLabel(head.catalogStatus)}
                         </Badge>

@@ -122,6 +122,43 @@ describe("import action preflight validation", () => {
     expect(lots).toHaveLength(0);
   });
 
+  it("rejects inventory lot imports when sku_code references a catalog group", async () => {
+    const group = await prisma.sKU.create({
+      data: {
+        storeId,
+        code: `GROUP_${runId}_LOT_IMPORT`,
+        name: "Import Lot Group",
+        catalogRole: "GROUP",
+      },
+    });
+    await prisma.location.create({
+      data: {
+        storeId,
+        code: `WH_${runId}_GROUP`,
+        name: "Import Group Warehouse",
+        type: "WAREHOUSE",
+      },
+    });
+
+    const result = await runImport(storeId, "INVENTORY_LOT", [
+      {
+        sku_code: group.code,
+        location_code: `WH_${runId}_GROUP`,
+        quantity: "1",
+        unit_cost: "100",
+      },
+    ]);
+
+    expect(result.success).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]?.message).toContain("商品组只用于管理规格");
+
+    const lots = await prisma.inventoryLot.findMany({
+      where: { storeId, sourceId: "CSV_IMPORT" },
+    });
+    expect(lots).toHaveLength(0);
+  });
+
   it("does not write earlier customer orders when a later order row references a missing platform", async () => {
     await prisma.platform.create({
       data: {
@@ -195,6 +232,44 @@ describe("import action preflight validation", () => {
     expect(result.errors).toEqual([
       { row: 2, message: `SKU SKU_${runId}_PO_MISSING 不存在` },
     ]);
+
+    const purchaseLines = await prisma.purchaseLine.findMany({
+      where: { purchaseOrderId: purchaseOrder.id },
+    });
+    expect(purchaseLines).toHaveLength(0);
+  });
+
+  it("rejects purchase line imports when sku_code references a catalog group", async () => {
+    const group = await prisma.sKU.create({
+      data: {
+        storeId,
+        code: `GROUP_${runId}_PO_IMPORT`,
+        name: "Import Purchase Group",
+        catalogRole: "GROUP",
+      },
+    });
+    const purchaseOrder = await prisma.purchaseOrder.create({
+      data: {
+        storeId,
+        orderNo: `PO_GROUP_${runId}`,
+        currency: "CNY",
+        subtotal: "0",
+        totalAmount: "0",
+      },
+    });
+
+    const result = await runImport(storeId, "PURCHASE_LINE", [
+      {
+        purchase_order_id: purchaseOrder.id,
+        sku_code: group.code,
+        quantity: "1",
+        unit_price: "100",
+      },
+    ]);
+
+    expect(result.success).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]?.message).toContain("商品组只用于管理规格");
 
     const purchaseLines = await prisma.purchaseLine.findMany({
       where: { purchaseOrderId: purchaseOrder.id },

@@ -19,6 +19,9 @@ interface BatchListingDialogProps {
     id: string;
     code: string;
     name: string;
+    catalogRole?: string | null;
+    parentSkuId?: string | null;
+    childSkus?: { id: string }[];
     sellableQty?: number;
     inTransitQty?: number;
   }>;
@@ -41,6 +44,10 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
   const [price, setPrice] = useState("");
   const [currency, setCurrency] = useState("CNY");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const operationalSkus = useMemo(
+    () => skus.filter((sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length)),
+    [skus]
+  );
 
   const handleToggleSku = (skuId: string) => {
     setSubmitError(null);
@@ -57,10 +64,10 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
 
   const handleSelectAll = () => {
     setSubmitError(null);
-    if (selectedSkus.size === skus.length) {
+    if (selectedSkus.size === operationalSkus.length) {
       setSelectedSkus(new Set());
     } else {
-      setSelectedSkus(new Set(skus.map((s) => s.id)));
+      setSelectedSkus(new Set(operationalSkus.map((s) => s.id)));
     }
   };
 
@@ -109,7 +116,7 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
   };
 
   const selectedPlatform = platforms.find((p) => p.id === platformId);
-  const selectedSkuList = skus.filter((s) => selectedSkus.has(s.id));
+  const selectedSkuList = operationalSkus.filter((s) => selectedSkus.has(s.id));
 
   const inTransitOnlySelected = useMemo(
     () =>
@@ -152,19 +159,19 @@ export function BatchListingDialog({ storeId, platforms, skus }: BatchListingDia
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
-                  已选择 {selectedSkus.size} / {skus.length} 个SKU
+                  已选择 {selectedSkus.size} / {operationalSkus.length} 个SKU
                 </p>
                 <Button variant="ghost" size="sm" onClick={handleSelectAll}>
-                  {selectedSkus.size === skus.length ? "取消全选" : "全选"}
+                  {selectedSkus.size === operationalSkus.length ? "取消全选" : "全选"}
                 </Button>
               </div>
-              {skus.length === 0 ? (
+              {operationalSkus.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">
                   暂无可用 SKU，请先创建商品
                 </p>
               ) : (
                 <div className="max-h-[40vh] overflow-auto border rounded-lg divide-y">
-                  {skus.map((sku) => {
+                  {operationalSkus.map((sku) => {
                     const checked = selectedSkus.has(sku.id);
                     const sellable = sku.sellableQty ?? 0;
                     const inTransit = sku.inTransitQty ?? 0;

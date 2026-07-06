@@ -3,6 +3,7 @@ import {
   getStoreStockBreakdown,
   type SkuStockBreakdown,
 } from "@/lib/application/inventory";
+import { deriveCatalogRole, type SkuCatalogRole } from "@/lib/application/sku-identity";
 import Decimal from "decimal.js";
 
 export type CatalogStatus = "active" | "disabled";
@@ -255,6 +256,13 @@ export interface SkuCatalogListItem {
   id: string;
   code: string;
   name: string;
+  catalogRole: SkuCatalogRole;
+  manufacturerCode: string | null;
+  variantLabel: string | null;
+  variantAxes: string[];
+  variantValues: Record<string, string>;
+  nameSource: string;
+  codeSource: string;
   brand: string | null;
   category: string | null;
   imageUrl: string | null;
@@ -432,6 +440,21 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
   };
 }
 
+function stringArrayFromJson(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function stringRecordFromJson(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, val]) => [key.trim(), String(val ?? "").trim()] as const)
+      .filter(([key, val]) => key && val)
+  );
+}
+
 export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogListItem[]> {
   const [skus, stockBreakdown, activeListings, salesLines, purchaseLines] = await Promise.all([
     prisma.sKU.findMany({
@@ -440,6 +463,13 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
         id: true,
         code: true,
         name: true,
+        catalogRole: true,
+        manufacturerCode: true,
+        variantLabel: true,
+        variantAxes: true,
+        variantValues: true,
+        nameSource: true,
+        codeSource: true,
         brand: true,
         category: true,
         imageUrl: true,
@@ -525,9 +555,12 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
   return skus.map((sku) => {
     const meta = parseSkuCatalogMeta(sku.attributes, sku.imageUrl);
     const childSkuIds = childSkuIdsByParent.get(sku.id) ?? [];
-    const metricSkuIds = !sku.parentSkuId && childSkuIds.length > 0
-      ? [sku.id, ...childSkuIds]
-      : [sku.id];
+    const catalogRole = deriveCatalogRole({
+      catalogRole: sku.catalogRole,
+      parentSkuId: sku.parentSkuId,
+      childCount: childSkuIds.length,
+    });
+    const metricSkuIds = catalogRole === "GROUP" ? childSkuIds : [sku.id];
     const stockMetrics = aggregateStockMetrics(metricSkuIds, stockBreakdown);
     const activeListingCount = metricSkuIds.reduce(
       (sum, skuId) => sum + (activeListingsBySku.get(skuId) ?? 0),
@@ -543,6 +576,13 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
       id: sku.id,
       code: sku.code,
       name: sku.name,
+      catalogRole,
+      manufacturerCode: sku.manufacturerCode,
+      variantLabel: sku.variantLabel,
+      variantAxes: stringArrayFromJson(sku.variantAxes),
+      variantValues: stringRecordFromJson(sku.variantValues),
+      nameSource: sku.nameSource,
+      codeSource: sku.codeSource,
       brand: sku.brand,
       category: sku.category,
       imageUrl: resolveCoverImageUrl(meta, sku.imageUrl),
@@ -719,10 +759,13 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
 
   if (!sku) return null;
 
+  const catalogRole = deriveCatalogRole({
+    catalogRole: sku.catalogRole,
+    parentSkuId: sku.parentSkuId,
+    childCount: sku.childSkus.length,
+  });
   const metricSkuIds =
-    !sku.parentSkuId && sku.childSkus.length > 0
-      ? [sku.id, ...sku.childSkus.map((child) => child.id)]
-      : [sku.id];
+    catalogRole === "GROUP" ? sku.childSkus.map((child) => child.id) : [sku.id];
   const metricSkuIdSet = new Set(metricSkuIds);
 
   const [
@@ -851,6 +894,13 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     id: sku.id,
     code: sku.code,
     name: sku.name,
+    catalogRole,
+    manufacturerCode: sku.manufacturerCode,
+    variantLabel: sku.variantLabel,
+    variantAxes: stringArrayFromJson(sku.variantAxes),
+    variantValues: stringRecordFromJson(sku.variantValues),
+    nameSource: sku.nameSource,
+    codeSource: sku.codeSource,
     brand: sku.brand,
     category: sku.category,
     imageUrl: resolveCoverImageUrl(parsed, sku.imageUrl),

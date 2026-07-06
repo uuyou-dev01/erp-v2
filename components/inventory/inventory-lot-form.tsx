@@ -22,7 +22,14 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [skus, setSKUs] = useState<
-    Array<{ id: string; code: string; name: string; parentSkuId?: string | null; childSkus?: { id: string }[] }>
+    Array<{
+      id: string;
+      code: string;
+      name: string;
+      catalogRole?: string | null;
+      parentSkuId?: string | null;
+      childSkus?: { id: string }[];
+    }>
   >([]);
   const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [formData, setFormData] = useState({
@@ -122,7 +129,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
             >
               <option value="">{t("inventory.select_sku")}</option>
               {skus
-                .filter((sku) => sku.parentSkuId || !sku.childSkus?.length)
+                .filter((sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length))
                 .map((sku) => (
                 <option key={sku.id} value={sku.id}>
                   {sku.code} - {sku.name}

@@ -97,6 +97,11 @@ docs/
 
 ### 待实施功能
 - [货盘分销系统](modules/marketplace-distribution.md)
+- [货盘市场与代卖协作改造蓝图](superpowers/specs/2026-07-06-marketplace-resale-design.md)
+- [货盘市场与代卖协作实施计划](superpowers/plans/2026-07-06-marketplace-resale-implementation.md)
+- [商品情报库设计](superpowers/specs/2026-07-06-product-intelligence-design.md)
+- [商品情报库实施计划](superpowers/plans/2026-07-06-product-intelligence-implementation.md)
+- [商品主档 SPU-like 模型升级计划](superpowers/plans/2026-07-06-sku-catalog-model-upgrade.md)
 - [差距分析](MARKETPLACE_GAP_ANALYSIS.md)
 
 ## 文档维护规范

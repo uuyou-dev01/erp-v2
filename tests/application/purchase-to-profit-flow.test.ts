@@ -44,6 +44,8 @@ let platformId = "";
 
 describe("purchase to profit business flow", () => {
   beforeAll(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-22T12:00:00.000Z"));
     process.env.ERP_DEV_USER_EMAIL = userEmail;
 
     const organization = await prisma.organization.create({
@@ -142,6 +144,7 @@ describe("purchase to profit business flow", () => {
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
     delete process.env.ERP_DEV_USER_EMAIL;
+    vi.useRealTimers();
   });
 
   it("receives purchased stock, sells it, ships it, and reports profit", async () => {
@@ -334,6 +337,39 @@ describe("purchase to profit business flow", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error).toContain("订单不存在");
+    }
+  });
+
+  it("rejects adding a catalog group directly to a customer order line", async () => {
+    const group = await prisma.sKU.create({
+      data: {
+        storeId,
+        code: `GROUP_${runId}_SALES`,
+        name: "Sales Group Product",
+        catalogRole: "GROUP",
+      },
+    });
+    const orderResult = await createCustomerOrderAction({
+      storeId,
+      orderNumber: `SO_GROUP_${runId}`,
+      platformId,
+      customerName: "Group Buyer",
+      orderDate: new Date("2026-06-22T01:00:00.000Z"),
+      currency: "CNY",
+    });
+    expect(orderResult.success).toBe(true);
+    if (!orderResult.success) throw new Error(orderResult.error);
+
+    const result = await addOrderLineAction({
+      orderId: orderResult.id,
+      skuId: group.id,
+      quantity: "1",
+      unitPrice: "100",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("商品组只用于管理规格");
     }
   });
 

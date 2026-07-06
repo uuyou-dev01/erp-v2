@@ -118,6 +118,7 @@ A comprehensive ERP system designed for resale/arbitrage businesses across multi
 3. **Allocation Before Confirmation**: Orders must allocate inventory before confirmation
 4. **Decimal Precision**: All monetary amounts use Decimal.js
 5. **Multi-tenancy Ready**: All data includes storeId for SaaS support
+6. **SPU-like Product Groups**: 商品组 is the product-family/model container; only 规格 SKU and 独立 SKU can enter procurement, inventory, listings, and sales
 
 ## Documentation
 
@@ -125,6 +126,7 @@ See the `/docs` directory for detailed business domain documentation:
 - `overview.md` - Project overview
 - `domain.md` - Core domain abstractions
 - `constraints.md` - System constraints
+- `superpowers/plans/2026-07-06-sku-catalog-model-upgrade.md` - 商品组 / 规格 SKU / 独立 SKU upgrade plan
 - Module-specific documentation (inventory, procurement, sales, etc.)
 
 ## License

@@ -18,6 +18,13 @@ interface SKUDetailActionsProps {
     id: string;
     code: string;
     name: string;
+    catalogRole?: string | null;
+    manufacturerCode?: string | null;
+    variantLabel?: string | null;
+    variantAxes?: unknown;
+    variantValues?: unknown;
+    nameSource?: string | null;
+    codeSource?: string | null;
     parentSkuId?: string | null;
     category?: string | null;
     brand?: string | null;
@@ -123,7 +130,7 @@ export function SKUDetailActions({
       <ConfirmDialog
         open={deleteOpen}
         title="确认删除 SKU"
-        description={`确认删除「${sku.name}（${sku.code}）」？若已有库存、采购、销售、刊登或子 SKU，系统将阻止删除。`}
+        description={`确认删除「${sku.name}（${sku.code}）」？若已有库存、采购、销售、刊登或规格 SKU，系统将阻止删除。`}
         confirmText="确认删除"
         cancelText="取消"
         loading={deleteLoading}

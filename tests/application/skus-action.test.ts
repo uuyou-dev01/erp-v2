@@ -12,11 +12,13 @@ vi.mock("next/headers", () => ({
 }));
 
 import {
+  createSKU,
   createSKUAction,
   deleteSKUAction,
   setSkuCatalogStatusAction,
   updateSKUAction,
 } from "@/app/actions/skus";
+import { createInventoryLotAction } from "@/app/actions/inventory-lots";
 
 const runId = `skus_action_${Date.now()}`;
 const organizationCode = `org_${runId}`;
@@ -139,6 +141,77 @@ describe("sku action results", () => {
     expect(invalidCurrency.success).toBe(false);
     if (!invalidCurrency.success) {
       expect(invalidCurrency.error).toContain("币种必须是 CNY、JPY、USD 或 EUR");
+    }
+  });
+
+  it("creates catalog groups and variant SKUs with generated internal identity", async () => {
+    const groupResult = await createSKUAction({
+      storeId,
+      catalogRole: "GROUP",
+      name: "AJ1 芝加哥 2015",
+      brand: "Nike",
+      category: "球鞋",
+      manufacturerCode: "555088-101",
+      variantAxes: ["尺码"],
+    });
+
+    expect(groupResult.success).toBe(true);
+    if (!groupResult.success) return;
+    expect(groupResult.code).toBe("NIKE-555088-101");
+    expect(groupResult.name).toBe("AJ1 芝加哥 2015");
+    expect(groupResult.catalogRole).toBe("GROUP");
+    expect(groupResult.manufacturerCode).toBe("555088-101");
+
+    const variantResult = await createSKUAction({
+      storeId,
+      catalogRole: "VARIANT",
+      parentSkuId: groupResult.id,
+      variantLabel: "42码",
+      variantValues: { 尺码: "42码" },
+    });
+
+    expect(variantResult.success).toBe(true);
+    if (!variantResult.success) return;
+    expect(variantResult.code).toBe("NIKE-555088-101-42");
+    expect(variantResult.name).toBe("AJ1 芝加哥 2015 · 42码");
+    expect(variantResult.catalogRole).toBe("VARIANT");
+    expect(variantResult.variantLabel).toBe("42码");
+    expect(variantResult.variantValues).toEqual({ 尺码: "42码" });
+  });
+
+  it("rejects inventory operations for an explicit catalog group even before variants exist", async () => {
+    const group = await createSKU({
+      storeId,
+      catalogRole: "GROUP",
+      name: "火影忍者 晓组织系列",
+      category: "潮玩",
+      variantAxes: ["角色"],
+    });
+    const location = await prisma.location.create({
+      data: {
+        storeId,
+        code: `WH_${runId}_GROUP_REJECT`,
+        name: "Group Reject Warehouse",
+        type: "WAREHOUSE",
+        region: "CN_SHANGHAI",
+      },
+    });
+
+    const result = await createInventoryLotAction({
+      storeId,
+      skuId: group.id,
+      locationId: location.id,
+      quantity: "1",
+      unitCost: "100",
+      costCurrency: "CNY",
+      sourceType: "PURCHASE",
+      sourceId: `${runId}_GROUP_REJECT`,
+      receivedAt: new Date("2026-07-06T08:00:00.000Z"),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("商品组只用于管理规格");
     }
   });
 });

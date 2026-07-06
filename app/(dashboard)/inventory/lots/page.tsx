@@ -84,7 +84,7 @@ export default async function LotsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{lotGroups.length}</div>
-            <p className="text-xs text-muted-foreground">父 SKU / 独立 SKU 汇总</p>
+            <p className="text-xs text-muted-foreground">商品组 / 独立 SKU 汇总</p>
           </CardContent>
         </Card>
       </div>
@@ -134,7 +134,7 @@ export default async function LotsPage() {
 
                 <div className="grid gap-3 p-4 xl:grid-cols-[minmax(260px,360px)_1fr]">
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">子 SKU / 变体</p>
+                    <p className="text-sm font-medium">规格 SKU / 变体</p>
                     {group.variants.map((variant) => (
                       <div key={variant.skuId} className="rounded-md border p-3">
                         <div className="flex items-start justify-between gap-3">

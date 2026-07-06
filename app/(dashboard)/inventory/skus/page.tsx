@@ -18,14 +18,20 @@ export default async function SKUsPage() {
       <PageHeader
         className="mb-0"
         title="商品档案"
-        description="查询 SKU 主数据、售价、采购均价、成交记录与利润表现；库存请进入库存看板。"
+        description="按商品组（类似 SPU）管理系列档案；规格 SKU 和独立 SKU 承接采购、库存、上架与销售。"
         actions={
           <>
             <SKUImportButton />
-            <Link href="/inventory/skus/new">
+            <Link href="/inventory/skus/new?mode=group">
               <Button size="sm">
                 <Plus className="mr-1.5 h-4 w-4" />
-                添加 SKU
+                新增商品组
+              </Button>
+            </Link>
+            <Link href="/inventory/skus/new?mode=simple">
+              <Button size="sm" variant="outline">
+                <Plus className="mr-1.5 h-4 w-4" />
+                新增独立 SKU
               </Button>
             </Link>
           </>

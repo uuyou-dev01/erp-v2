@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { createInboundInventoryLot } from "@/lib/application/inventory";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 import {
   type ImportEntityType,
   validateImportRows,
@@ -310,6 +311,11 @@ async function importInventoryLot(
     where: { storeId_code: { storeId, code: skuCode } },
   });
   if (!sku) throw new Error(`SKU ${skuCode} 不存在`);
+  await assertOperationalSku(prisma, {
+    storeId,
+    skuId: sku.id,
+    actionLabel: "入库",
+  });
 
   const location = await prisma.location.findUnique({
     where: { storeId_code: { storeId, code: locationCode } },
@@ -356,6 +362,11 @@ async function importPurchaseLine(
     where: { storeId_code: { storeId, code: skuCode } },
   });
   if (!sku) throw new Error(`SKU ${skuCode} 不存在`);
+  await assertOperationalSku(prisma, {
+    storeId,
+    skuId: sku.id,
+    actionLabel: "采购",
+  });
 
   const qty = parseFloat(quantity);
   const price = parseFloat(unitPrice);

@@ -19,6 +19,7 @@ import {
   parseQuantity,
 } from "@/lib/quick-entry-utils";
 import { getLatestFxRate } from "@/lib/fx";
+import { assertOperationalSku } from "@/lib/application/sku-operability";
 
 export type WorkflowStage =
   | "PURCHASE"
@@ -371,6 +372,11 @@ export async function processQuickEntry(entryId: string) {
         skuId = sku.id;
         skuCreated = created;
       }
+      await assertOperationalSku(tx, {
+        storeId: entry.storeId,
+        skuId: skuId!,
+        actionLabel: "快速录入",
+      });
 
       let purchaseOrderId = entry.generatedPurchaseOrderId;
       let purchaseLineId = entry.generatedPurchaseLineId;

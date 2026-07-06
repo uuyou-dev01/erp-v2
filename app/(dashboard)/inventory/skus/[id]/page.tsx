@@ -88,6 +88,8 @@ function wordParts(value: string) {
 }
 
 function variantDisplayName(parent: SkuCatalogDetail, child: SkuCatalogDetail) {
+  if (child.variantLabel) return child.variantLabel;
+
   const raw = child.name.trim();
   const prefixes = [parent.name, parent.series, parent.meta.series]
     .filter((item): item is string => Boolean(item?.trim()))
@@ -143,8 +145,8 @@ export default async function SKUDetailPage({
     notFound();
   }
 
-  const isParentSku = !sku.parentSkuId && sku.childSkus.length > 0;
-  const childDetails = isParentSku
+  const isProductGroup = sku.catalogRole === "GROUP" || (!sku.parentSkuId && sku.childSkus.length > 0);
+  const childDetails = isProductGroup
     ? (
         await Promise.all(sku.childSkus.map((child) => getSkuCatalogDetail(child.id)))
       ).filter((child): child is SkuCatalogDetail => Boolean(child))
@@ -226,7 +228,9 @@ export default async function SKUDetailPage({
             </h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {selectedVariantName ? `当前变体：${selectedVariantName} · ` : ""}
-              SKU 商业档案 · 价格、采购均价、成交记录与利润表现
+              {isProductGroup
+                ? "商品组档案 · 选择规格查看采购、库存、上架与成交"
+                : "SKU 商业档案 · 价格、采购均价、成交记录与利润表现"}
             </p>
           </div>
         </div>
@@ -238,6 +242,13 @@ export default async function SKUDetailPage({
             id: displaySku.id,
             code: displaySku.code,
             name: displaySku.name,
+            catalogRole: displaySku.catalogRole,
+            manufacturerCode: displaySku.manufacturerCode,
+            variantLabel: displaySku.variantLabel,
+            variantAxes: displaySku.variantAxes,
+            variantValues: displaySku.variantValues,
+            nameSource: displaySku.nameSource,
+            codeSource: displaySku.codeSource,
             category: displaySku.category,
             brand: displaySku.brand,
             attributes: {
@@ -393,7 +404,7 @@ export default async function SKUDetailPage({
             </CardContent>
           </Card>
 
-          {(isParentSku ||
+          {(isProductGroup ||
             displaySku.parentSku ||
             variantEntries.length > 0) && (
             <Card>
@@ -404,49 +415,60 @@ export default async function SKUDetailPage({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-0 text-sm">
-                {isParentSku && childDetails.length > 0 ? (
+                {isProductGroup ? (
                   <div>
-                    <p className="mb-1 text-xs text-muted-foreground">
-                      选择一个变体查看价格、采购、成交与利润
-                    </p>
-                    <div className="grid gap-1.5 sm:grid-cols-2">
-                      {childDetails.map((child) => {
-                        const selected = child.id === displaySku.id;
-                        return (
-                          <Link
-                            key={child.id}
-                            href={variantHref(child.id)}
-                            className={`rounded-md border px-3 py-2 transition-colors ${
-                              selected
-                                ? "border-primary bg-primary/5"
-                                : "hover:bg-muted/60"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="min-w-0 truncate font-medium">
-                                {variantDisplayName(sku, child)}
-                              </span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                成交 {child.business.salesCount} 次
-                              </span>
-                            </div>
-                            <p className="mt-1 truncate text-xs text-muted-foreground">
-                              {child.business.averageSalePrice
-                                ? `均价 ${formatCurrency(
-                                    child.business.averageSalePrice,
-                                    child.business.salesCurrency ?? child.currency ?? "CNY"
-                                  )}`
-                                : "暂无成交价"}
-                            </p>
-                          </Link>
-                        );
-                      })}
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        选择一个规格查看价格、采购、成交与利润
+                      </p>
+                      <Link href={`/inventory/skus/new?mode=variant&parentSkuId=${sku.id}`}>
+                        <Button variant="outline" size="sm" className="h-8">
+                          新增规格
+                        </Button>
+                      </Link>
                     </div>
+                    {childDetails.length > 0 ? (
+                      <div className="grid gap-1.5 sm:grid-cols-2">
+                        {childDetails.map((child) => {
+                          const selected = child.id === displaySku.id;
+                          return (
+                            <Link
+                              key={child.id}
+                              href={variantHref(child.id)}
+                              className={`rounded-md border px-3 py-2 transition-colors ${
+                                selected
+                                  ? "border-primary bg-primary/5"
+                                  : "hover:bg-muted/60"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate font-medium">
+                                  {variantDisplayName(sku, child)}
+                                </span>
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  成交 {child.business.salesCount} 次
+                                </span>
+                              </div>
+                              <p className="mt-1 truncate text-xs text-muted-foreground">
+                                {child.business.averageSalePrice
+                                  ? `均价 ${formatCurrency(
+                                      child.business.averageSalePrice,
+                                      child.business.salesCurrency ?? child.currency ?? "CNY"
+                                    )}`
+                                  : "暂无成交价"}
+                              </p>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <EmptyHint>这个商品组还没有规格 SKU</EmptyHint>
+                    )}
                   </div>
                 ) : null}
                 {displaySku.parentSku ? (
                   <p>
-                    <span className="text-muted-foreground">父 SKU：</span>
+                    <span className="text-muted-foreground">归属商品组：</span>
                     <Link
                       href={`/inventory/skus/${displaySku.parentSku.id}`}
                       className="font-medium hover:underline"
