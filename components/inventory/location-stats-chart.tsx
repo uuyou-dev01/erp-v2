@@ -15,7 +15,7 @@ interface LocationStatsChartProps {
   data: Array<{
     skuCode: string;
     skuName: string;
-    activeLotCount: number;
+    lotStockQty: number;
     availableItemCount: number;
     allocatedItemCount: number;
     consumedItemCount: number;
@@ -47,29 +47,29 @@ export function LocationStatsChart({ data }: LocationStatsChartProps) {
             <TableRow>
               <TableHead>SKU</TableHead>
               <TableHead>名称</TableHead>
-              <TableHead className="text-right">可售批次</TableHead>
+              <TableHead className="text-right">批次库存</TableHead>
               <TableHead className="text-right">可售单品</TableHead>
               <TableHead className="text-right">已分配</TableHead>
               <TableHead className="text-right">已发出</TableHead>
-              <TableHead className="text-right">能卖</TableHead>
+              <TableHead className="text-right">有库存</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.map((row) => {
-              const sellableCount = row.activeLotCount + row.availableItemCount;
-              const canSell = sellableCount > 0;
+              const stockCount = row.lotStockQty + row.availableItemCount;
+              const hasStock = stockCount > 0;
 
               return (
                 <TableRow key={row.skuCode}>
                   <TableCell className="font-medium">{row.skuCode}</TableCell>
                   <TableCell>{row.skuName}</TableCell>
-                  <TableCell className="text-right">{row.activeLotCount}</TableCell>
+                  <TableCell className="text-right">{row.lotStockQty}</TableCell>
                   <TableCell className="text-right">{row.availableItemCount}</TableCell>
                   <TableCell className="text-right">{row.allocatedItemCount}</TableCell>
                   <TableCell className="text-right">{row.consumedItemCount}</TableCell>
                   <TableCell className="text-right">
-                    <Badge variant={canSell ? "default" : "outline"}>
-                      {canSell ? "可售" : "不可售"}
+                    <Badge variant={hasStock ? "default" : "outline"}>
+                      {hasStock ? "有库存" : "无库存"}
                     </Badge>
                   </TableCell>
                 </TableRow>

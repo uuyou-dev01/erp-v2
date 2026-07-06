@@ -3,6 +3,9 @@ export const CORE_SELLING_PLATFORM_CODES = [
   "YAHOO_AUCTION",
   "SNKRDUNK",
   "XIAN_YU",
+  "DOUYIN",
+  "XIAOHONGSHU",
+  "TAOBAO",
 ] as const;
 
 export const FULFILLMENT_READY_PLATFORM_CODES = [

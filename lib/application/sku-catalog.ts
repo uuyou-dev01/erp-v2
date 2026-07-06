@@ -273,6 +273,12 @@ export interface SkuCatalogListItem {
     averageSalePrice: string | null;
     salesCurrency: string | null;
     salesCount: number;
+    salesAmount: string;
+    lastSoldAt: string | null;
+    averagePurchasePrice: string | null;
+    purchaseCurrency: string | null;
+    grossProfitPerUnit: string | null;
+    grossMarginRate: string | null;
     primaryPlatformName: string | null;
     primaryPlatformCode: string | null;
   };
@@ -383,6 +389,18 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
       pendingCostLineCount: number;
       currency: string | null;
     };
+    salesVelocity: {
+      firstSoldAt: string | null;
+      lastSoldAt: string | null;
+      averageMonthlyQty: string;
+      averageDaysBetweenSales: string | null;
+    };
+    priceHistory: Array<{
+      date: string;
+      salePrice: string | null;
+      purchasePrice: string | null;
+      currency: string | null;
+    }>;
   };
   reference: {
     sellableLotQty: string;
@@ -415,7 +433,7 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
 }
 
 export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogListItem[]> {
-  const [skus, stockBreakdown, activeListings, salesLines] = await Promise.all([
+  const [skus, stockBreakdown, activeListings, salesLines, purchaseLines] = await Promise.all([
     prisma.sKU.findMany({
       where: { storeId },
       select: {
@@ -458,6 +476,24 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
       },
       orderBy: { createdAt: "desc" },
     }),
+    prisma.purchaseLine.findMany({
+      where: { sku: { storeId } },
+      select: {
+        skuId: true,
+        quantity: true,
+        unitPrice: true,
+        lineAmount: true,
+        purchaseOrder: {
+          select: {
+            currency: true,
+            status: true,
+            orderedAt: true,
+            createdAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
   ]);
 
   const activeListingsBySku = new Map<string, number>();
@@ -471,6 +507,12 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
     const bucket = salesBySku.get(line.skuId) ?? [];
     bucket.push(line);
     salesBySku.set(line.skuId, bucket);
+  }
+  const purchasesBySku = new Map<string, typeof purchaseLines>();
+  for (const line of purchaseLines) {
+    const bucket = purchasesBySku.get(line.skuId) ?? [];
+    bucket.push(line);
+    purchasesBySku.set(line.skuId, bucket);
   }
   const childSkuIdsByParent = new Map<string, string[]>();
   for (const sku of skus) {
@@ -493,6 +535,10 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
     );
     const sales = metricSkuIds.flatMap((skuId) => salesBySku.get(skuId) ?? []);
     const salesMetrics = computeSkuListSalesMetrics(sales);
+    const purchaseMetrics = computeSkuPurchaseMetrics(
+      metricSkuIds.flatMap((skuId) => purchasesBySku.get(skuId) ?? [])
+    );
+    const marginMetrics = computeSkuMarginMetrics(salesMetrics, purchaseMetrics);
     return {
       id: sku.id,
       code: sku.code,
@@ -512,9 +558,83 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
         inTransitQty: stockMetrics.inTransitQty.toString(),
         activeListingCount,
         ...salesMetrics,
+        ...purchaseMetrics,
+        ...marginMetrics,
       },
     };
   });
+}
+
+function computeSkuPurchaseMetrics(
+  lines: Array<{
+    quantity: { toString(): string };
+    lineAmount: { toString(): string };
+    purchaseOrder: {
+      currency: string;
+      status?: string | null;
+      orderedAt?: Date | null;
+      createdAt?: Date | null;
+    };
+  }>
+) {
+  const validLines = lines.filter(
+    (line) => !String(line.purchaseOrder.status ?? "").toUpperCase().includes("CANCEL")
+  );
+  if (validLines.length === 0) {
+    return {
+      averagePurchasePrice: null,
+      purchaseCurrency: null,
+    };
+  }
+
+  let totalQty = new Decimal(0);
+  let totalAmount = new Decimal(0);
+  const sorted = [...validLines].sort((a, b) => {
+    const aDate = a.purchaseOrder.orderedAt ?? a.purchaseOrder.createdAt;
+    const bDate = b.purchaseOrder.orderedAt ?? b.purchaseOrder.createdAt;
+    return (bDate?.getTime() ?? 0) - (aDate?.getTime() ?? 0);
+  });
+
+  for (const line of validLines) {
+    totalQty = totalQty.plus(new Decimal(line.quantity.toString()));
+    totalAmount = totalAmount.plus(new Decimal(line.lineAmount.toString()));
+  }
+
+  return {
+    averagePurchasePrice: totalQty.gt(0) ? totalAmount.div(totalQty).toFixed(2) : null,
+    purchaseCurrency: sorted[0]?.purchaseOrder.currency ?? null,
+  };
+}
+
+function computeSkuMarginMetrics(
+  sales: Pick<
+    ReturnType<typeof computeSkuListSalesMetrics>,
+    "averageSalePrice" | "salesCurrency"
+  >,
+  purchase: ReturnType<typeof computeSkuPurchaseMetrics>
+) {
+  const saleCurrency = sales.salesCurrency;
+  const purchaseCurrency = purchase.purchaseCurrency;
+  const compatibleCurrency =
+    !saleCurrency || !purchaseCurrency || saleCurrency === purchaseCurrency;
+
+  if (!sales.averageSalePrice || !purchase.averagePurchasePrice || !compatibleCurrency) {
+    return {
+      grossProfitPerUnit: null,
+      grossMarginRate: null,
+    };
+  }
+
+  const averageSale = new Decimal(sales.averageSalePrice);
+  const averagePurchase = new Decimal(purchase.averagePurchasePrice);
+  const grossProfit = averageSale.minus(averagePurchase);
+
+  return {
+    grossProfitPerUnit: grossProfit.toFixed(2),
+    grossMarginRate: averageSale.gt(0)
+      ? grossProfit.div(averageSale).mul(100).toFixed(1)
+      : null,
+  };
 }
 
 function computeSkuListSalesMetrics(
@@ -534,6 +654,8 @@ function computeSkuListSalesMetrics(
       averageSalePrice: null,
       salesCurrency: null,
       salesCount: 0,
+      salesAmount: "0.00",
+      lastSoldAt: null,
       primaryPlatformName: null,
       primaryPlatformCode: null,
     };
@@ -576,6 +698,8 @@ function computeSkuListSalesMetrics(
     averageSalePrice: totalQty.gt(0) ? totalAmount.div(totalQty).toFixed(2) : null,
     salesCurrency: latest.order.currency,
     salesCount: lines.length,
+    salesAmount: totalAmount.toFixed(2),
+    lastSoldAt: latest.order.orderDate.toISOString(),
     primaryPlatformName: primaryPlatform?.name ?? null,
     primaryPlatformCode: primaryPlatform?.code ?? null,
   };
@@ -607,6 +731,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     activeListings,
     purchaseLines,
     purchaseLineCount,
+    allPurchaseLines,
     inventoryLots,
     lotAggregates,
     itemUnits,
@@ -663,6 +788,20 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
       },
     }),
     prisma.purchaseLine.count({ where: { skuId: { in: metricSkuIds } } }),
+    prisma.purchaseLine.findMany({
+      where: { skuId: { in: metricSkuIds } },
+      orderBy: { createdAt: "desc" },
+      include: {
+        purchaseOrder: {
+          select: {
+            currency: true,
+            status: true,
+            orderedAt: true,
+            createdAt: true,
+          },
+        },
+      },
+    }),
     prisma.inventoryLot.findMany({
       where: { storeId: sku.storeId, skuId: { in: metricSkuIds }, status: "ACTIVE" },
       orderBy: { receivedAt: "desc" },
@@ -688,10 +827,13 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
   const stockBreakdown = aggregateSkuStockBreakdown(metricSkuIds, storeStockBreakdown);
   const parsed = parseSkuCatalogMeta(sku.attributes, sku.imageUrl);
   const salesMetrics = computeSkuListSalesMetrics(salesLines);
+  const purchaseMetrics = computeSkuPurchaseMetrics(allPurchaseLines);
+  const marginMetrics = computeSkuMarginMetrics(salesMetrics, purchaseMetrics);
   const analysis = buildSkuDetailAnalysis({
     stockBreakdown,
     listings: activeListings,
     salesLines,
+    purchaseLines: allPurchaseLines,
   });
   const lotQtyById = new Map(
     lotAggregates.map((aggregate) => [
@@ -724,6 +866,8 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
       inTransitQty: stockBreakdown.inTransitQty.toString(),
       activeListingCount: activeListings.length,
       ...salesMetrics,
+      ...purchaseMetrics,
+      ...marginMetrics,
     },
     description: sku.description,
     meta: parsed,
@@ -882,12 +1026,24 @@ function buildSkuDetailAnalysis(input: {
   salesLines: Array<{
     id: string;
     quantity: { toString(): string };
+    unitPrice: { toString(): string } | null;
     lineAmount: { toString(): string };
     allocations: Array<{ costAmount: { toString(): string } }>;
     order: {
       orderDate: Date;
       currency: string;
       platform: { name: string; code: string } | null;
+    };
+  }>;
+  purchaseLines: Array<{
+    quantity: { toString(): string };
+    unitPrice: { toString(): string };
+    lineAmount: { toString(): string };
+    purchaseOrder: {
+      currency: string;
+      status: string;
+      orderedAt: Date | null;
+      createdAt: Date;
     };
   }>;
 }): SkuCatalogDetail["analysis"] {
@@ -1008,7 +1164,135 @@ function buildSkuDetailAnalysis(input: {
       pendingCostLineCount,
       currency: profitCurrency,
     },
+    salesVelocity: buildSalesVelocity(input.salesLines),
+    priceHistory: buildSkuPriceHistory(input.salesLines, input.purchaseLines),
   };
+}
+
+function buildSalesVelocity(
+  lines: Array<{
+    quantity: { toString(): string };
+    order: { orderDate: Date };
+  }>
+): SkuCatalogDetail["analysis"]["salesVelocity"] {
+  if (lines.length === 0) {
+    return {
+      firstSoldAt: null,
+      lastSoldAt: null,
+      averageMonthlyQty: "0.00",
+      averageDaysBetweenSales: null,
+    };
+  }
+
+  const sorted = [...lines].sort(
+    (a, b) => a.order.orderDate.getTime() - b.order.orderDate.getTime()
+  );
+  const first = sorted[0].order.orderDate;
+  const last = sorted[sorted.length - 1].order.orderDate;
+  const totalQty = sorted.reduce(
+    (sum, line) => sum.plus(new Decimal(line.quantity.toString())),
+    new Decimal(0)
+  );
+  const activeDays = Math.max(
+    1,
+    Math.ceil((last.getTime() - first.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  );
+  const averageMonthlyQty = totalQty.div(new Decimal(activeDays).div(30)).toFixed(2);
+  const averageDaysBetweenSales =
+    sorted.length > 1
+      ? new Decimal(activeDays - 1).div(sorted.length - 1).toFixed(1)
+      : null;
+
+  return {
+    firstSoldAt: first.toISOString(),
+    lastSoldAt: last.toISOString(),
+    averageMonthlyQty,
+    averageDaysBetweenSales,
+  };
+}
+
+function buildSkuPriceHistory(
+  salesLines: Array<{
+    quantity: { toString(): string };
+    unitPrice: { toString(): string } | null;
+    lineAmount: { toString(): string };
+    order: { orderDate: Date; currency: string };
+  }>,
+  purchaseLines: Array<{
+    quantity: { toString(): string };
+    unitPrice: { toString(): string };
+    lineAmount: { toString(): string };
+    purchaseOrder: {
+      currency: string;
+      status: string;
+      orderedAt: Date | null;
+      createdAt: Date;
+    };
+  }>
+): SkuCatalogDetail["analysis"]["priceHistory"] {
+  const buckets = new Map<
+    string,
+    {
+      date: string;
+      saleAmount: Decimal;
+      saleQty: Decimal;
+      purchaseAmount: Decimal;
+      purchaseQty: Decimal;
+      currency: string | null;
+    }
+  >();
+
+  const getBucket = (date: Date) => {
+    const key = date.toISOString().slice(0, 10);
+    const bucket = buckets.get(key) ?? {
+      date: key,
+      saleAmount: new Decimal(0),
+      saleQty: new Decimal(0),
+      purchaseAmount: new Decimal(0),
+      purchaseQty: new Decimal(0),
+      currency: null,
+    };
+    buckets.set(key, bucket);
+    return bucket;
+  };
+
+  for (const line of salesLines) {
+    const qty = new Decimal(line.quantity.toString());
+    const amount = line.unitPrice
+      ? new Decimal(line.unitPrice.toString()).mul(qty)
+      : new Decimal(line.lineAmount.toString());
+    const bucket = getBucket(line.order.orderDate);
+    bucket.saleAmount = bucket.saleAmount.plus(amount);
+    bucket.saleQty = bucket.saleQty.plus(qty);
+    bucket.currency = bucket.currency ?? line.order.currency;
+  }
+
+  for (const line of purchaseLines) {
+    if (String(line.purchaseOrder.status ?? "").toUpperCase().includes("CANCEL")) {
+      continue;
+    }
+    const qty = new Decimal(line.quantity.toString());
+    const amount = line.unitPrice
+      ? new Decimal(line.unitPrice.toString()).mul(qty)
+      : new Decimal(line.lineAmount.toString());
+    const bucket = getBucket(line.purchaseOrder.orderedAt ?? line.purchaseOrder.createdAt);
+    bucket.purchaseAmount = bucket.purchaseAmount.plus(amount);
+    bucket.purchaseQty = bucket.purchaseQty.plus(qty);
+    bucket.currency = bucket.currency ?? line.purchaseOrder.currency;
+  }
+
+  return [...buckets.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((bucket) => ({
+      date: bucket.date,
+      salePrice: bucket.saleQty.gt(0)
+        ? bucket.saleAmount.div(bucket.saleQty).toFixed(2)
+        : null,
+      purchasePrice: bucket.purchaseQty.gt(0)
+        ? bucket.purchaseAmount.div(bucket.purchaseQty).toFixed(2)
+        : null,
+      currency: bucket.currency,
+    }));
 }
 
 export function productKindLabel(kind: ProductKind) {

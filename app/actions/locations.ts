@@ -5,6 +5,7 @@ import { isValidLocationRegion } from "@/lib/inventory/location-regions";
 import { revalidatePath } from "next/cache";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import Decimal from "decimal.js";
 
 export type LocationType = "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT";
 
@@ -65,6 +66,7 @@ export async function createLocation(data: CreateLocationInput) {
   });
 
   revalidatePath("/inventory/locations");
+  revalidatePath("/inventory/sellable");
   return location;
 }
 
@@ -133,6 +135,7 @@ export async function updateLocation(data: UpdateLocationInput) {
 
   revalidatePath("/inventory/locations");
   revalidatePath(`/inventory/locations/${data.id}`);
+  revalidatePath("/inventory/sellable");
   return location;
 }
 
@@ -153,10 +156,15 @@ export async function getLocationStats(locationId: string) {
   if (!location) throw new Error("位置不存在或无权查看");
   const context = await requireUserContext({ storeId: location.storeId });
 
-  const [lots, items] = await Promise.all([
-    prisma.inventoryLot.findMany({
-      where: { locationId, storeId: context.activeStoreId },
-      include: { sku: true },
+  const [lotAggregates, items] = await Promise.all([
+    prisma.stockLedger.groupBy({
+      by: ["entityId"],
+      where: {
+        storeId: context.activeStoreId,
+        locationId,
+        entityType: "LOT",
+      },
+      _sum: { deltaQty: true },
     }),
     prisma.itemUnit.findMany({
       where: { locationId, storeId: context.activeStoreId },
@@ -164,12 +172,30 @@ export async function getLocationStats(locationId: string) {
     }),
   ]);
 
+  const lotQuantities = lotAggregates
+    .map((row) => ({
+      lotId: row.entityId,
+      qty: new Decimal(row._sum.deltaQty?.toString() ?? "0").toNumber(),
+    }))
+    .filter((row) => row.qty > 0);
+
+  const lots = lotQuantities.length
+    ? await prisma.inventoryLot.findMany({
+        where: {
+          storeId: context.activeStoreId,
+          id: { in: lotQuantities.map((row) => row.lotId) },
+        },
+        include: { sku: true },
+      })
+    : [];
+
+  const lotQtyById = new Map(lotQuantities.map((row) => [row.lotId, row.qty]));
   const skuIds = new Set([
     ...lots.map((l) => l.skuId),
     ...items.map((i) => i.skuId),
   ]);
 
-  const activeLotCount = lots.filter((lot) => lot.status === "ACTIVE").length;
+  const lotStockQty = lots.reduce((sum, lot) => sum + (lotQtyById.get(lot.id) ?? 0), 0);
   const availableItemCount = items.filter((item) => item.status === "AVAILABLE").length;
   const allocatedItemCount = items.filter((item) => item.status === "ALLOCATED").length;
   const consumedItemCount = items.filter((item) => item.status === "CONSUMED").length;
@@ -177,7 +203,7 @@ export async function getLocationStats(locationId: string) {
   const skuBreakdown: Array<{
     skuCode: string;
     skuName: string;
-    activeLotCount: number;
+    lotStockQty: number;
     availableItemCount: number;
     allocatedItemCount: number;
     consumedItemCount: number;
@@ -192,9 +218,9 @@ export async function getLocationStats(locationId: string) {
     skuBreakdown.push({
       skuCode: sku.code,
       skuName: sku.name,
-      activeLotCount: lots.filter(
-        (lot) => lot.skuId === skuId && lot.status === "ACTIVE"
-      ).length,
+      lotStockQty: lots
+        .filter((lot) => lot.skuId === skuId)
+        .reduce((sum, lot) => sum + (lotQtyById.get(lot.id) ?? 0), 0),
       availableItemCount: items.filter(
         (item) => item.skuId === skuId && item.status === "AVAILABLE"
       ).length,
@@ -208,14 +234,14 @@ export async function getLocationStats(locationId: string) {
   }
 
   skuBreakdown.sort((a, b) => {
-    const sellableA = a.activeLotCount + a.availableItemCount;
-    const sellableB = b.activeLotCount + b.availableItemCount;
+    const sellableA = a.lotStockQty + a.availableItemCount;
+    const sellableB = b.lotStockQty + b.availableItemCount;
     return sellableB - sellableA;
   });
 
   return {
     skuCount: skuIds.size,
-    activeLotCount,
+    lotStockQty,
     availableItemCount,
     allocatedItemCount,
     consumedItemCount,
@@ -241,6 +267,7 @@ export async function deleteLocation(id: string, storeId: string) {
   if (deleted.count === 0) throw new Error("位置不存在或无权删除");
 
   revalidatePath("/inventory/locations");
+  revalidatePath("/inventory/sellable");
 }
 
 export async function deleteLocationAction(id: string, storeId: string) {

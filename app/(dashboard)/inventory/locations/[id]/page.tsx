@@ -1,11 +1,13 @@
 import { getLocationById, getLocationStats } from "@/app/actions/locations";
 import { LocationForm } from "@/components/inventory/location-form";
 import { LocationStatsChart } from "@/components/inventory/location-stats-chart";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Box, Layers, CheckCircle, Send } from "lucide-react";
+import { ArrowLeft, Box, Layers, CheckCircle, Send } from "lucide-react";
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -29,14 +31,25 @@ export default async function LocationDetailPage({
   return (
     <div className="space-y-6">
       <div>
+        <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
+          <Link href="/inventory/locations">
+            <ArrowLeft className="mr-1 h-4 w-4" />
+            返回仓库位置
+          </Link>
+        </Button>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-3xl font-bold">{location.name}</h1>
           <Badge variant="outline" className="font-mono">
             {location.code}
           </Badge>
           <Badge variant="secondary">{formatLocationRegion(location.region)}</Badge>
+          <Badge variant={location.isSellableDefault ? "default" : "outline"}>
+            {location.isSellableDefault ? "计入可售库存" : "仅作在途/暂存"}
+          </Badge>
         </div>
-        <p className="text-muted-foreground">查看和编辑仓库位置信息</p>
+        <p className="text-muted-foreground">
+          仓库地区决定货盘市场；可售开关决定库存看板中计入可售还是在途。
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -53,12 +66,12 @@ export default async function LocationDetailPage({
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">可用入库批次</CardTitle>
+            <CardTitle className="text-sm font-medium">批次库存数量</CardTitle>
             <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.activeLotCount}</div>
-            <p className="text-xs text-muted-foreground">ACTIVE 批次数量</p>
+            <div className="text-2xl font-bold">{stats.lotStockQty}</div>
+            <p className="text-xs text-muted-foreground">按 StockLedger 汇总</p>
           </CardContent>
         </Card>
 

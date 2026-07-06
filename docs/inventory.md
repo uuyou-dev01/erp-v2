@@ -142,6 +142,7 @@ ItemUnit 适合：
 - 父 SKU 页：汇总所有子 SKU 的 Lot 数量、ItemUnit 件数、上架、采购、销售与利润参考。
 - 子 SKU 页：只展示自身 Lot 与 ItemUnit。
 - 库存看板：父 SKU 卡片展示子 SKU 汇总；新品批次和单件库存分区展示。
+- 商品档案 / 库存批次：默认优先按父 SKU 展示；若历史数据还没有父 SKU，但同品牌/分类/系列或中文命名前缀能识别为同一系列，可作为“展示分组”临时聚合。展示分组只改善查找与扫描，不写回 SKU.parentSkuId，也不影响 StockLedger、OrderLine 或 Listing 的统计真相。
 - 单件库存页：是 ItemUnit 工作台，用于核对 SKU 层级、标签、图片、库位、状态和上架，不是第二套商品主档。
 
 数量规则：

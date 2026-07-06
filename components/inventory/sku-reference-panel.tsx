@@ -12,69 +12,41 @@ interface SKUReferencePanelProps {
 
 export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelProps) {
   const { reference } = sku;
-  const sellableTotal =
-    Number(reference.sellableLotQty) + reference.availableItemUnits;
 
   return (
     <Card>
       <CardHeader className={compact ? "py-3" : undefined}>
-        <CardTitle className="text-sm font-medium">业务引用</CardTitle>
+        <CardTitle className="text-sm font-medium">关联入口</CardTitle>
         {!compact ? (
           <p className="text-xs text-muted-foreground">
-            只读摘要；上架与售出请至「可售库存」。
+            档案页只看价格与记录，库存、上架和订单进入对应模块处理。
           </p>
         ) : null}
       </CardHeader>
       <CardContent className={`space-y-3 ${compact ? "pt-0" : ""}`}>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-md border px-2.5 py-2">
-            <p className="text-[10px] text-muted-foreground">可售数量</p>
-            <p className="text-base font-semibold leading-tight">{sellableTotal}</p>
-            <p className="text-[10px] text-muted-foreground">
-              批次 {formatQuantity(reference.sellableLotQty)} · 单件{" "}
-              {reference.availableItemUnits}
-            </p>
-          </div>
-          <div className="rounded-md border px-2.5 py-2">
-            <p className="text-[10px] text-muted-foreground">在途数量</p>
-            <p className="text-base font-semibold leading-tight">
-              {formatQuantity(reference.inTransitQty)}
-            </p>
-            <p className="text-[10px] text-muted-foreground">
-              转入可售仓后进入库存看板
-            </p>
-          </div>
-          <div className="rounded-md border px-2.5 py-2">
-            <p className="text-[10px] text-muted-foreground">上架中</p>
-            <p className="text-base font-semibold leading-tight">
-              {reference.activeListingCount}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-1.5">
+        <div className="grid grid-cols-2 gap-1.5">
           <Link href={`/inventory/sellable?q=${encodeURIComponent(sku.code)}`}>
-            <Button variant="default" size="sm" className="h-8 text-xs">
+            <Button variant="outline" size="sm" className="h-8 w-full justify-start text-xs">
               <PackageCheck className="mr-1 h-3.5 w-3.5" />
-              可售库存
+              库存看板
             </Button>
           </Link>
           <Link href="/sales">
-            <Button variant="outline" size="sm" className="h-8 text-xs">
+            <Button variant="outline" size="sm" className="h-8 w-full justify-start text-xs">
               <ShoppingCart className="mr-1 h-3.5 w-3.5" />
-              销售
+              销售订单
             </Button>
           </Link>
           <Link href={`/listing?q=${encodeURIComponent(sku.code)}`}>
-            <Button variant="outline" size="sm" className="h-8 text-xs">
+            <Button variant="outline" size="sm" className="h-8 w-full justify-start text-xs">
               <Tags className="mr-1 h-3.5 w-3.5" />
-              上架
+              上架运营
             </Button>
           </Link>
           <Link href={`/inventory/lots?skuId=${sku.id}`}>
-            <Button variant="outline" size="sm" className="h-8 text-xs">
+            <Button variant="outline" size="sm" className="h-8 w-full justify-start text-xs">
               <Truck className="mr-1 h-3.5 w-3.5" />
-              入库
+              采购入库
             </Button>
           </Link>
         </div>
@@ -120,7 +92,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
         ) : null}
 
         <p className="text-[10px] text-muted-foreground">
-          采购 {reference.purchaseLineCount} · 销售 {reference.salesLineCount}
+          采购记录 {reference.purchaseLineCount} · 销售记录 {reference.salesLineCount}
           <Link
             href="/procurement"
             className="ml-1.5 inline-flex items-center gap-0.5 text-primary hover:underline"

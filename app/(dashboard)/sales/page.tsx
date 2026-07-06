@@ -6,10 +6,24 @@ import { Badge } from "@/components/ui/badge";
 import { ResponsiveTable, type Column } from "@/components/shared/responsive-table";
 import { StatCard } from "@/components/shared/stat-card";
 import { SalesImportButton } from "@/components/sales/sales-import-button";
-import { Plus, Package, ShoppingBag, CheckCircle, Truck, CircleDollarSign } from "lucide-react";
+import {
+  Plus,
+  Package,
+  ShoppingBag,
+  CheckCircle,
+  Truck,
+  CircleDollarSign,
+  ClipboardCheck,
+  BarChart3,
+} from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/lib/decimal";
 import { summarizeSalesOrders } from "@/lib/application/sales-metrics";
+import {
+  marketLabel,
+  type SellableMarketCode,
+} from "@/lib/application/sellable-market";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -38,35 +52,143 @@ const statusLabels: Record<string, string> = {
 };
 
 type OrderRow = Awaited<ReturnType<typeof getCustomerOrders>>[number];
+type PlatformRow = Awaited<ReturnType<typeof getPlatforms>>[number];
+
+const marketOrder: SellableMarketCode[] = ["CN", "JP", "US", "GLOBAL", "UNKNOWN"];
+
+function marketFromPlatform(platform?: Pick<PlatformRow, "country" | "code"> | null): SellableMarketCode {
+  const country = platform?.country?.toUpperCase();
+  if (country === "CN" || country === "JP" || country === "US" || country === "GLOBAL") {
+    return country;
+  }
+
+  const code = platform?.code?.toUpperCase() ?? "";
+  if (["XIAN_YU", "TAOBAO", "TMALL", "JD", "PINDUODUO", "DOUYIN", "XIAOHONGSHU", "ALIBABA_1688"].includes(code)) {
+    return "CN";
+  }
+  if (["MERCARI", "YAHOO_AUCTION", "YAHOO_SHOPPING", "SNKRDUNK", "RAKUTEN", "AMAZON_JP", "ZOZOTOWN"].includes(code)) {
+    return "JP";
+  }
+  if (["EBAY", "AMAZON", "SHOPIFY"].includes(code)) {
+    return "US";
+  }
+  return "UNKNOWN";
+}
+
+function parseMarket(value?: string): SellableMarketCode | undefined {
+  if (!value) return undefined;
+  return marketOrder.includes(value as SellableMarketCode)
+    ? (value as SellableMarketCode)
+    : undefined;
+}
+
+function salesHref(params: { market?: SellableMarketCode; platform?: string }) {
+  const search = new URLSearchParams();
+  if (params.market) search.set("market", params.market);
+  if (params.platform) search.set("platform", params.platform);
+  const query = search.toString();
+  return query ? `/sales?${query}` : "/sales";
+}
+
+function shortMoney(value: string | number) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "0";
+  if (amount >= 10000) return `${(amount / 10000).toFixed(1)}万`;
+  return amount.toFixed(0);
+}
+
+function MiniBar({
+  label,
+  value,
+  max,
+  meta,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  meta?: string;
+}) {
+  const width = max > 0 ? Math.max(6, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="truncate font-medium">{label}</span>
+        <span className="shrink-0 text-muted-foreground">{meta ?? `${value} 单`}</span>
+      </div>
+      <div className="h-2 rounded-full bg-muted">
+        <div className="h-2 rounded-full bg-primary/80" style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+}
 
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ platform?: string }>;
+  searchParams: Promise<{ platform?: string; market?: string }>;
 }) {
-  const { platform: platformFilter } = await searchParams;
+  const { platform: platformFilter, market } = await searchParams;
+  const marketFilter = parseMarket(market);
   const [allOrders, platforms] = await Promise.all([
     getCustomerOrders(STORE_ID),
     getPlatforms(STORE_ID),
   ]);
 
-  const orders = platformFilter
-    ? allOrders.filter((o) => o.platformId === platformFilter)
+  const marketOrders = marketFilter
+    ? allOrders.filter((o) => marketFromPlatform(o.platform) === marketFilter)
     : allOrders;
+  const orders = platformFilter
+    ? marketOrders.filter((o) => o.platformId === platformFilter)
+    : marketOrders;
 
-  const allOrderSummary = summarizeSalesOrders(allOrders);
   const filteredOrderSummary = summarizeSalesOrders(orders);
-  const platformSales = platforms.map((p) => {
-    const total =
-      allOrderSummary.platformSales.find((row) => row.platformId === p.id)?.total ?? "0.00";
-    return { id: p.id, name: p.name, total };
-  });
+  const marketSummary = marketOrder
+    .map((marketCode) => {
+      const rows = allOrders.filter((o) => marketFromPlatform(o.platform) === marketCode);
+      const summary = summarizeSalesOrders(rows);
+      return {
+        market: marketCode,
+        label: marketLabel(marketCode),
+        count: rows.length,
+        total: summary.totalRevenue.toFixed(2),
+      };
+    })
+    .filter((row) => row.count > 0 || row.market === "UNKNOWN");
+  const platformSummaryForMarket = summarizeSalesOrders(marketOrders);
+  const platformSales = platforms
+    .filter((p) => !marketFilter || marketFromPlatform(p) === marketFilter)
+    .map((p) => {
+      const total =
+        platformSummaryForMarket.platformSales.find((row) => row.platformId === p.id)?.total ?? "0.00";
+      return {
+        id: p.id,
+        name: p.name,
+        market: marketFromPlatform(p),
+        total,
+        count: marketOrders.filter((order) => order.platformId === p.id).length,
+      };
+    });
+  const maxMarketCount = Math.max(1, ...marketSummary.map((row) => row.count));
+  const maxPlatformCount = Math.max(1, ...platformSales.map((row) => row.count));
+  const statusRows = [
+    { status: "DRAFT", label: "草稿", hint: "内部录入，尚未确认成交" },
+    { status: "PLACED", label: "已下单", hint: "平台/客户已产生订单" },
+    { status: "PAID", label: "已付款", hint: "已付款，等待确认履约" },
+    { status: "CONFIRMED", label: "待发货", hint: "已确认，等待出库/发货" },
+    { status: "SHIPPED", label: "运输中", hint: "已发货" },
+    { status: "DELIVERED", label: "已完成", hint: "已送达/完成" },
+  ].map((row) => ({
+    ...row,
+    count: orders.filter((order) => order.orderStatus === row.status).length,
+  }));
+  const maxStatusCount = Math.max(1, ...statusRows.map((row) => row.count));
 
   const stats = {
     total: orders.length,
-    draft: orders.filter((o) => o.orderStatus === "DRAFT").length,
+    pending: orders.filter((o) => ["DRAFT", "PLACED", "PAID"].includes(o.orderStatus)).length,
     confirmed: orders.filter((o) => o.orderStatus === "CONFIRMED").length,
     shipped: orders.filter((o) => o.orderStatus === "SHIPPED").length,
+    delivered: orders.filter((o) => o.orderStatus === "DELIVERED").length,
     totalRevenue: filteredOrderSummary.totalRevenue,
   };
 
@@ -88,7 +210,16 @@ export default async function SalesPage({
     {
       key: "platform",
       header: "平台",
-      cell: (row) => row.platform?.name || <span className="text-muted-foreground">-</span>,
+      cell: (row) => (
+        <div className="space-y-1">
+          <div>{row.platform?.name || <span className="text-muted-foreground">-</span>}</div>
+          {row.platform && (
+            <Badge variant="secondary" className="text-[10px] font-normal">
+              {marketLabel(marketFromPlatform(row.platform))}
+            </Badge>
+          )}
+        </div>
+      ),
     },
     {
       key: "items",
@@ -136,7 +267,9 @@ export default async function SalesPage({
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">销售管理</h1>
-          <p className="text-muted-foreground">管理客户订单和发货</p>
+          <p className="text-muted-foreground">
+            销售订单是成交后的履约单据，用来跟踪确认、扣库存、发货和收入，不只代表已完成订单。
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <SalesImportButton storeId={STORE_ID} />
@@ -149,24 +282,24 @@ export default async function SalesPage({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <StatCard
           title="总订单数"
           value={stats.total}
-          subtitle="所有客户订单"
+          subtitle="当前筛选下履约单"
           icon={ShoppingBag}
         />
         <StatCard
-          title="待处理"
-          value={stats.draft}
-          subtitle="草稿订单"
+          title="待确认"
+          value={stats.pending}
+          subtitle="草稿/已下单/已付款"
           icon={Package}
           iconColor="text-yellow-500"
         />
         <StatCard
-          title="已确认"
+          title="待发货"
           value={stats.confirmed}
-          subtitle="等待发货"
+          subtitle="已确认，待出库"
           icon={CheckCircle}
           iconColor="text-green-500"
         />
@@ -178,6 +311,13 @@ export default async function SalesPage({
           iconColor="text-blue-500"
         />
         <StatCard
+          title="已完成"
+          value={stats.delivered}
+          subtitle="已送达/完成"
+          icon={ClipboardCheck}
+          iconColor="text-emerald-500"
+        />
+        <StatCard
           title="有效销售额"
           value={`¥${stats.totalRevenue.toFixed(2)}`}
           subtitle="已确认/已发货/已送达"
@@ -186,37 +326,140 @@ export default async function SalesPage({
         />
       </div>
 
-      {/* 平台 Tab 筛选 */}
+      <Card>
+        <CardContent className="space-y-4 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">地区与平台</h2>
+              <p className="text-xs text-muted-foreground">
+                按平台所属市场查看订单，销售额沿用当前系统币种汇总。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link href={salesHref({})}>
+                <Button variant={!marketFilter ? "default" : "outline"} size="sm">
+                  全部市场
+                  <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
+                    {allOrders.length}
+                  </Badge>
+                </Button>
+              </Link>
+              {marketSummary.map((row) => (
+                <Link key={row.market} href={salesHref({ market: row.market })}>
+                  <Button
+                    variant={marketFilter === row.market ? "default" : "outline"}
+                    size="sm"
+                    className={cn(row.count === 0 && "text-muted-foreground")}
+                  >
+                    {row.label}
+                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
+                      {row.count}
+                    </Badge>
+                  </Button>
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="rounded-lg border p-3">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                地区订单结构
+              </div>
+              <div className="space-y-3">
+                {marketSummary.map((row) => (
+                  <MiniBar
+                    key={row.market}
+                    label={row.label}
+                    value={row.count}
+                    max={maxMarketCount}
+                    meta={`${row.count} 单 · ¥${shortMoney(row.total)}`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg border p-3">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                平台订单结构
+              </div>
+              <div className="space-y-3">
+                {platformSales.length > 0 ? (
+                  platformSales.map((row) => (
+                    <MiniBar
+                      key={row.id}
+                      label={row.name}
+                      value={row.count}
+                      max={maxPlatformCount}
+                      meta={`${row.count} 单 · ${marketLabel(row.market)}`}
+                    />
+                  ))
+                ) : (
+                  <p className="py-5 text-center text-xs text-muted-foreground">
+                    当前市场暂无平台
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border p-3">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+                订单状态说明
+              </div>
+              <div className="space-y-3">
+                {statusRows.map((row) => (
+                  <div key={row.status} className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="font-medium">{row.label}</span>
+                      <span className="text-muted-foreground">{row.count} 单</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted">
+                      <div
+                        className="h-2 rounded-full bg-slate-700/80"
+                        style={{
+                          width: `${maxStatusCount > 0 ? Math.max(6, Math.round((row.count / maxStatusCount) * 100)) : 0}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">{row.hint}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex flex-wrap items-center gap-2">
-        <Link href="/sales">
+        <Link href={salesHref({ market: marketFilter })}>
           <Button
             variant={!platformFilter ? "default" : "outline"}
             size="sm"
           >
             全部
             <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
-              {allOrders.length}
+              {marketOrders.length}
             </Badge>
           </Button>
         </Link>
-        {platforms.map((p) => {
-          const ps = platformSales.find((s) => s.id === p.id);
-          return (
-            <Link key={p.id} href={`/sales?platform=${p.id}`}>
-              <Button
-                variant={platformFilter === p.id ? "default" : "outline"}
-                size="sm"
-              >
-                {p.name}
-                {ps && Number(ps.total) > 0 && (
-                  <span className="ml-2 text-[10px] opacity-70">
-                    ¥{Number(ps.total).toFixed(0)}
-                  </span>
-                )}
-              </Button>
-            </Link>
-          );
-        })}
+        {platformSales.map((p) => (
+          <Link key={p.id} href={salesHref({ market: marketFilter, platform: p.id })}>
+            <Button
+              variant={platformFilter === p.id ? "default" : "outline"}
+              size="sm"
+            >
+              {p.name}
+              {Number(p.total) > 0 && (
+                <span className="ml-2 text-[10px] opacity-70">
+                  ¥{Number(p.total).toFixed(0)}
+                </span>
+              )}
+            </Button>
+          </Link>
+        ))}
       </div>
 
       <Card>

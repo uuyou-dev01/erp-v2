@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { getListingCoverageProducts } from "@/lib/application/listing-coverage";
+import {
+  buildVariantView,
+  getListingCoverageProducts,
+} from "@/lib/application/listing-coverage";
 import {
   getSkuCatalogDetail,
   getSkuCatalogList,
@@ -298,6 +301,110 @@ describe("SKU stock consistency", () => {
     expect(parentProduct?.itemUnits.map((item) => item.id)).toContain(itemUnit.id);
     expect(products.some((item) => item.skuId === childWithLot.id)).toBe(false);
     expect(products.some((item) => item.skuId === childWithUnit.id)).toBe(false);
+  });
+
+  it("keeps parent card grouping but exposes market-scoped variant quantities", async () => {
+    const parent = await createSku("MARKET_SCOPED_PARENT");
+    const jpChild = await createSku("MARKET_SCOPED_JP_CHILD", parent.id);
+    const cnChild = await createSku("MARKET_SCOPED_CN_CHILD", parent.id);
+    const cnLocation = await prisma.location.create({
+      data: {
+        storeId,
+        code: `CN_SELL_${runId}`,
+        name: "China Sellable Warehouse",
+        type: "WAREHOUSE",
+        region: "CN_SHANGHAI",
+        isSellableDefault: true,
+      },
+    });
+
+    const [jpLot, cnLot] = await Promise.all([
+      prisma.inventoryLot.create({
+        data: {
+          storeId,
+          skuId: jpChild.id,
+          locationId: sellableLocationId,
+          unitCost: "100",
+          costCurrency: "CNY",
+          sourceType: "TEST",
+          sourceId: `${runId}_market_scoped_jp_lot`,
+          receivedAt: new Date("2026-06-24T00:00:00.000Z"),
+          status: "ACTIVE",
+        },
+      }),
+      prisma.inventoryLot.create({
+        data: {
+          storeId,
+          skuId: cnChild.id,
+          locationId: cnLocation.id,
+          unitCost: "90",
+          costCurrency: "CNY",
+          sourceType: "TEST",
+          sourceId: `${runId}_market_scoped_cn_lot`,
+          receivedAt: new Date("2026-06-24T00:00:00.000Z"),
+          status: "ACTIVE",
+        },
+      }),
+    ]);
+
+    await prisma.stockLedger.createMany({
+      data: [
+        {
+          storeId,
+          entityType: "LOT",
+          entityId: jpLot.id,
+          locationId: sellableLocationId,
+          deltaQty: "5",
+          reason: "INBOUND_PURCHASE",
+          refType: "TEST",
+          refId: `${runId}_market_scoped_jp_lot`,
+        },
+        {
+          storeId,
+          entityType: "LOT",
+          entityId: cnLot.id,
+          locationId: cnLocation.id,
+          deltaQty: "3",
+          reason: "INBOUND_PURCHASE",
+          refType: "TEST",
+          refId: `${runId}_market_scoped_cn_lot`,
+        },
+      ],
+    });
+
+    const products = await getListingCoverageProducts(storeId);
+    const parentProduct = products.find((item) => item.skuId === parent.id);
+    const jpVariant = parentProduct?.variantRows.find((variant) => variant.skuId === jpChild.id);
+    const cnVariant = parentProduct?.variantRows.find((variant) => variant.skuId === cnChild.id);
+
+    expect(parentProduct?.sellableQty).toBe(8);
+    expect(parentProduct?.variantRows).toHaveLength(2);
+    expect(jpVariant?.sellableQty).toBe(5);
+    expect(cnVariant?.sellableQty).toBe(3);
+
+    const jpView = buildVariantView({
+      variant: jpVariant!,
+      records: parentProduct!.records,
+      itemUnits: parentProduct!.itemUnits,
+      platforms: parentProduct!.allPlatforms,
+      market: "JP",
+    });
+    const cnView = buildVariantView({
+      variant: cnVariant!,
+      records: parentProduct!.records,
+      itemUnits: parentProduct!.itemUnits,
+      platforms: parentProduct!.allPlatforms,
+      market: "CN",
+    });
+
+    expect(jpView.scopedSellableQty).toBe(5);
+    expect(jpView.scopedSellableLocations.every((location) => location.region?.startsWith("JP"))).toBe(
+      true
+    );
+    expect(cnView.scopedSellableQty).toBe(3);
+    expect(cnView.scopedSellableLocations.every((location) => location.region?.startsWith("CN"))).toBe(
+      true
+    );
   });
 
   it("counts duplicate active SKU listings on one core platform once for new-stock coverage", async () => {

@@ -85,6 +85,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "GLOBAL",
     fallbackLabel: "eB",
     fallbackClassName: "bg-white text-slate-500",
+    fallbackStyle: { backgroundColor: "#ffffff", color: "#64748b" },
     aliases: ["EBAY", "eBay"],
   },
   {
@@ -93,6 +94,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "JP",
     fallbackLabel: "乐",
     fallbackClassName: "bg-[#bf0000] text-white",
+    fallbackStyle: { backgroundColor: "#bf0000", color: "#ffffff" },
     aliases: ["RAKUTEN", "RAKUTEN_JP", "楽天", "乐天"],
   },
   {
@@ -101,6 +103,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "JP",
     fallbackLabel: "A",
     fallbackClassName: "bg-[#111111] text-[#ff9900]",
+    fallbackStyle: { backgroundColor: "#111111", color: "#ff9900" },
     aliases: ["AMAZON", "AMAZON_JP", "AMAZON_JAPAN", "AMAZON.CO.JP", "亚马逊日本"],
   },
   {
@@ -109,6 +112,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "JP",
     fallbackLabel: "Z",
     fallbackClassName: "bg-[#111111] text-white",
+    fallbackStyle: { backgroundColor: "#111111", color: "#ffffff" },
     aliases: ["ZOZO", "ZOZOTOWN", "ZOZO_TOWN"],
   },
   {
@@ -117,6 +121,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "淘",
     fallbackClassName: "bg-[#ff5000] text-white",
+    fallbackStyle: { backgroundColor: "#ff5000", color: "#ffffff" },
     aliases: ["TAOBAO", "TB", "淘宝"],
   },
   {
@@ -125,6 +130,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "猫",
     fallbackClassName: "bg-[#dd001b] text-white",
+    fallbackStyle: { backgroundColor: "#dd001b", color: "#ffffff" },
     aliases: ["TMALL", "TM", "天猫"],
   },
   {
@@ -133,6 +139,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "京",
     fallbackClassName: "bg-[#e1251b] text-white",
+    fallbackStyle: { backgroundColor: "#e1251b", color: "#ffffff" },
     aliases: ["JD", "JD_COM", "JINGDONG", "京东"],
   },
   {
@@ -141,6 +148,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "拼",
     fallbackClassName: "bg-[#e02e24] text-white",
+    fallbackStyle: { backgroundColor: "#e02e24", color: "#ffffff" },
     aliases: ["PINDUODUO", "PDD", "拼多多"],
   },
   {
@@ -149,6 +157,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "抖",
     fallbackClassName: "bg-[#050505] text-white",
+    fallbackStyle: { backgroundColor: "#050505", color: "#ffffff" },
     aliases: ["DOUYIN", "TIKTOK_CN", "抖音"],
   },
   {
@@ -157,6 +166,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "红",
     fallbackClassName: "bg-[#ff2442] text-white",
+    fallbackStyle: { backgroundColor: "#ff2442", color: "#ffffff" },
     aliases: ["XIAOHONGSHU", "RED", "RED_BOOK", "小红书"],
   },
   {
@@ -165,6 +175,7 @@ export const DEFAULT_PLATFORM_VISUAL_DEFINITIONS: PlatformVisualConfig[] = [
     country: "CN",
     fallbackLabel: "1688",
     fallbackClassName: "bg-[#ff7300] text-white text-[9px]",
+    fallbackStyle: { backgroundColor: "#ff7300", color: "#ffffff", fontSize: "9px" },
     aliases: ["1688", "ALIBABA_1688", "ALI_1688"],
   },
 ];

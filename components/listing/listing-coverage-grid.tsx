@@ -2,6 +2,7 @@ import { PackageCheck } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ListingCoverageCard } from "@/components/listing/listing-coverage-card";
 import type { ListingCoverageProduct } from "@/lib/application/listing-coverage";
+import type { SellableMarketCode } from "@/lib/application/sellable-market";
 
 interface ListingCoverageGridProps {
   products: ListingCoverageProduct[];
@@ -9,6 +10,8 @@ interface ListingCoverageGridProps {
   emptyDescription?: string;
   /** 保留兼容旧调用；卡片详情现在统一使用弹窗展示。 */
   expandIfUnlisted?: boolean;
+  focusLocationId?: string;
+  focusMarket?: SellableMarketCode;
 }
 
 export function ListingCoverageGrid({
@@ -16,6 +19,8 @@ export function ListingCoverageGrid({
   emptyTitle = "暂无符合条件的商品",
   emptyDescription = "调整平台、状态、风险或搜索条件后再查看。",
   expandIfUnlisted: _expandIfUnlisted = false,
+  focusLocationId,
+  focusMarket,
 }: ListingCoverageGridProps) {
   void _expandIfUnlisted;
 
@@ -34,7 +39,12 @@ export function ListingCoverageGrid({
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
       {products.map((product) => (
-        <ListingCoverageCard key={product.key} product={product} />
+        <ListingCoverageCard
+          key={product.key}
+          product={product}
+          focusLocationId={focusLocationId}
+          focusMarket={focusMarket}
+        />
       ))}
     </div>
   );

@@ -1,6 +1,16 @@
 import Link from "next/link";
 import { ProductImage } from "@/components/ui/product-image";
-import type { SellableItemUnitRow } from "@/lib/application/listing-coverage";
+import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
+import type {
+  ListingCoveragePlatform,
+  ListingRecord,
+  SellableItemUnitRow,
+} from "@/lib/application/listing-coverage";
+import {
+  inferMarketFromLocation,
+  isPlatformTargetForMarket,
+} from "@/lib/application/sellable-market";
+import { cn } from "@/lib/utils";
 import { MapPin } from "lucide-react";
 
 const MAX_VISIBLE = 5;
@@ -8,9 +18,68 @@ const MAX_VISIBLE = 5;
 interface SellableItemUnitsListProps {
   units: SellableItemUnitRow[];
   anchorId?: string;
+  platforms?: ListingCoveragePlatform[];
+  records?: ListingRecord[];
 }
 
-export function SellableItemUnitsList({ units, anchorId }: SellableItemUnitsListProps) {
+function UnitPlatformCoverage({
+  platforms,
+  records,
+  unit,
+}: {
+  platforms: ListingCoveragePlatform[];
+  records: ListingRecord[];
+  unit: SellableItemUnitRow;
+}) {
+  if (platforms.length === 0) return null;
+  const unitMarket = inferMarketFromLocation({
+    region: unit.locationRegion,
+    name: unit.locationName,
+  });
+  const targetPlatforms = platforms.filter((platform) =>
+    isPlatformTargetForMarket(platform, unitMarket)
+  );
+  const displayPlatforms = targetPlatforms.length > 0 ? targetPlatforms : platforms;
+  const activePlatformIds = new Set(
+    records
+      .filter(
+        (record) =>
+          record.itemUnitId === unit.id &&
+          record.listingScope === "ITEM_UNIT" &&
+          record.state === "active"
+      )
+      .map((record) => record.platformId)
+  );
+
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {displayPlatforms.map((platform) => {
+        const active = activePlatformIds.has(platform.id);
+        return (
+          <span
+            key={platform.id}
+            className={cn(!active && "opacity-80")}
+            title={`${platform.name}${active ? " 已上架" : " 未上架"}`}
+          >
+            <ListingPlatformMark
+              code={platform.code}
+              name={platform.name}
+              muted={!active}
+              className="h-5 w-5 border-0 bg-transparent p-0 shadow-none"
+            />
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+export function SellableItemUnitsList({
+  units,
+  anchorId,
+  platforms = [],
+  records = [],
+}: SellableItemUnitsListProps) {
   const sellable = units.filter((u) => u.sellable);
   const inTransit = units.filter((u) => u.inTransit);
   const visible = sellable.slice(0, MAX_VISIBLE);
@@ -43,6 +112,7 @@ export function SellableItemUnitsList({ units, anchorId }: SellableItemUnitsList
                     {unit.locationName}
                   </p>
                 </div>
+                <UnitPlatformCoverage platforms={platforms} records={records} unit={unit} />
                 <span className="shrink-0 text-[10px] text-muted-foreground">可售</span>
               </Link>
             </li>

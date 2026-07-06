@@ -8,16 +8,26 @@ import { createPortal } from "react-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProductImage } from "@/components/ui/product-image";
+import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { ListingPlatformStrip } from "@/components/listing/listing-platform-strip";
 import { ListingRecordCompactRow } from "@/components/listing/listing-record-compact-row";
 import { QuickAddListingDialog } from "@/components/listing/quick-add-listing-dialog";
 import { SellableItemUnitsList } from "@/components/listing/sellable-item-units-list";
 import { SellableStockBreakdown } from "@/components/listing/sellable-stock-breakdown";
 import type {
+  ItemUnitChannelSummary,
   ListingCoverageProduct,
+  ListingCoveragePlatform,
   ListingCoverageRisk,
+  ListingRecord,
+  StockChannelSummary,
 } from "@/lib/application/listing-coverage";
-import { formatListedDaysShort } from "@/lib/application/listing-record-display";
+import { buildVariantView } from "@/lib/application/listing-coverage";
+import {
+  isPlatformTargetForMarket,
+  marketLabel,
+  type SellableMarketCode,
+} from "@/lib/application/sellable-market";
 import { productKindLabel } from "@/lib/application/sku-catalog";
 import { formatCurrency } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
@@ -25,6 +35,8 @@ import { AlertTriangle, Eye, Plus, X } from "lucide-react";
 
 interface ListingCoverageCardProps {
   product: ListingCoverageProduct;
+  focusLocationId?: string;
+  focusMarket?: SellableMarketCode;
 }
 
 function riskClassName(risk: ListingCoverageRisk) {
@@ -39,28 +51,69 @@ function withReturnTo(href: string, returnTo: string) {
   return `${href}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-function stockKindBadge(product: ListingCoverageProduct) {
-  if (product.hasLotStock && product.hasItemUnits) return "批次+中古";
-  if (product.hasItemUnits) return "中古";
-  return "SKU 批次";
+function primaryLocationLabel(product: ListingCoverageProduct, focusLocationId?: string) {
+  const focused = focusLocationId
+    ? product.sellableLocations.find((location) => location.locationId === focusLocationId)
+    : null;
+  if (focused) return `${focused.code} · ${focused.name}`;
+  const primary = product.sellableLocations[0];
+  if (primary) return `${primary.code} · ${primary.name}`;
+  const unit = product.itemUnits.find((item) => item.sellable);
+  return unit?.locationName ?? "未确认可售仓";
 }
 
-function listingSummary(product: ListingCoverageProduct) {
-  if (product.records.length === 0) {
-    return { label: "待上架", tone: "amber" as const };
-  }
-  const active = product.records.filter((r) => r.state === "active");
-  const primary = active[0] ?? product.records[0];
-  const extra = active.length > 1 ? ` 等${active.length}个` : "";
-  const age = primary ? formatListedDaysShort(primary.listedAt) : "";
-  return {
-    label: `在售 ${primary.platformName}${age ? ` ${age}` : ""}${extra}`,
-    tone: "default" as const,
-  };
+function shortVariantName(parentName: string, variantName: string) {
+  const trimmed = variantName.replace(parentName, "").trim();
+  return trimmed || variantName;
 }
 
-function countMissingPlatforms(product: ListingCoverageProduct) {
-  return product.platforms.filter((p) => p.state === "missing").length;
+function activePlatformCount(records: ListingRecord[], platforms: ListingCoveragePlatform[]) {
+  const platformIds = new Set(platforms.map((platform) => platform.id));
+  return new Set(
+    records
+      .filter((record) => record.state === "active" && platformIds.has(record.platformId))
+      .map((record) => record.platformId)
+  ).size;
+}
+
+function platformStateFromRecords(
+  platforms: ListingCoveragePlatform[],
+  records: ListingRecord[]
+): ListingCoveragePlatform[] {
+  return platforms.map((platform) => {
+    const record =
+      records.find((item) => item.platformId === platform.id && item.state === "active") ??
+      records.find((item) => item.platformId === platform.id && item.state === "sold_out") ??
+      records.find((item) => item.platformId === platform.id);
+
+    if (!record) {
+      return {
+        ...platform,
+        state: "missing",
+        listingId: null,
+        status: null,
+        listedPrice: null,
+        currency: null,
+        estimatedNet: null,
+        listedAt: null,
+        updatedAt: null,
+        risks: [],
+      };
+    }
+
+    return {
+      ...platform,
+      state: record.state,
+      listingId: record.listingId,
+      status: record.status,
+      listedPrice: record.listedPrice,
+      currency: record.currency,
+      estimatedNet: record.estimatedNet,
+      listedAt: record.listedAt,
+      updatedAt: record.updatedAt,
+      risks: record.risks,
+    };
+  });
 }
 
 function CompactChannelRow({
@@ -68,7 +121,11 @@ function CompactChannelRow({
   metrics,
 }: {
   label: string;
-  metrics: Array<{ label: string; value: number; tone?: "default" | "muted" | "amber" }>;
+  metrics: Array<{
+    label: string;
+    value: number;
+    tone?: "default" | "muted" | "amber" | "green" | "blue";
+  }>;
 }) {
   return (
     <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
@@ -79,11 +136,15 @@ function CompactChannelRow({
             key={`${label}-${metric.label}`}
             className={cn(
               "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] leading-4",
-              metric.tone === "amber"
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-800"
-                : metric.tone === "muted"
-                  ? "border-border bg-background/70 text-muted-foreground"
-                  : "border-border bg-background text-foreground"
+              metric.tone === "green"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700"
+                : metric.tone === "blue"
+                  ? "border-blue-500/25 bg-blue-500/10 text-blue-700"
+                  : metric.tone === "amber"
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-800"
+                    : metric.tone === "muted"
+                      ? "border-border bg-background/70 text-muted-foreground"
+                      : "border-border bg-background text-foreground"
             )}
           >
             <span>{metric.label}</span>
@@ -92,6 +153,31 @@ function CompactChannelRow({
         ))}
       </div>
     </div>
+  );
+}
+
+function StockMetricBadge({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "green" | "blue" | "amber" | "muted";
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "h-5 px-1.5 text-[10px]",
+        tone === "green" && "border-emerald-500/25 bg-emerald-500/10 text-emerald-700",
+        tone === "blue" && "border-blue-500/25 bg-blue-500/10 text-blue-700",
+        tone === "amber" && "border-amber-500/30 bg-amber-500/10 text-amber-800",
+        tone === "muted" && "border-border bg-background/70 text-muted-foreground"
+      )}
+    >
+      {label} <span className="ml-1 font-semibold tabular-nums">{value}</span>
+    </Badge>
   );
 }
 
@@ -104,28 +190,267 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
   );
 }
 
-export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
+function PlatformCoverageDots({
+  platforms,
+}: {
+  platforms: ListingCoveragePlatform[];
+}) {
+  if (platforms.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-0.5">
+      {platforms.map((platform) => {
+        const isListed = platform.state === "active" || platform.state === "sold_out";
+        const title =
+          platform.state === "missing"
+            ? `${platform.name} 未上架`
+            : platform.state === "sold_out"
+              ? `${platform.name} 已上架（已售罄）`
+              : platform.state === "delisted"
+                ? `${platform.name} 已下架`
+                : `${platform.name} 已上架`;
+
+        return (
+          <span key={platform.id} title={title} className={cn(platform.state === "delisted" && "opacity-30")}>
+            <ListingPlatformMark
+              code={platform.code}
+              name={platform.name}
+              muted={!isListed}
+              className="h-4 w-4 rounded border-0 bg-transparent p-0 text-[9px] shadow-none"
+            />
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function VariantStockPills({
+  sellableQty,
+  inTransitQty,
+}: {
+  sellableQty: number;
+  inTransitQty: number;
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-center">
+      <span className="inline-flex h-5 items-center rounded-md border bg-background px-1.5 text-[10px] leading-none text-foreground">
+        现货 <span className="ml-1 font-semibold tabular-nums">{sellableQty}</span>
+      </span>
+      <span
+        className={cn(
+          "inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] leading-none",
+          inTransitQty > 0
+            ? "border-blue-500/25 bg-blue-500/10 text-blue-700"
+            : "bg-background text-muted-foreground"
+        )}
+      >
+        在途 <span className="ml-1 font-semibold tabular-nums">{inTransitQty}</span>
+      </span>
+    </div>
+  );
+}
+
+export function ListingCoverageCard({
+  product,
+  focusLocationId,
+  focusMarket,
+}: ListingCoverageCardProps) {
   const [mounted, setMounted] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [addOpen, setAddOpen] = useState(false);
   const [addPlatformId, setAddPlatformId] = useState<string | undefined>();
+  const [selectedVariantSkuId, setSelectedVariantSkuId] = useState<string | null>(null);
 
-  const missingPlatforms = countMissingPlatforms(product);
-  const summary = listingSummary(product);
   const kind = product.hasItemUnits && !product.hasLotStock ? "USED" : product.productKind;
-  const sellableUnits = product.itemUnits.filter((u) => u.sellable);
-  const skuListingRecords = product.records.filter((record) => record.listingScope !== "ITEM_UNIT");
-  const itemUnitListingRecords = product.records.filter(
+  const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+  const displayPlatforms = focusMarket
+    ? product.allPlatforms.filter((platform) => isPlatformTargetForMarket(platform, focusMarket))
+    : product.platforms;
+  const variantViews = product.variantRows.map((variant) =>
+    buildVariantView({
+      variant,
+      records: product.records,
+      itemUnits: product.itemUnits,
+      platforms: focusMarket ? product.allPlatforms : product.platforms,
+      market: focusMarket,
+      locationId: focusLocationId,
+    })
+  );
+  const defaultVariantView =
+    variantViews.find((variant) => variant.scopedSellableQty > 0 || variant.scopedInTransitQty > 0) ??
+    variantViews[0] ??
+    null;
+  const visibleVariantViews = variantViews.filter((variant) => variant.scopedSellableQty > 0);
+  const selectedVariant =
+    product.variantRows.length > 1
+      ? (variantViews.find((variant) => variant.skuId === selectedVariantSkuId) ??
+        defaultVariantView)
+      : (variantViews[0] ?? null);
+  const cardSkuListingRecords = selectedVariant?.scopedSkuRecords ?? product.records;
+  const cardItemUnitListingRecords = selectedVariant?.scopedItemUnitRecords ?? [];
+  const cardPlatforms = selectedVariant
+    ? platformStateFromRecords(selectedVariant.scopedPlatforms, cardSkuListingRecords)
+    : displayPlatforms;
+  const cardNewStockSummary: StockChannelSummary = selectedVariant
+    ? {
+        sellableQty: selectedVariant.scopedSellableLotQty,
+        activeListingCount: activePlatformCount(
+          cardSkuListingRecords,
+          selectedVariant.scopedPlatforms
+        ),
+        pendingListingCount:
+          selectedVariant.scopedSellableLotQty > 0
+            ? Math.max(
+                0,
+                selectedVariant.scopedPlatforms.length -
+                  activePlatformCount(cardSkuListingRecords, selectedVariant.scopedPlatforms)
+              )
+            : 0,
+      }
+    : product.newStockSummary;
+  const activeCardItemUnitIds = new Set(
+    cardItemUnitListingRecords
+      .filter((record) => record.state === "active" && record.itemUnitId)
+      .map((record) => record.itemUnitId as string)
+  );
+  const cardSellableItemUnits = selectedVariant
+    ? selectedVariant.scopedItemUnits.filter((unit) => unit.sellable)
+    : product.itemUnits.filter((unit) => unit.sellable);
+  const cardItemUnitSummary: ItemUnitChannelSummary = selectedVariant
+    ? {
+        sellableCount: selectedVariant.scopedSellableItemUnitCount,
+        activeListingCount: cardItemUnitListingRecords.filter(
+          (record) => record.state === "active"
+        ).length,
+        pendingListingCount: cardSellableItemUnits.filter(
+          (unit) => !activeCardItemUnitIds.has(unit.id)
+        ).length,
+        pendingPhotoCount: cardSellableItemUnits.filter((unit) => unit.photoCount === 0).length,
+        pendingLabelCount: cardSellableItemUnits.filter((unit) => unit.labelStatus !== "ATTACHED")
+          .length,
+      }
+    : product.itemUnitSummary;
+  const cardProduct: ListingCoverageProduct = selectedVariant
+    ? {
+        ...product,
+        skuId: selectedVariant.skuId,
+        skuCode: selectedVariant.skuCode,
+        skuName: selectedVariant.skuName,
+        imageUrl: selectedVariant.imageUrl ?? product.imageUrl,
+        sellableQty: selectedVariant.scopedSellableQty,
+        sellableLotQty: selectedVariant.scopedSellableLotQty,
+        sellableItemUnitCount: selectedVariant.scopedSellableItemUnitCount,
+        inTransitQty: selectedVariant.scopedInTransitQty,
+        sellableLocations: selectedVariant.scopedSellableLocations,
+        inTransitLocations: selectedVariant.scopedInTransitLocations,
+        itemUnits: selectedVariant.scopedItemUnits,
+        records: selectedVariant.scopedRecords,
+        platforms: cardPlatforms,
+        newStockSummary: cardNewStockSummary,
+        itemUnitSummary: cardItemUnitSummary,
+        hasLotStock: selectedVariant.scopedSellableLotQty > 0,
+        hasItemUnits: selectedVariant.scopedItemUnits.length > 0,
+      }
+    : product;
+  const detailRecords = selectedVariant
+    ? selectedVariant.scopedRecords
+    : product.records;
+  const detailSkuListingRecords = detailRecords.filter(
+    (record) => record.listingScope !== "ITEM_UNIT"
+  );
+  const detailItemUnitListingRecords = detailRecords.filter(
     (record) => record.listingScope === "ITEM_UNIT"
   );
-  const pendingItemUnitWork = sellableUnits.filter(
+  const detailItemUnits = selectedVariant
+    ? selectedVariant.scopedItemUnits
+    : product.itemUnits;
+  const detailSellableUnits = detailItemUnits.filter((unit) => unit.sellable);
+  const detailInTransitUnits = detailItemUnits.filter((unit) => unit.inTransit);
+  const detailPendingItemUnitWork = detailSellableUnits.filter(
     (unit) => unit.photoCount === 0 || unit.labelStatus !== "ATTACHED"
   );
-  const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
-  const catalogHref = withReturnTo(`/inventory/skus/${product.skuId}`, currentHref);
+  const detailDisplayPlatforms = selectedVariant
+    ? platformStateFromRecords(selectedVariant.scopedPlatforms, detailSkuListingRecords)
+    : displayPlatforms;
+  const detailNewStockSummary: StockChannelSummary = selectedVariant
+    ? {
+        sellableQty: selectedVariant.scopedSellableLotQty,
+        activeListingCount: activePlatformCount(
+          detailSkuListingRecords,
+          selectedVariant.scopedPlatforms
+        ),
+        pendingListingCount:
+          selectedVariant.scopedSellableLotQty > 0
+            ? Math.max(
+                0,
+                selectedVariant.scopedPlatforms.length -
+                  activePlatformCount(detailSkuListingRecords, selectedVariant.scopedPlatforms)
+              )
+            : 0,
+      }
+    : product.newStockSummary;
+  const activeDetailItemUnitIds = new Set(
+    detailItemUnitListingRecords
+      .filter((record) => record.state === "active" && record.itemUnitId)
+      .map((record) => record.itemUnitId as string)
+  );
+  const detailItemUnitSummary: ItemUnitChannelSummary = selectedVariant
+    ? {
+        sellableCount: detailSellableUnits.length,
+        activeListingCount: detailItemUnitListingRecords.filter(
+          (record) => record.state === "active"
+        ).length,
+        pendingListingCount: detailSellableUnits.filter(
+          (unit) => !activeDetailItemUnitIds.has(unit.id)
+        ).length,
+        pendingPhotoCount: detailSellableUnits.filter((unit) => unit.photoCount === 0).length,
+        pendingLabelCount: detailSellableUnits.filter((unit) => unit.labelStatus !== "ATTACHED")
+          .length,
+      }
+    : product.itemUnitSummary;
+  const detailProduct: ListingCoverageProduct = selectedVariant
+    ? {
+        ...product,
+        skuId: selectedVariant.skuId,
+        skuCode: selectedVariant.skuCode,
+        skuName: selectedVariant.skuName,
+        imageUrl: selectedVariant.imageUrl ?? product.imageUrl,
+        sellableQty: selectedVariant.scopedSellableQty,
+        sellableLotQty: selectedVariant.scopedSellableLotQty,
+        sellableItemUnitCount: selectedVariant.scopedSellableItemUnitCount,
+        inTransitQty: selectedVariant.scopedInTransitQty,
+        sellableLocations: selectedVariant.scopedSellableLocations,
+        inTransitLocations: selectedVariant.scopedInTransitLocations,
+        itemUnits: detailItemUnits,
+        records: detailRecords,
+        platforms: detailDisplayPlatforms,
+        newStockSummary: detailNewStockSummary,
+        itemUnitSummary: detailItemUnitSummary,
+        hasLotStock: selectedVariant.scopedSellableLotQty > 0,
+        hasItemUnits: selectedVariant.scopedItemUnits.length > 0,
+      }
+    : product;
+  const detailLotInTransitQty = Math.max(0, detailProduct.inTransitQty - detailInTransitUnits.length);
+  const cardCatalogHref = withReturnTo(`/inventory/skus/${cardProduct.skuId}`, currentHref);
+  const detailCatalogHref = withReturnTo(`/inventory/skus/${detailProduct.skuId}`, currentHref);
+  const palletLabel = focusMarket ? marketLabel(focusMarket) : product.marketLabel;
+  const lowStockVariants = visibleVariantViews.filter(
+    (variant) => variant.scopedSellableQty > 0 && variant.scopedSellableQty <= 2
+  );
+  const displayedVariantViews =
+    visibleVariantViews.length > 0 ? visibleVariantViews.slice(0, 2) : variantViews.slice(0, 2);
 
+  useEffect(() => {
+    if (!detailsOpen || product.variantRows.length <= 1) return;
+    setSelectedVariantSkuId((current) =>
+      current && product.variantRows.some((variant) => variant.skuId === current)
+        ? current
+        : (defaultVariantView?.skuId ?? product.variantRows[0]?.skuId ?? null)
+    );
+  }, [defaultVariantView?.skuId, detailsOpen, product.variantRows]);
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -146,108 +471,127 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
 
   return (
     <>
-      <article className="flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+      <article className="flex min-h-[190px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md">
         <div className="flex items-stretch gap-0 border-b">
           <button
             type="button"
             onClick={() => setDetailsOpen(true)}
-            className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/40"
+            className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left hover:bg-muted/40"
           >
             <ProductImage
-              src={product.imageUrl}
+              src={product.imageUrl ?? cardProduct.imageUrl}
               alt={product.skuName}
               size="sm"
-              className="shrink-0 rounded-md"
+              className="h-9 w-9 shrink-0 rounded-md"
             />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{product.skuName}</p>
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
-                {product.skuCode}
+              <p className="truncate text-[10px] text-muted-foreground">
+                {palletLabel} · {visibleVariantViews.length || product.variantRows.length} 个子 SKU
               </p>
             </div>
           </button>
-          <div className="flex shrink-0 items-center gap-2 px-3 py-2">
-            <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">
-              {stockKindBadge(product)}
-            </Badge>
-            <div className="flex flex-col items-end">
-              <span className="text-sm font-semibold tabular-nums">{product.sellableQty}</span>
-              <span className="text-[10px] text-muted-foreground">可售</span>
-            </div>
+          <div className="flex shrink-0 items-center px-2.5 py-2">
+            {lowStockVariants.length > 0 ? (
+              <Badge
+                variant="outline"
+                className="h-5 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
+              >
+                快没货
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                可卖
+              </Badge>
+            )}
           </div>
         </div>
 
-        <div className="space-y-2 px-3 py-3">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <CompactChannelRow
-              label="新品/批次"
-              metrics={[
-                { label: "可售", value: product.newStockSummary.sellableQty },
-                { label: "在售", value: product.newStockSummary.activeListingCount },
-                {
-                  label: "待平台",
-                  value: product.newStockSummary.pendingListingCount,
-                  tone: product.newStockSummary.pendingListingCount > 0 ? "amber" : "muted",
-                },
-              ]}
-            />
-            <CompactChannelRow
-              label="中古/单件"
-              metrics={[
-                { label: "可售", value: product.itemUnitSummary.sellableCount },
-                { label: "在售", value: product.itemUnitSummary.activeListingCount },
-                {
-                  label: "待上架",
-                  value: product.itemUnitSummary.pendingListingCount,
-                  tone: product.itemUnitSummary.pendingListingCount > 0 ? "amber" : "muted",
-                },
-                {
-                  label: "待图",
-                  value: product.itemUnitSummary.pendingPhotoCount,
-                  tone: product.itemUnitSummary.pendingPhotoCount > 0 ? "amber" : "muted",
-                },
-                {
-                  label: "待标",
-                  value: product.itemUnitSummary.pendingLabelCount,
-                  tone: product.itemUnitSummary.pendingLabelCount > 0 ? "amber" : "muted",
-                },
-              ]}
-            />
-          </div>
+        <div className="flex flex-1 flex-col space-y-1.5 px-2.5 py-2">
+          <div className="space-y-1">
+            {displayedVariantViews.map((variant) => {
+              const skuRecords = variant.scopedSkuRecords;
+              const variantPlatforms = platformStateFromRecords(variant.scopedPlatforms, skuRecords);
+              const activeCount = activePlatformCount(skuRecords, variant.scopedPlatforms);
+              const missingCount = variantPlatforms.filter((platform) => platform.state === "missing").length;
+              const lowStock = variant.scopedSellableQty > 0 && variant.scopedSellableQty <= 2;
+              const isSelected = selectedVariant?.skuId === variant.skuId;
 
-          <ListingPlatformStrip product={product} onAddPlatform={openAdd} />
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge
-              variant={summary.tone === "amber" ? "outline" : "secondary"}
-              className={cn(
-                "text-[10px] font-normal",
-                summary.tone === "amber" && "border-amber-500/30 text-amber-800"
-              )}
-            >
-              {summary.label}
-            </Badge>
-            {missingPlatforms > 0 ? (
-              <span className="text-[10px] text-muted-foreground">
-                +{missingPlatforms} 平台未覆盖
-              </span>
-            ) : null}
-            {product.aggregateRisks.length > 0 ? (
-              <Badge
-                variant="outline"
-                className={cn("text-[10px]", riskClassName(product.aggregateRisks[0]))}
+              return (
+                <button
+                  key={variant.skuId}
+                  type="button"
+                  onClick={() => setSelectedVariantSkuId(variant.skuId)}
+                  className={cn(
+                    "grid w-full gap-1.5 rounded-md border px-1.5 py-1.5 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center",
+                    isSelected ? "border-primary/40 bg-primary/5" : "bg-background/70 hover:bg-muted/40"
+                  )}
+                >
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <ProductImage
+                      src={variant.imageUrl}
+                      alt={variant.skuName}
+                      size="sm"
+                      className="h-7 w-7 shrink-0 rounded-md"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-[11px] font-medium leading-4">
+                        {shortVariantName(product.skuName, variant.skuName)}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {activeCount === 0 ? (
+                          <Badge variant="outline" className="h-4 px-1 text-[9px]">
+                            未上架
+                          </Badge>
+                        ) : missingCount > 0 ? (
+                          <Badge
+                            variant="outline"
+                            className="h-4 border-amber-500/30 bg-amber-500/10 px-1 text-[9px] text-amber-800"
+                          >
+                            待平台 {missingCount}
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="h-4 px-1 text-[9px]">
+                            已覆盖
+                          </Badge>
+                        )}
+                        {lowStock ? (
+                          <Badge
+                            variant="outline"
+                            className="h-4 border-amber-500/30 bg-amber-500/10 px-1 text-[9px] text-amber-800"
+                          >
+                            快没货
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                  <VariantStockPills
+                    sellableQty={variant.scopedSellableQty}
+                    inTransitQty={variant.scopedInTransitQty}
+                  />
+                  <div className="flex items-center sm:justify-end">
+                    <PlatformCoverageDots platforms={variantPlatforms} />
+                  </div>
+                </button>
+              );
+            })}
+            {visibleVariantViews.length > displayedVariantViews.length ? (
+              <button
+                type="button"
+                onClick={() => setDetailsOpen(true)}
+                className="w-full rounded-md border border-dashed px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
               >
-                <AlertTriangle className="mr-0.5 h-3 w-3" />
-                {product.aggregateRisks[0].label}
-              </Badge>
+                更多 {visibleVariantViews.length - displayedVariantViews.length} 个子 SKU
+              </button>
             ) : null}
           </div>
 
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
+          <div className="mt-auto flex flex-wrap gap-1 pt-0.5">
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-[11px]"
+              className="h-7 px-2 text-[11px]"
               onClick={() => openAdd()}
             >
               <Plus className="mr-1 h-3 w-3" />
@@ -256,12 +600,12 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-[11px] text-muted-foreground"
+              className="h-7 px-2 text-[11px] text-muted-foreground"
               onClick={() => setDetailsOpen(true)}
             >
               详情
             </Button>
-            <Link href={catalogHref}>
+            <Link href={cardCatalogHref}>
               <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground">
                 <Eye className="h-3.5 w-3.5" />
               </Button>
@@ -278,15 +622,15 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                 <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <ProductImage
-                      src={product.imageUrl}
-                      alt={product.skuName}
+                      src={detailProduct.imageUrl}
+                      alt={detailProduct.skuName}
                       size="sm"
                       className="shrink-0 rounded-md"
                     />
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{product.skuName}</p>
+                      <p className="truncate text-sm font-semibold">{detailProduct.skuName}</p>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">
-                        {product.skuCode}
+                        {detailProduct.skuCode}
                       </p>
                     </div>
                   </div>
@@ -328,11 +672,34 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                       </>
                     ) : null}
                     <Link
-                      href={catalogHref}
+                      href={detailCatalogHref}
                       className="text-foreground underline-offset-2 hover:underline"
                     >
                       商品档案
                     </Link>
+                  </div>
+
+                  <div className="mb-3 grid gap-2 rounded-lg border bg-muted/20 p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-foreground">
+                        按最终可售仓库判断：{palletLabel}
+                      </p>
+                      <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                        {primaryLocationLabel(detailProduct, focusLocationId)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                      <StockMetricBadge
+                        label="现货"
+                        value={detailProduct.sellableQty}
+                        tone={detailProduct.sellableQty > 0 ? "green" : "muted"}
+                      />
+                      <StockMetricBadge
+                        label="在途"
+                        value={detailProduct.inTransitQty}
+                        tone={detailProduct.inTransitQty > 0 ? "blue" : "muted"}
+                      />
+                    </div>
                   </div>
 
                   {product.aggregateRisks.length > 0 ? (
@@ -350,37 +717,145 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                     </div>
                   ) : null}
 
+                  {variantViews.length > 1 ? (
+                    <div className="mb-3">
+                      <DetailSection title="子 SKU / 变体">
+                        <div className="space-y-1.5">
+                          {variantViews.map((variant) => {
+                            const skuRecords = variant.scopedSkuRecords;
+                            const activeCount = activePlatformCount(
+                              skuRecords,
+                              variant.scopedPlatforms
+                            );
+                            const missingCount = Math.max(
+                              0,
+                              variant.scopedPlatforms.length - activeCount
+                            );
+                            const lowStock =
+                              variant.scopedSellableQty > 0 && variant.scopedSellableQty <= 2;
+
+                            return (
+                              <button
+                                key={variant.skuId}
+                                type="button"
+                                onClick={() => setSelectedVariantSkuId(variant.skuId)}
+                                className={cn(
+                                  "grid w-full gap-2 rounded-md border px-2.5 py-2 text-left text-xs transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                                  selectedVariant?.skuId === variant.skuId
+                                    ? "border-primary/40 bg-primary/5"
+                                    : "bg-background/80 hover:bg-muted/50"
+                                )}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <ProductImage
+                                    src={variant.imageUrl}
+                                    alt={variant.skuName}
+                                    size="sm"
+                                    className="h-9 w-9 shrink-0 rounded-md"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate font-medium">
+                                      {shortVariantName(product.skuName, variant.skuName)}
+                                    </p>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                      {activeCount === 0 ? (
+                                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                                          未上架
+                                        </Badge>
+                                      ) : missingCount > 0 ? (
+                                        <StockMetricBadge
+                                          label="待平台"
+                                          value={missingCount}
+                                          tone="amber"
+                                        />
+                                      ) : (
+                                        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                          已覆盖
+                                        </Badge>
+                                      )}
+                                      {lowStock ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="h-5 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
+                                        >
+                                          快没货
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+                                  <StockMetricBadge
+                                    label="现货"
+                                    value={variant.scopedSellableQty}
+                                    tone={variant.scopedSellableQty > 0 ? "green" : "muted"}
+                                  />
+                                  <StockMetricBadge
+                                    label="在途"
+                                    value={variant.scopedInTransitQty}
+                                    tone={variant.scopedInTransitQty > 0 ? "blue" : "muted"}
+                                  />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </DetailSection>
+                    </div>
+                  ) : null}
+
                   <div className="grid gap-3 lg:grid-cols-2">
                     <DetailSection title="新品批次">
-                      <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="grid gap-2 sm:grid-cols-4">
                         <CompactChannelRow
-                          label="可售"
-                          metrics={[{ label: "数量", value: product.newStockSummary.sellableQty }]}
-                        />
-                        <CompactChannelRow
-                          label="在售"
+                          label="现货"
                           metrics={[
-                            { label: "Listing", value: product.newStockSummary.activeListingCount },
+                            {
+                              label: "数量",
+                              value: detailProduct.sellableLotQty,
+                              tone: detailProduct.sellableLotQty > 0 ? "green" : "muted",
+                            },
                           ]}
                         />
                         <CompactChannelRow
-                          label="待覆盖"
+                          label="在途"
+                          metrics={[
+                            {
+                              label: "数量",
+                              value: detailLotInTransitQty,
+                              tone: detailLotInTransitQty > 0 ? "blue" : "muted",
+                            },
+                          ]}
+                        />
+                        <CompactChannelRow
+                          label="已上架"
+                          metrics={[
+                            {
+                              label: "Listing",
+                              value: detailNewStockSummary.activeListingCount,
+                              tone:
+                                detailNewStockSummary.activeListingCount > 0 ? "green" : "muted",
+                            },
+                          ]}
+                        />
+                        <CompactChannelRow
+                          label="待平台"
                           metrics={[
                             {
                               label: "平台",
-                              value: product.newStockSummary.pendingListingCount,
+                              value: detailNewStockSummary.pendingListingCount,
                               tone:
-                                product.newStockSummary.pendingListingCount > 0 ? "amber" : "muted",
+                                detailNewStockSummary.pendingListingCount > 0 ? "amber" : "muted",
                             },
                           ]}
                         />
                       </div>
 
-                      {product.hasLotStock ? (
+                      {detailProduct.sellableLotQty > 0 || detailLotInTransitQty > 0 ? (
                         <SellableStockBreakdown
-                          product={product}
+                          product={detailProduct}
                           hideTotal
-                          totalQty={product.sellableLotQty}
+                          totalQty={detailProduct.sellableLotQty}
                         />
                       ) : (
                         <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -392,22 +867,26 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                         <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                           平台覆盖
                         </p>
-                        <ListingPlatformStrip product={product} onAddPlatform={openAdd} />
+                        <ListingPlatformStrip
+                          product={detailProduct}
+                          platforms={detailDisplayPlatforms}
+                          onAddPlatform={openAdd}
+                        />
                       </div>
 
                       <div className="space-y-1.5">
                         <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                           SKU Listing
                         </p>
-                        {skuListingRecords.length === 0 ? (
+                        {detailSkuListingRecords.length === 0 ? (
                           <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                             暂无记录
                           </p>
                         ) : (
                           <ul className="space-y-1.5">
-                            {skuListingRecords.map((record) => (
+                            {detailSkuListingRecords.map((record) => (
                               <li key={record.listingId}>
-                                <ListingRecordCompactRow product={product} record={record} />
+                                <ListingRecordCompactRow product={detailProduct} record={record} />
                               </li>
                             ))}
                           </ul>
@@ -416,51 +895,58 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                     </DetailSection>
 
                     <DetailSection title="单件库存">
-                      <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="grid gap-2 sm:grid-cols-4">
                         <CompactChannelRow
-                          label="可售"
+                          label="现货"
                           metrics={[
-                            { label: "件数", value: product.itemUnitSummary.sellableCount },
+                            {
+                              label: "件数",
+                              value: detailItemUnitSummary.sellableCount,
+                              tone:
+                                detailItemUnitSummary.sellableCount > 0 ? "green" : "muted",
+                            },
                           ]}
                         />
                         <CompactChannelRow
-                          label="在售"
+                          label="在途"
+                          metrics={[
+                            {
+                              label: "件数",
+                              value: detailInTransitUnits.length,
+                              tone: detailInTransitUnits.length > 0 ? "blue" : "muted",
+                            },
+                          ]}
+                        />
+                        <CompactChannelRow
+                          label="已上架"
                           metrics={[
                             {
                               label: "Listing",
-                              value: product.itemUnitSummary.activeListingCount,
+                              value: detailItemUnitSummary.activeListingCount,
+                              tone:
+                                detailItemUnitSummary.activeListingCount > 0 ? "green" : "muted",
                             },
                           ]}
                         />
                         <CompactChannelRow
-                          label="待处理"
+                          label="待上架"
                           metrics={[
                             {
-                              label: "上架",
-                              value: product.itemUnitSummary.pendingListingCount,
+                              label: "件数",
+                              value: detailItemUnitSummary.pendingListingCount,
                               tone:
-                                product.itemUnitSummary.pendingListingCount > 0 ? "amber" : "muted",
-                            },
-                            {
-                              label: "图",
-                              value: product.itemUnitSummary.pendingPhotoCount,
-                              tone:
-                                product.itemUnitSummary.pendingPhotoCount > 0 ? "amber" : "muted",
-                            },
-                            {
-                              label: "标",
-                              value: product.itemUnitSummary.pendingLabelCount,
-                              tone:
-                                product.itemUnitSummary.pendingLabelCount > 0 ? "amber" : "muted",
+                                detailItemUnitSummary.pendingListingCount > 0 ? "amber" : "muted",
                             },
                           ]}
                         />
                       </div>
 
-                      {product.hasItemUnits ? (
+                      {detailProduct.hasItemUnits && detailProduct.itemUnits.length > 0 ? (
                         <SellableItemUnitsList
-                          units={product.itemUnits}
-                          anchorId={`units-${product.skuId}`}
+                          units={detailProduct.itemUnits}
+                          anchorId={`units-${detailProduct.skuId}`}
+                          platforms={product.allPlatforms}
+                          records={detailProduct.records}
                         />
                       ) : (
                         <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -468,9 +954,9 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                         </p>
                       )}
 
-                      {pendingItemUnitWork.length > 0 ? (
+                      {detailPendingItemUnitWork.length > 0 ? (
                         <div className="space-y-1">
-                          {pendingItemUnitWork.map((unit) => (
+                          {detailPendingItemUnitWork.map((unit) => (
                             <Link
                               key={unit.id}
                               href={withReturnTo(`/inventory/items/${unit.id}`, currentHref)}
@@ -500,15 +986,15 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                         <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                           单件 Listing
                         </p>
-                        {itemUnitListingRecords.length === 0 ? (
+                        {detailItemUnitListingRecords.length === 0 ? (
                           <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                             暂无记录
                           </p>
                         ) : (
                           <ul className="space-y-1.5">
-                            {itemUnitListingRecords.map((record) => (
+                            {detailItemUnitListingRecords.map((record) => (
                               <li key={record.listingId}>
-                                <ListingRecordCompactRow product={product} record={record} />
+                                <ListingRecordCompactRow product={detailProduct} record={record} />
                               </li>
                             ))}
                           </ul>
@@ -528,15 +1014,18 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                     <Plus className="mr-1 h-3.5 w-3.5" />
                     添加上架
                   </Button>
-                  <Link href={catalogHref}>
+                  <Link href={detailCatalogHref}>
                     <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
                       <Eye className="mr-1 h-3.5 w-3.5" />
                       档案
                     </Button>
                   </Link>
-                  {sellableUnits.length === 1 ? (
+                  {detailSellableUnits.length === 1 ? (
                     <Link
-                      href={withReturnTo(`/inventory/items/${sellableUnits[0].id}`, currentHref)}
+                      href={withReturnTo(
+                        `/inventory/items/${detailSellableUnits[0].id}`,
+                        currentHref
+                      )}
                     >
                       <Button
                         variant="ghost"
@@ -546,13 +1035,13 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
                         单件
                       </Button>
                     </Link>
-                  ) : sellableUnits.length > 1 ? (
+                  ) : detailSellableUnits.length > 1 ? (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-8 text-xs text-muted-foreground"
                       onClick={() => {
-                        const el = document.getElementById(`units-${product.skuId}`);
+                        const el = document.getElementById(`units-${detailProduct.skuId}`);
                         el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
                       }}
                     >
@@ -569,7 +1058,7 @@ export function ListingCoverageCard({ product }: ListingCoverageCardProps) {
       <QuickAddListingDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        product={product}
+        product={cardProduct}
         initialPlatformId={addPlatformId}
       />
     </>

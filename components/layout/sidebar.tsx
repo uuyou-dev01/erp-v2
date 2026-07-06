@@ -13,6 +13,10 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
+import {
+  getSellablePalletNavItems,
+  type SellablePalletNavItem,
+} from "@/app/actions/sellable-pallets";
 import type { QueueCounts } from "@/lib/application/next-actions";
 import {
   operationsNavigation,
@@ -93,13 +97,19 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>(["设置"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["库存看板", "设置"]);
   const [counts, setCounts] = useState<QueueCounts | null>(null);
+  const [sellablePallets, setSellablePallets] = useState<SellablePalletNavItem[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    getWorkbenchQueueCounts(STORE_ID).then((data) => {
-      if (!cancelled) setCounts(data);
+    Promise.all([
+      getWorkbenchQueueCounts(STORE_ID),
+      getSellablePalletNavItems(STORE_ID),
+    ]).then(([queueCounts, palletItems]) => {
+      if (cancelled) return;
+      setCounts(queueCounts);
+      setSellablePallets(palletItems);
     });
     return () => { cancelled = true; };
   }, [pathname]);
@@ -118,6 +128,19 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   };
 
   const handleNavClick = () => onMobileClose?.();
+
+  const isHrefActive = (href: string) => {
+    if (href.includes("?")) {
+      const [targetPath, targetSearch = ""] = href.split("?");
+      if (pathname !== targetPath) return false;
+      const targetParams = new URLSearchParams(targetSearch);
+      for (const [key, value] of targetParams.entries()) {
+        if (searchParams.get(key) !== value) return false;
+      }
+      return true;
+    }
+    return pathname === href;
+  };
 
   const isWorkflowActive = (item: NavItem) => {
     if (!item.queue && item.href !== "/workbench") {
@@ -184,6 +207,55 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             )}
             <div className="space-y-0.5">
               {group.items.map((item) => {
+                const dynamicSubmenu =
+                  item.href === "/inventory/sellable" ? sellablePallets : null;
+                if (dynamicSubmenu && !collapsed) {
+                  const isActive =
+                    pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  return (
+                    <div key={item.href}>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(item.name)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                          isActive
+                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        )}
+                      >
+                        <item.icon className="h-4 w-4 shrink-0 opacity-70" />
+                        <span className="flex-1 text-left">{item.name}</span>
+                        <ChevronDown
+                          className={cn(
+                            "h-3 w-3 opacity-50",
+                            expandedItems.includes(item.name) && "rotate-180"
+                          )}
+                        />
+                      </button>
+                      {expandedItems.includes(item.name) && dynamicSubmenu.length > 0 && (
+                        <div className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
+                          {dynamicSubmenu.map((sub) => (
+                            <Link
+                              key={sub.href}
+                              href={sub.href}
+                              onClick={handleNavClick}
+                              className={cn(
+                                "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                                isHrefActive(sub.href)
+                                  ? "font-medium text-foreground"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              <span className="flex-1 truncate">{sub.name}</span>
+                              <CountBadge count={sub.count} />
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
                 if (item.submenu && !collapsed) {
                   const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
@@ -211,7 +283,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                               onClick={handleNavClick}
                               className={cn(
                                 "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                                pathname === sub.href
+                                isHrefActive(sub.href)
                                   ? "font-medium text-foreground"
                                   : "text-muted-foreground hover:text-foreground"
                               )}
@@ -286,7 +358,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                               onClick={handleNavClick}
                               className={cn(
                                 "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                                pathname === sub.href
+                                isHrefActive(sub.href)
                                   ? "font-medium text-foreground"
                                   : "text-muted-foreground hover:text-foreground"
                               )}

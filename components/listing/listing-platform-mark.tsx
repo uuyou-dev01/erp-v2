@@ -5,9 +5,15 @@ interface ListingPlatformMarkProps {
   code: string;
   name: string;
   className?: string;
+  muted?: boolean;
 }
 
-export function ListingPlatformMark({ code, name, className }: ListingPlatformMarkProps) {
+export function ListingPlatformMark({
+  code,
+  name,
+  className,
+  muted = false,
+}: ListingPlatformMarkProps) {
   const visual = getPlatformVisual(code, name);
   const label = visual?.fallbackLabel ?? getPlatformFallbackLabel(code, name);
 
@@ -25,16 +31,21 @@ export function ListingPlatformMark({ code, name, className }: ListingPlatformMa
         <img
           src={visual.iconSrc}
           alt=""
-          className="h-full w-full rounded-full object-contain"
+          className={cn(
+            "h-full w-full rounded-full object-contain",
+            muted && "grayscale opacity-45"
+          )}
           loading="lazy"
         />
       ) : (
         <span
           className={cn(
             "grid h-full w-full place-items-center rounded-full text-[11px] font-bold leading-none",
-            visual?.fallbackClassName ?? "bg-muted text-muted-foreground"
+            muted
+              ? "bg-slate-200 text-slate-400"
+              : (visual?.fallbackClassName ?? "bg-muted text-muted-foreground")
           )}
-          style={visual?.fallbackStyle}
+          style={muted ? undefined : visual?.fallbackStyle}
         >
           {label}
         </span>

@@ -6,6 +6,7 @@ import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
 import { LocationCreateDialog } from "@/components/inventory/location-create-dialog";
 import { LocationRowActions } from "@/components/inventory/location-row-actions";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
+import { inferMarketFromLocation, marketLabel } from "@/lib/application/sellable-market";
 
 export const dynamic = "force-dynamic";
 
@@ -57,10 +58,16 @@ export default async function LocationsPage() {
     },
     {
       key: "region",
-      header: "地区",
-      cell: (row) => (
-        <span className="text-sm">{formatLocationRegion(row.region)}</span>
-      ),
+      header: "地区 / 货盘",
+      cell: (row) => {
+        const market = marketLabel(inferMarketFromLocation(row));
+        return (
+          <div className="space-y-0.5">
+            <p className="text-sm">{formatLocationRegion(row.region)}</p>
+            <p className="text-xs text-muted-foreground">{market}</p>
+          </div>
+        );
+      },
     },
     {
       key: "type",
@@ -78,12 +85,12 @@ export default async function LocationsPage() {
     },
     {
       key: "sellable",
-      header: "默认可售",
+      header: "库存口径",
       cell: (row) =>
         row.isSellableDefault ? (
-          <Badge variant="default">是</Badge>
+          <Badge variant="default">计入可售</Badge>
         ) : (
-          <Badge variant="secondary">否</Badge>
+          <Badge variant="secondary">在途/暂存</Badge>
         ),
     },
     {
@@ -108,7 +115,7 @@ export default async function LocationsPage() {
         <div>
           <h1 className="text-3xl font-bold">仓库位置</h1>
           <p className="text-muted-foreground">
-            管理仓库、货代和存储位置
+            管理仓库、货代和持有人位置；地区决定货盘，可售开关决定库存看板口径。
           </p>
         </div>
         <LocationCreateDialog storeId={STORE_ID} />
@@ -150,12 +157,12 @@ export default async function LocationsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">可售位置</CardTitle>
+            <CardTitle className="text-sm font-medium">计入可售</CardTitle>
             <Navigation className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.sellable}</div>
-            <p className="text-xs text-muted-foreground">默认可售位置</p>
+            <p className="text-xs text-muted-foreground">进入库存看板可售层</p>
           </CardContent>
         </Card>
       </div>

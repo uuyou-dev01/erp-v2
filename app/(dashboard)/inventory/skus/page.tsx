@@ -18,7 +18,7 @@ export default async function SKUsPage() {
       <PageHeader
         className="mb-0"
         title="商品档案"
-        description="维护 SKU 主数据；上架与售出请至「可售库存」。"
+        description="查询 SKU 主数据、售价、采购均价、成交记录与利润表现；库存请进入库存看板。"
         actions={
           <>
             <SKUImportButton />

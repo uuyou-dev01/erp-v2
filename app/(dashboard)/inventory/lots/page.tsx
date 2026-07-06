@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Package, TrendingUp, Warehouse } from "lucide-react";
 import Link from "next/link";
-import { formatCurrency } from "@/lib/decimal";
-import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
+import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { LotImportButton } from "@/components/inventory/lot-import-button";
+import { buildInventoryLotDisplayGroups } from "@/lib/application/catalog-display-groups";
 
 export const dynamic = "force-dynamic";
 
@@ -16,78 +16,12 @@ type LotRow = Awaited<ReturnType<typeof getInventoryLots>>[number];
 
 export default async function LotsPage() {
   const lots = await getInventoryLots(STORE_ID);
+  const lotGroups = buildInventoryLotDisplayGroups(lots);
 
   const activeLots = lots.filter((l) => Number(l.onHandQuantity) > 0);
   const totalValue = lots.reduce((sum, lot) => {
     return sum + parseFloat(lot.inventoryValue);
   }, 0);
-
-  const columns: Column<LotRow>[] = [
-    {
-      key: "sku",
-      header: "SKU",
-      cell: (row) => (
-        <div>
-          <p className="font-medium font-mono">{row.sku.code}</p>
-          <p className="text-sm text-muted-foreground">{row.sku.name}</p>
-          {row.sku.parentSku ? (
-            <p className="text-xs text-muted-foreground">
-              父 SKU：{row.sku.parentSku.code}
-            </p>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "onHandQuantity",
-      header: "账面数量",
-      cell: (row) => <span className="font-mono">{row.onHandQuantity}</span>,
-    },
-    {
-      key: "location",
-      header: "位置",
-      cell: (row) => (
-        <div>
-          <p className="font-medium">{row.location.code}</p>
-          <p className="text-sm text-muted-foreground">{row.location.name}</p>
-        </div>
-      ),
-    },
-    {
-      key: "unitCost",
-      header: "单位成本",
-      cell: (row) => (
-        <span className="font-mono">{formatCurrency(row.unitCost, row.costCurrency)}</span>
-      ),
-    },
-    {
-      key: "status",
-      header: "状态",
-      cell: (row) => (
-        <Badge variant={row.status === "ACTIVE" ? "default" : "secondary"}>
-          {row.status === "ACTIVE" ? "活跃" : "已消耗"}
-        </Badge>
-      ),
-    },
-    {
-      key: "receivedAt",
-      header: "入库时间",
-      hideOnMobile: true,
-      cell: (row) => new Date(row.receivedAt).toLocaleDateString("zh-CN"),
-    },
-    {
-      key: "actions",
-      header: "操作",
-      className: "text-right",
-      cell: (row) => (
-        <Link href={`/inventory/lots/${row.id}`}>
-          <Button variant="ghost" size="sm">
-            查看
-          </Button>
-        </Link>
-      ),
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -145,43 +79,130 @@ export default async function LotsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">SKU种类</CardTitle>
+            <CardTitle className="text-sm font-medium">商品组数</CardTitle>
             <Package className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {[...new Set(lots.map((l) => l.skuId))].length}
-            </div>
-            <p className="text-xs text-muted-foreground">不同SKU数量</p>
+            <div className="text-2xl font-bold">{lotGroups.length}</div>
+            <p className="text-xs text-muted-foreground">父 SKU / 独立 SKU 汇总</p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>所有入库库存</CardTitle>
+          <CardTitle>按商品组汇总</CardTitle>
         </CardHeader>
-        <CardContent>
-          <ResponsiveTable
-            columns={columns}
-            data={lots}
-            keyExtractor={(row) => row.id}
-            emptyState={
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Package className="mb-4 h-12 w-12 text-muted-foreground" />
-                <h3 className="mb-2 text-lg font-semibold">暂无入库库存</h3>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  创建第一条入库库存开始管理来源和成本
-                </p>
-                <Link href="/inventory/lots/new">
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    新增入库库存
-                  </Button>
-                </Link>
-              </div>
-            }
-          />
+        <CardContent className="space-y-3">
+          {lotGroups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Package className="mb-4 h-12 w-12 text-muted-foreground" />
+              <h3 className="mb-2 text-lg font-semibold">暂无入库库存</h3>
+              <p className="mb-4 text-sm text-muted-foreground">
+                创建第一条入库库存开始管理来源和成本
+              </p>
+              <Link href="/inventory/lots/new">
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  新增入库库存
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            lotGroups.map((group) => (
+              <section key={group.key} className="overflow-hidden rounded-lg border">
+                <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="text-lg font-semibold">{group.title}</p>
+                    <p className="font-mono text-sm text-muted-foreground">{group.code}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm lg:min-w-[420px]">
+                    <div className="rounded-md border bg-background px-3 py-2">
+                      <p className="text-xs text-muted-foreground">账面数量</p>
+                      <p className="font-semibold">{formatQuantity(group.totalOnHand)}</p>
+                    </div>
+                    <div className="rounded-md border bg-background px-3 py-2">
+                      <p className="text-xs text-muted-foreground">批次数</p>
+                      <p className="font-semibold">{group.lots.length}</p>
+                    </div>
+                    <div className="rounded-md border bg-background px-3 py-2">
+                      <p className="text-xs text-muted-foreground">库存成本</p>
+                      <p className="font-semibold">¥{group.totalValue.toFixed(2)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 p-4 xl:grid-cols-[minmax(260px,360px)_1fr]">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">子 SKU / 变体</p>
+                    {group.variants.map((variant) => (
+                      <div key={variant.skuId} className="rounded-md border p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{variant.skuName}</p>
+                            <p className="truncate font-mono text-xs text-muted-foreground">
+                              {variant.skuCode}
+                            </p>
+                          </div>
+                          <Badge variant="outline">
+                            {formatQuantity(variant.totalOnHand)}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {variant.lots.length} 个批次来源
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border">
+                    <div className="grid grid-cols-[1.3fr_0.7fr_1fr_0.8fr_0.8fr_0.6fr] gap-3 border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
+                      <span>批次</span>
+                      <span>数量</span>
+                      <span>位置</span>
+                      <span>单位成本</span>
+                      <span>入库时间</span>
+                      <span className="text-right">操作</span>
+                    </div>
+                    {group.lots.map((lot: LotRow) => (
+                      <div
+                        key={lot.id}
+                        className="grid grid-cols-1 gap-2 border-b px-3 py-3 text-sm last:border-b-0 md:grid-cols-[1.3fr_0.7fr_1fr_0.8fr_0.8fr_0.6fr] md:gap-3 md:items-center"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{lot.sku.name}</p>
+                          <p className="truncate font-mono text-xs text-muted-foreground">
+                            {lot.sku.code}
+                          </p>
+                        </div>
+                        <div className="font-mono">{formatQuantity(lot.onHandQuantity)}</div>
+                        <div>
+                          <p className="font-medium">{lot.location.code}</p>
+                          <p className="text-xs text-muted-foreground">{lot.location.name}</p>
+                        </div>
+                        <div className="font-mono">
+                          {formatCurrency(lot.unitCost, lot.costCurrency)}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {new Date(lot.receivedAt).toLocaleDateString("zh-CN")}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 md:justify-end">
+                          <Badge variant={lot.status === "ACTIVE" ? "default" : "secondary"}>
+                            {lot.status === "ACTIVE" ? "活跃" : "已消耗"}
+                          </Badge>
+                          <Link href={`/inventory/lots/${lot.id}`}>
+                            <Button variant="ghost" size="sm">
+                              查看
+                            </Button>
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            ))
+          )}
         </CardContent>
       </Card>
     </div>

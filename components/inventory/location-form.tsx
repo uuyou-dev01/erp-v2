@@ -13,9 +13,10 @@ import {
   updateLocationAction,
   type LocationType,
 } from "@/app/actions/locations";
-import { LOCATION_REGIONS } from "@/lib/inventory/location-regions";
+import { LOCATION_REGIONS, formatLocationRegion } from "@/lib/inventory/location-regions";
+import { inferMarketFromLocation, marketLabel } from "@/lib/application/sellable-market";
 import { t } from "@/lib/i18n";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Info } from "lucide-react";
 
 interface LocationFormProps {
   storeId: string;
@@ -64,6 +65,9 @@ export function LocationForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const generatedCodeHint = useMemo(() => generateLocationCode(formData.type), [formData.type]);
+  const marketPreview = marketLabel(
+    inferMarketFromLocation({ region: formData.region, code: formData.code, name: formData.name })
+  );
 
   useEffect(() => {
     if (!isCreateMode || codeEditedManually) return;
@@ -180,7 +184,7 @@ export function LocationForm({
           ))}
         </Select>
         <p className="text-xs text-muted-foreground">
-          标识仓库所在国家与城市，便于跨境库存与物流区分
+          决定库存看板归属的货盘市场，例如日本地区会进入日本货盘。
         </p>
       </div>
 
@@ -197,7 +201,9 @@ export function LocationForm({
           <option value="PERSON">个人（朋友/代卖）</option>
           <option value="TRANSIT">运输途中</option>
         </Select>
-        <p className="text-xs text-muted-foreground">用于库存管理的位置类型</p>
+        <p className="text-xs text-muted-foreground">
+          运营分类，用于区分自有仓、货代/集运、个人持有人或运输节点。
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -205,9 +211,19 @@ export function LocationForm({
           id="isSellableDefault"
           checked={formData.isSellableDefault}
           onChange={(e) => updateFormData({ isSellableDefault: e.currentTarget.checked })}
-          label="默认可销售"
+          label="计入可售库存"
         />
-        <p className="text-xs text-muted-foreground">该位置的库存默认是否可用于销售</p>
+        <p className="text-xs text-muted-foreground">
+          开启后，该仓库存会进入库存看板的可售层；关闭后会作为在途/暂存层展示。
+        </p>
+      </div>
+
+      <div className="flex gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>
+          当前配置预览：{formatLocationRegion(formData.region)} · {marketPreview} ·{" "}
+          {formData.isSellableDefault ? "库存到达后可直接出现在可售货盘" : "库存到达后先作为在途/暂存显示"}
+        </p>
       </div>
 
       {submitError ? (

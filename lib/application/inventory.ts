@@ -72,6 +72,7 @@ export interface StockLocationBreakdown {
   locationId: string;
   code: string;
   name: string;
+  region: string | null;
   type: string;
   qty: number;
 }
@@ -109,7 +110,7 @@ function pushQty(
   skuId: string,
   qty: number,
   isSellable: boolean,
-  location: { id: string; code: string; name: string; type: string },
+  location: { id: string; code: string; name: string; region: string | null; type: string },
   source: "LOT" | "ITEM_UNIT"
 ) {
   if (qty <= 0) return;
@@ -136,6 +137,7 @@ function pushQty(
       locationId: location.id,
       code: location.code,
       name: location.name,
+      region: location.region,
       type: location.type,
       qty,
     });

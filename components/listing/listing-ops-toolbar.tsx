@@ -62,10 +62,14 @@ export function ListingOpsToolbar({
   };
 
   return (
-    <div className="space-y-4 rounded-xl border bg-card p-4">
-      <div className="flex gap-2 overflow-x-auto pb-1">
+    <div className="space-y-2 rounded-xl border bg-card p-3">
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
         <Link href={withParam(searchParams, basePath, "platformId")}>
-          <Button variant={!activePlatformId ? "default" : "outline"} size="sm">
+          <Button
+            variant={!activePlatformId ? "default" : "outline"}
+            size="sm"
+            className="h-8 px-3 text-xs"
+          >
             全部
           </Button>
         </Link>
@@ -79,7 +83,7 @@ export function ListingOpsToolbar({
               size="sm"
               title={platform.name}
               aria-label={platform.name}
-              className="h-9 w-9 px-0"
+              className="h-8 w-8 px-0"
             >
               <ListingPlatformMark
                 code={platform.code}
@@ -91,7 +95,7 @@ export function ListingOpsToolbar({
         ))}
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_160px_160px_180px]">
+      <div className="grid gap-2 lg:grid-cols-[1fr_140px_140px_150px]">
         <form onSubmit={submitSearch} className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -99,16 +103,17 @@ export function ListingOpsToolbar({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索商品 / SKU / Listing ID"
-              className="pl-9"
+              className="h-9 pl-9"
             />
           </div>
-          <Button type="submit" variant="outline">
+          <Button type="submit" variant="outline" className="h-9 px-3">
             搜索
           </Button>
         </form>
 
         <Select
           value={status ?? ""}
+          className="h-9"
           onChange={(event) =>
             router.push(withParam(searchParams, basePath, "status", event.target.value))
           }
@@ -121,6 +126,7 @@ export function ListingOpsToolbar({
 
         <Select
           value={risk ?? ""}
+          className="h-9"
           onChange={(event) =>
             router.push(withParam(searchParams, basePath, "risk", event.target.value))
           }
@@ -133,6 +139,7 @@ export function ListingOpsToolbar({
 
         <Select
           value={sort ?? "listedAt"}
+          className="h-9"
           onChange={(event) =>
             router.push(withParam(searchParams, basePath, "sort", event.target.value))
           }

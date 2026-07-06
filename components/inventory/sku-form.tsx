@@ -131,6 +131,7 @@ export function SKUForm({
     () => parentOptions.find((p) => p.id === formData.parentSkuId),
     [parentOptions, formData.parentSkuId]
   );
+  const showParentCodePrefix = isChild && selectedParent && !initialData;
 
   const presetAttributes = isChild ? CHILD_PRESET_ATTRIBUTES : PARENT_PRESET_ATTRIBUTES;
 
@@ -539,11 +540,11 @@ export function SKUForm({
             <div className="space-y-2">
               <Label htmlFor="code">{t("sku.code")} *</Label>
               <div className="flex items-center gap-2">
-                {isChild && selectedParent && (
+                {showParentCodePrefix ? (
                   <Badge variant="outline" className="shrink-0 font-mono">
                     {selectedParent.code}-
                   </Badge>
-                )}
+                ) : null}
                 <Input
                   id="code"
                   value={formData.code}
@@ -553,7 +554,9 @@ export function SKUForm({
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                {isChild
+                {initialData
+                  ? "系统编码用于导入、对账和内部追踪；页面展示会优先使用变体名。"
+                  : isChild
                   ? "子 SKU 代码已自动生成，你也可以改成更有意义的后缀（如颜色-尺码）"
                   : t("sku.code_hint")}
               </p>

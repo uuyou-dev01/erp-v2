@@ -6,11 +6,20 @@ import {
 } from "@/lib/core-platforms";
 import { getStoreStockBreakdown, type StockLocationBreakdown } from "@/lib/application/inventory";
 import {
+  buildSellableMarketSummaries,
+  inferMarketFromLocation,
+  isPlatformTargetForMarket,
+  marketLabel,
+  type SellableMarketCode,
+  type SellableMarketSummary,
+} from "@/lib/application/sellable-market";
+import {
   parseSkuCatalogMeta,
   resolveCoverImageUrl,
   type CatalogStatus,
   type ProductKind,
 } from "@/lib/application/sku-catalog";
+import { familyKey, familyNameFromSkuLike } from "@/lib/application/catalog-display-groups";
 
 const STALE_DAYS = 30;
 
@@ -27,6 +36,7 @@ export interface ListingCoveragePlatform {
   id: string;
   name: string;
   code: string;
+  country: string | null;
   state: ListingCoveragePlatformState;
   listingId: string | null;
   status: string | null;
@@ -40,6 +50,7 @@ export interface ListingCoveragePlatform {
 
 /** 已有上架记录（不含未覆盖平台） */
 export interface ListingRecord {
+  skuId: string;
   listingId: string;
   platformId: string;
   platformName: string;
@@ -62,8 +73,11 @@ export interface ListingRecord {
 
 export interface SellableItemUnitRow {
   id: string;
+  skuId: string;
   conditionGrade: string | null;
+  locationId: string;
   locationName: string;
+  locationRegion: string | null;
   sellable: boolean;
   inTransit: boolean;
   imageUrl: string | null;
@@ -86,6 +100,33 @@ export interface ItemUnitChannelSummary {
   pendingLabelCount: number;
 }
 
+export interface ListingCoverageVariantRow {
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  imageUrl: string | null;
+  sellableQty: number;
+  sellableLotQty: number;
+  sellableItemUnitCount: number;
+  inTransitQty: number;
+  sellableLocations: StockLocationBreakdown[];
+  inTransitLocations: StockLocationBreakdown[];
+}
+
+export interface ListingCoverageVariantView extends ListingCoverageVariantRow {
+  scopedSellableQty: number;
+  scopedSellableLotQty: number;
+  scopedSellableItemUnitCount: number;
+  scopedInTransitQty: number;
+  scopedSellableLocations: StockLocationBreakdown[];
+  scopedInTransitLocations: StockLocationBreakdown[];
+  scopedRecords: ListingRecord[];
+  scopedSkuRecords: ListingRecord[];
+  scopedItemUnitRecords: ListingRecord[];
+  scopedItemUnits: SellableItemUnitRow[];
+  scopedPlatforms: ListingCoveragePlatform[];
+}
+
 export interface ListingCoverageProduct {
   key: string;
   listingType: ListingCoverageProductType;
@@ -102,10 +143,15 @@ export interface ListingCoverageProduct {
   sellableLotQty: number;
   /** 中古单件可售件数 */
   sellableItemUnitCount: number;
+  /** 父 SKU / 展示分组下的具体子 SKU */
+  variantRows: ListingCoverageVariantRow[];
   inTransitQty: number;
   sellableLocations: StockLocationBreakdown[];
   inTransitLocations: StockLocationBreakdown[];
   itemUnits: SellableItemUnitRow[];
+  primaryMarket: SellableMarketCode;
+  marketLabel: string;
+  marketSummaries: SellableMarketSummary[];
   newStockSummary: StockChannelSummary;
   itemUnitSummary: ItemUnitChannelSummary;
   hasLotStock: boolean;
@@ -114,6 +160,8 @@ export interface ListingCoverageProduct {
   records: ListingRecord[];
   /** 全平台矩阵，供辅助页或筛选使用 */
   platforms: ListingCoveragePlatform[];
+  /** 未按主市场过滤的核心平台矩阵，供跨市场详情和单件行使用 */
+  allPlatforms: ListingCoveragePlatform[];
   aggregateRisks: ListingCoverageRisk[];
   latestListedAt: string | null;
   latestUpdatedAt: string | null;
@@ -146,23 +194,25 @@ export interface SellableInventoryStats {
 type ProductDraft = Omit<
   ListingCoverageProduct,
   | "platforms"
+  | "allPlatforms"
   | "records"
   | "aggregateRisks"
   | "latestListedAt"
   | "latestUpdatedAt"
   | "newStockSummary"
   | "itemUnitSummary"
+  | "primaryMarket"
+  | "marketLabel"
+  | "marketSummaries"
+  | "variantRows"
 > & {
   listings: ListingRow[];
+  variantStats: Map<string, ListingCoverageVariantRow>;
 };
 
 type ListingRow = Awaited<ReturnType<typeof getListingRows>>[number];
-type StoreStockBreakdown = Awaited<ReturnType<typeof getStoreStockBreakdown>> extends Map<
-  string,
-  infer T
->
-  ? T
-  : never;
+type StoreStockBreakdown =
+  Awaited<ReturnType<typeof getStoreStockBreakdown>> extends Map<string, infer T> ? T : never;
 
 function firstPhoto(value: unknown) {
   if (Array.isArray(value) && typeof value[0] === "string") {
@@ -183,6 +233,224 @@ function statusToState(status: string): ListingCoveragePlatformState {
 
 function riskKey(risk: ListingCoverageRisk) {
   return `${risk.key}:${risk.label}`;
+}
+
+function mergeStockLocationBreakdowns(
+  existing: StockLocationBreakdown[],
+  next: StockLocationBreakdown[]
+) {
+  const byLocation = new Map(existing.map((location) => [location.locationId, { ...location }]));
+  for (const location of next) {
+    const current = byLocation.get(location.locationId);
+    if (current) {
+      current.qty += location.qty;
+    } else {
+      byLocation.set(location.locationId, { ...location });
+    }
+  }
+  return [...byLocation.values()].sort((a, b) => b.qty - a.qty);
+}
+
+function locationMatchesScope(
+  location: Pick<StockLocationBreakdown, "locationId" | "region">,
+  market?: SellableMarketCode,
+  locationId?: string
+) {
+  if (market && inferMarketFromLocation(location) !== market) return false;
+  if (locationId && location.locationId !== locationId) return false;
+  return true;
+}
+
+function itemUnitMatchesScope(
+  unit: Pick<SellableItemUnitRow, "locationId" | "locationRegion">,
+  market?: SellableMarketCode,
+  locationId?: string
+) {
+  if (market && inferMarketFromLocation({ region: unit.locationRegion }) !== market) return false;
+  if (locationId && unit.locationId !== locationId) return false;
+  return true;
+}
+
+export function buildVariantView(input: {
+  variant: ListingCoverageVariantRow;
+  records: ListingRecord[];
+  itemUnits: SellableItemUnitRow[];
+  platforms: ListingCoveragePlatform[];
+  market?: SellableMarketCode;
+  locationId?: string;
+}): ListingCoverageVariantView {
+  const scopedSellableLocations = input.variant.sellableLocations.filter((location) =>
+    locationMatchesScope(location, input.market, input.locationId)
+  );
+  const scopedInTransitLocations = input.variant.inTransitLocations.filter((location) =>
+    locationMatchesScope(location, input.market, input.locationId)
+  );
+  const scopedItemUnits = input.itemUnits.filter(
+    (unit) =>
+      unit.skuId === input.variant.skuId &&
+      (unit.sellable || unit.inTransit) &&
+      itemUnitMatchesScope(unit, input.market, input.locationId)
+  );
+  const scopedPlatformIds = new Set(
+    (input.market
+      ? input.platforms.filter((platform) => isPlatformTargetForMarket(platform, input.market!))
+      : input.platforms
+    ).map((platform) => platform.id)
+  );
+  const scopedRecords = input.records.filter(
+    (record) => record.skuId === input.variant.skuId && scopedPlatformIds.has(record.platformId)
+  );
+  const scopedSkuRecords = scopedRecords.filter((record) => record.listingScope !== "ITEM_UNIT");
+  const scopedItemUnitIds = new Set(scopedItemUnits.map((unit) => unit.id));
+  const scopedItemUnitRecords = scopedRecords.filter(
+    (record) =>
+      record.listingScope === "ITEM_UNIT" &&
+      record.itemUnitId &&
+      scopedItemUnitIds.has(record.itemUnitId)
+  );
+  const scopedPlatforms = input.platforms.filter((platform) => scopedPlatformIds.has(platform.id));
+  const scopedSellableQty = scopedSellableLocations.reduce(
+    (sum, location) => sum + location.qty,
+    0
+  );
+  const scopedSellableItemUnits = scopedItemUnits.filter((unit) => unit.sellable);
+
+  return {
+    ...input.variant,
+    scopedSellableQty,
+    scopedSellableLotQty: Math.max(0, scopedSellableQty - scopedSellableItemUnits.length),
+    scopedSellableItemUnitCount: scopedSellableItemUnits.length,
+    scopedInTransitQty: scopedInTransitLocations.reduce((sum, location) => sum + location.qty, 0),
+    scopedSellableLocations,
+    scopedInTransitLocations,
+    scopedRecords,
+    scopedSkuRecords,
+    scopedItemUnitRecords,
+    scopedItemUnits,
+    scopedPlatforms,
+  };
+}
+
+export function buildScopedListingCoverageProduct(
+  product: ListingCoverageProduct,
+  scope: { market?: SellableMarketCode; locationId?: string }
+): ListingCoverageProduct | null {
+  if (!scope.market && !scope.locationId) return product;
+
+  const variantViews = product.variantRows
+    .map((variant) =>
+      buildVariantView({
+        variant,
+        records: product.records,
+        itemUnits: product.itemUnits,
+        platforms: scope.market ? product.allPlatforms : product.platforms,
+        market: scope.market,
+        locationId: scope.locationId,
+      })
+    )
+    .filter((variant) => variant.scopedSellableQty > 0 || variant.scopedInTransitQty > 0);
+
+  if (variantViews.length === 0) return null;
+
+  const recordsById = new Map<string, ListingRecord>();
+  const itemUnitsById = new Map<string, SellableItemUnitRow>();
+  let sellableQty = 0;
+  let sellableLotQty = 0;
+  let sellableItemUnitCount = 0;
+  let inTransitQty = 0;
+  let sellableLocations: StockLocationBreakdown[] = [];
+  let inTransitLocations: StockLocationBreakdown[] = [];
+
+  for (const variant of variantViews) {
+    sellableQty += variant.scopedSellableQty;
+    sellableLotQty += variant.scopedSellableLotQty;
+    sellableItemUnitCount += variant.scopedSellableItemUnitCount;
+    inTransitQty += variant.scopedInTransitQty;
+    sellableLocations = mergeStockLocationBreakdowns(
+      sellableLocations,
+      variant.scopedSellableLocations
+    );
+    inTransitLocations = mergeStockLocationBreakdowns(
+      inTransitLocations,
+      variant.scopedInTransitLocations
+    );
+    for (const record of variant.scopedRecords) {
+      recordsById.set(record.listingId, record);
+    }
+    for (const unit of variant.scopedItemUnits) {
+      itemUnitsById.set(unit.id, unit);
+    }
+  }
+
+  const records = [...recordsById.values()];
+  const itemUnits = [...itemUnitsById.values()];
+  const sellableItemUnits = itemUnits.filter((unit) => unit.sellable);
+  const targetPlatforms = scope.market
+    ? product.allPlatforms.filter((platform) => isPlatformTargetForMarket(platform, scope.market!))
+    : product.platforms;
+  const targetPlatformIds = new Set(targetPlatforms.map((platform) => platform.id));
+  const activeSkuListingPlatformIds = new Set(
+    records
+      .filter(
+        (record) =>
+          record.listingScope === "SKU" &&
+          record.status === "ACTIVE" &&
+          targetPlatformIds.has(record.platformId)
+      )
+      .map((record) => record.platformId)
+  );
+  const activeItemUnitListingCount = records.filter(
+    (record) => record.listingScope === "ITEM_UNIT" && record.status === "ACTIVE"
+  ).length;
+  const activeListedItemUnitIds = new Set(
+    records
+      .filter(
+        (record) =>
+          record.listingScope === "ITEM_UNIT" && record.status === "ACTIVE" && record.itemUnitId
+      )
+      .map((record) => record.itemUnitId as string)
+  );
+
+  return {
+    ...product,
+    sellableQty,
+    sellableLotQty,
+    sellableItemUnitCount,
+    inTransitQty,
+    sellableLocations,
+    inTransitLocations,
+    itemUnits,
+    variantRows: variantViews,
+    records,
+    platforms: targetPlatforms,
+    newStockSummary: {
+      sellableQty: sellableLotQty,
+      activeListingCount: activeSkuListingPlatformIds.size,
+      pendingListingCount:
+        sellableLotQty > 0 ? Math.max(0, targetPlatforms.length - activeSkuListingPlatformIds.size) : 0,
+    },
+    itemUnitSummary: {
+      sellableCount: sellableItemUnits.length,
+      activeListingCount: activeItemUnitListingCount,
+      pendingListingCount: sellableItemUnits.filter((unit) => !activeListedItemUnitIds.has(unit.id))
+        .length,
+      pendingPhotoCount: sellableItemUnits.filter((unit) => unit.photoCount === 0).length,
+      pendingLabelCount: sellableItemUnits.filter((unit) => unit.labelStatus !== "ATTACHED").length,
+    },
+    hasLotStock: sellableLotQty > 0 || inTransitQty > 0,
+    hasItemUnits: itemUnits.length > 0,
+    aggregateRisks: records.flatMap((record) => record.risks),
+    latestListedAt:
+      records
+        .map((record) => record.listedAt)
+        .sort()
+        .at(-1) ?? null,
+    latestUpdatedAt:
+      records
+        .map((record) => record.updatedAt)
+        .sort()
+        .at(-1) ?? null,
+  };
 }
 
 function buildRisks(
@@ -219,6 +487,7 @@ async function getListingRows(storeId: string) {
           id: true,
           name: true,
           code: true,
+          country: true,
           defaultFeeRate: true,
           defaultShippingFee: true,
         },
@@ -232,7 +501,7 @@ async function getListingRows(storeId: string) {
             select: { id: true, parentSkuId: true, code: true, name: true, imageUrl: true },
           },
           location: {
-            select: { name: true },
+            select: { name: true, region: true },
           },
         },
       },
@@ -261,6 +530,7 @@ function listingRowToRecord(
   const qtyForRisk = scope === "ITEM_UNIT" ? (itemUnitSellable ? 1 : 0) : productSellableQty;
 
   return {
+    skuId: listing.skuId ?? listing.itemUnit?.skuId ?? "",
     listingId: listing.id,
     platformId: listing.platformId,
     platformName: listing.platform.name,
@@ -309,11 +579,49 @@ function skuDraftKey(skuId: string) {
   return productKey("SKU", skuId);
 }
 
+function marketFromCountry(country?: string | null): SellableMarketCode {
+  const normalized = country?.toUpperCase();
+  if (normalized === "JP" || normalized === "CN" || normalized === "US") return normalized;
+  if (normalized === "GLOBAL") return "GLOBAL";
+  return "UNKNOWN";
+}
+
+function inferMarketFromActiveListings(listings: ListingRow[]): SellableMarketCode {
+  const counts = new Map<SellableMarketCode, number>();
+  for (const listing of listings) {
+    if (listing.status !== "ACTIVE") continue;
+    const market = marketFromCountry(listing.platform.country);
+    if (market === "UNKNOWN") continue;
+    counts.set(market, (counts.get(market) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "UNKNOWN";
+}
+
+function emptyVariantRow(sku: {
+  id: string;
+  code: string;
+  name: string;
+  imageUrl?: string | null;
+}): ListingCoverageVariantRow {
+  return {
+    skuId: sku.id,
+    skuCode: sku.code,
+    skuName: sku.name,
+    imageUrl: sku.imageUrl ?? null,
+    sellableQty: 0,
+    sellableLotQty: 0,
+    sellableItemUnitCount: 0,
+    inTransitQty: 0,
+    sellableLocations: [],
+    inTransitLocations: [],
+  };
+}
+
 export async function getListingCoverageProducts(storeId: string) {
   const [platforms, listings, skus, itemUnits, stockBreakdown] = await Promise.all([
     prisma.platform.findMany({
       where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
-      select: { id: true, name: true, code: true },
+      select: { id: true, name: true, code: true, country: true },
     }),
     getListingRows(storeId),
     prisma.sKU.findMany({
@@ -337,7 +645,7 @@ export async function getListingCoverageProducts(storeId: string) {
           select: { id: true, code: true, name: true, imageUrl: true },
         },
         location: {
-          select: { name: true, isSellableDefault: true },
+          select: { name: true, region: true, isSellableDefault: true },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -379,9 +687,76 @@ export async function getListingCoverageProducts(storeId: string) {
   }
 
   const skuById = new Map(skus.map((sku) => [sku.id, sku]));
+  const fallbackDisplayGroups = new Map<
+    string,
+    {
+      key: string;
+      title: string;
+      code: string;
+      headSkuId: string;
+    }
+  >();
+
+  const familyBuckets = new Map<string, typeof skus>();
+  for (const sku of skus) {
+    if (sku.parentSkuId) continue;
+    const key = familyKey(sku);
+    if (!key) continue;
+    const bucket = familyBuckets.get(key) ?? [];
+    bucket.push(sku);
+    familyBuckets.set(key, bucket);
+  }
+
+  for (const [key, bucket] of familyBuckets.entries()) {
+    if (bucket.length < 2) continue;
+    const head = bucket[0];
+    const title = familyNameFromSkuLike(head) ?? head.name;
+    const group = {
+      key: `DISPLAY:${key}`,
+      title,
+      code: "展示分组",
+      headSkuId: head.id,
+    };
+    for (const sku of bucket) {
+      fallbackDisplayGroups.set(sku.id, group);
+    }
+  }
 
   function coverageSkuId(skuId: string) {
     return skuById.get(skuId)?.parentSkuId ?? skuId;
+  }
+
+  function coverageGroupKey(skuId: string) {
+    const sku = skuById.get(skuId);
+    if (sku?.parentSkuId) return skuDraftKey(sku.parentSkuId);
+    const fallback = fallbackDisplayGroups.get(skuId);
+    if (fallback) return fallback.key;
+    return skuDraftKey(skuId);
+  }
+
+  function displaySkuForGroup(skuId: string) {
+    const sku = skuById.get(skuId);
+    if (sku?.parentSkuId) {
+      const parent = skuById.get(sku.parentSkuId);
+      if (parent) {
+        return {
+          id: parent.id,
+          code: parent.code,
+          name: parent.name,
+          catalogSkuId: parent.id,
+        };
+      }
+    }
+    const fallback = fallbackDisplayGroups.get(skuId);
+    if (fallback) {
+      return {
+        id: fallback.headSkuId,
+        code: fallback.code,
+        name: fallback.title,
+        catalogSkuId: fallback.headSkuId,
+      };
+    }
+    return sku ? { id: sku.id, code: sku.code, name: sku.name, catalogSkuId: sku.id } : null;
   }
 
   function mergeLocationBreakdowns(
@@ -400,7 +775,18 @@ export async function getListingCoverageProducts(storeId: string) {
     return [...byLocation.values()];
   }
 
-  function addStockBreakdown(draft: ProductDraft, breakdown: StoreStockBreakdown) {
+  function ensureVariantStats(draft: ProductDraft, skuId: string) {
+    const sku = skuById.get(skuId);
+    if (!sku) return null;
+    let row = draft.variantStats.get(skuId);
+    if (!row) {
+      row = emptyVariantRow(sku);
+      draft.variantStats.set(skuId, row);
+    }
+    return row;
+  }
+
+  function addStockBreakdown(draft: ProductDraft, skuId: string, breakdown: StoreStockBreakdown) {
     draft.sellableLotQty += breakdown.sellableLotQty;
     draft.inTransitQty += breakdown.inTransitLotQty;
     draft.sellableLocations = mergeLocationBreakdowns(
@@ -414,25 +800,39 @@ export async function getListingCoverageProducts(storeId: string) {
     draft.hasLotStock =
       draft.hasLotStock || breakdown.sellableLotQty > 0 || breakdown.inTransitLotQty > 0;
     draft.sellableQty = draft.sellableLotQty + draft.sellableItemUnitCount;
+
+    const variant = ensureVariantStats(draft, skuId);
+    if (variant) {
+      variant.sellableLotQty += breakdown.sellableLotQty;
+      variant.inTransitQty += breakdown.inTransitLotQty;
+      variant.sellableLocations = mergeLocationBreakdowns(
+        variant.sellableLocations,
+        breakdown.sellableLocations
+      );
+      variant.inTransitLocations = mergeLocationBreakdowns(
+        variant.inTransitLocations,
+        breakdown.inTransitLocations
+      );
+      variant.sellableQty = variant.sellableLotQty + variant.sellableItemUnitCount;
+    }
   }
 
   function ensureSkuDraft(skuId: string) {
-    const draftSkuId = coverageSkuId(skuId);
-    const key = skuDraftKey(draftSkuId);
+    const key = coverageGroupKey(skuId);
     let draft = drafts.get(key);
     if (draft) return draft;
 
-    const sku = skuById.get(draftSkuId);
-    if (!sku) return null;
+    const displaySku = displaySkuForGroup(skuId);
+    if (!displaySku) return null;
 
-    const catalog = catalogFieldsForSku(draftSkuId);
+    const catalog = catalogFieldsForSku(displaySku.catalogSkuId);
     draft = {
       key,
       listingType: "SKU",
-      skuId: sku.id,
+      skuId: displaySku.id,
       itemUnitId: null,
-      skuCode: sku.code,
-      skuName: sku.name,
+      skuCode: displaySku.code,
+      skuName: displaySku.name,
       conditionGrade: null,
       locationName: null,
       sellableQty: 0,
@@ -445,6 +845,7 @@ export async function getListingCoverageProducts(storeId: string) {
       hasLotStock: false,
       hasItemUnits: false,
       listings: [],
+      variantStats: new Map(),
       ...catalog,
     };
     drafts.set(key, draft);
@@ -459,7 +860,7 @@ export async function getListingCoverageProducts(storeId: string) {
     const draft = ensureSkuDraft(sku.id);
     if (!draft) continue;
 
-    addStockBreakdown(draft, breakdown);
+    addStockBreakdown(draft, sku.id, breakdown);
   }
 
   for (const item of itemUnits) {
@@ -475,8 +876,11 @@ export async function getListingCoverageProducts(storeId: string) {
 
     draft.itemUnits.push({
       id: item.id,
+      skuId: item.skuId,
       conditionGrade: item.conditionGrade,
+      locationId: item.locationId,
       locationName: item.location.name,
+      locationRegion: item.location.region,
       sellable: isSellable,
       inTransit,
       imageUrl: unitImage,
@@ -487,8 +891,17 @@ export async function getListingCoverageProducts(storeId: string) {
 
     if (isSellable) {
       draft.sellableItemUnitCount += 1;
+      const variant = ensureVariantStats(draft, item.skuId);
+      if (variant) {
+        variant.sellableItemUnitCount += 1;
+        variant.sellableQty = variant.sellableLotQty + variant.sellableItemUnitCount;
+      }
     } else if (inTransit) {
       draft.inTransitQty += 1;
+      const variant = ensureVariantStats(draft, item.skuId);
+      if (variant) {
+        variant.inTransitQty += 1;
+      }
     }
     draft.hasItemUnits = true;
     draft.sellableQty = draft.sellableLotQty + draft.sellableItemUnitCount;
@@ -511,15 +924,29 @@ export async function getListingCoverageProducts(storeId: string) {
   }
 
   return [...drafts.values()].map((draft) => {
-    const { listings: draftListings, itemUnits: draftItemUnits, ...product } = draft;
+    const { listings: draftListings, itemUnits: draftItemUnits, variantStats, ...product } = draft;
     const sellableItemUnitIds = new Set(draftItemUnits.filter((u) => u.sellable).map((u) => u.id));
-    const platformsWithState = corePlatforms.map((platform) => {
+    const marketSummaries = buildSellableMarketSummaries({
+      sellableLocations: product.sellableLocations,
+      inTransitLocations: product.inTransitLocations,
+      itemUnits: draftItemUnits,
+    });
+    const locationMarket = marketSummaries[0]?.market ?? "UNKNOWN";
+    const primaryMarket =
+      locationMarket === "UNKNOWN" ? inferMarketFromActiveListings(draftListings) : locationMarket;
+    const targetPlatforms = corePlatforms.filter((platform) =>
+      isPlatformTargetForMarket(platform, primaryMarket)
+    );
+    const platformsForProduct = targetPlatforms.length > 0 ? targetPlatforms : corePlatforms;
+
+    const platformStateFor = (platform: (typeof corePlatforms)[number]) => {
       const listing = newestListingForPlatform(draftListings, platform.id);
       const risks = listing ? buildRisks(listing, product.sellableQty) : [];
       return {
         id: platform.id,
         name: platform.name,
         code: platform.code,
+        country: platform.country,
         state: listing ? statusToState(listing.status) : "missing",
         listingId: listing?.id ?? null,
         status: listing?.status ?? null,
@@ -530,7 +957,10 @@ export async function getListingCoverageProducts(storeId: string) {
         updatedAt: listing?.updatedAt.toISOString() ?? null,
         risks,
       } satisfies ListingCoveragePlatform;
-    });
+    };
+
+    const allPlatformsWithState = corePlatforms.map(platformStateFor);
+    const platformsWithState = platformsForProduct.map(platformStateFor);
 
     const risks = new Map<string, ListingCoverageRisk>();
     for (const platform of platformsWithState) {
@@ -552,9 +982,15 @@ export async function getListingCoverageProducts(storeId: string) {
         .at(-1) ?? null;
 
     const records = buildListedRecords(draftListings, product.sellableQty, sellableItemUnitIds);
+    const targetPlatformIds = new Set(platformsWithState.map((platform) => platform.id));
     const activeSkuListingPlatformIds = new Set(
       records
-        .filter((record) => record.listingScope === "SKU" && record.status === "ACTIVE")
+        .filter(
+          (record) =>
+            record.listingScope === "SKU" &&
+            record.status === "ACTIVE" &&
+            targetPlatformIds.has(record.platformId)
+        )
         .map((record) => record.platformId)
     );
     const activeItemUnitListingCount = records.filter(
@@ -564,9 +1000,7 @@ export async function getListingCoverageProducts(storeId: string) {
       records
         .filter(
           (record) =>
-            record.listingScope === "ITEM_UNIT" &&
-            record.status === "ACTIVE" &&
-            record.itemUnitId
+            record.listingScope === "ITEM_UNIT" && record.status === "ACTIVE" && record.itemUnitId
         )
         .map((record) => record.itemUnitId as string)
     );
@@ -575,24 +1009,33 @@ export async function getListingCoverageProducts(storeId: string) {
     return {
       ...product,
       itemUnits: draftItemUnits,
+      variantRows: [...variantStats.values()].sort(
+        (a, b) => b.sellableQty - a.sellableQty || a.skuName.localeCompare(b.skuName, "zh-CN")
+      ),
+      primaryMarket,
+      marketLabel: marketLabel(primaryMarket),
+      marketSummaries,
       newStockSummary: {
         sellableQty: product.sellableLotQty,
         activeListingCount: activeSkuListingPlatformIds.size,
         pendingListingCount:
           product.sellableLotQty > 0
-            ? Math.max(0, corePlatforms.length - activeSkuListingPlatformIds.size)
+            ? Math.max(0, platformsWithState.length - activeSkuListingPlatformIds.size)
             : 0,
       },
       itemUnitSummary: {
         sellableCount: sellableItemUnits.length,
         activeListingCount: activeItemUnitListingCount,
-        pendingListingCount: sellableItemUnits.filter((unit) => !activeListedItemUnitIds.has(unit.id))
-          .length,
+        pendingListingCount: sellableItemUnits.filter(
+          (unit) => !activeListedItemUnitIds.has(unit.id)
+        ).length,
         pendingPhotoCount: sellableItemUnits.filter((unit) => unit.photoCount === 0).length,
-        pendingLabelCount: sellableItemUnits.filter((unit) => unit.labelStatus !== "ATTACHED").length,
+        pendingLabelCount: sellableItemUnits.filter((unit) => unit.labelStatus !== "ATTACHED")
+          .length,
       },
       records,
       platforms: platformsWithState,
+      allPlatforms: allPlatformsWithState,
       aggregateRisks: [...risks.values()],
       latestListedAt,
       latestUpdatedAt,

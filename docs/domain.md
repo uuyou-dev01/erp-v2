@@ -31,6 +31,7 @@
 - 单件库存数量 = ItemUnit.status + Location.isSellableDefault 的聚合视图；ItemUnit 仍然属于 SKU 体系下的库存，不是独立商品主档。
 - 上架数量 = 子 SKU 的 SKU Listing 与 ItemUnit Listing 聚合到父 SKU；ItemUnit Listing 用于定位具体单件，不改变商品归属。
 - 账务维度 = OrderLine.skuId；成本来源由 OrderAllocation 决定，LOT 取批次成本，ITEM_UNIT 取单件成本。
+- 展示分组 = 页面层的临时聚合兜底；当历史数据尚未补父 SKU，但同品牌/分类/系列或中文命名前缀明显属于同一系列时，档案和批次页可先合并展示。展示分组不改变 SKU.parentSkuId，不作为账务、库存或上架真相源。
 
 ### 当前产品主线
 
