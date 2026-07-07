@@ -30,7 +30,7 @@ export function Header({ onMenuClick, onCommandOpen }: HeaderProps) {
   }, []);
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-4 border-b bg-background px-4">
+    <header className="relative z-50 flex h-12 shrink-0 items-center gap-4 border-b bg-background px-4">
       <button
         type="button"
         onClick={onMenuClick}
@@ -55,7 +55,10 @@ export function Header({ onMenuClick, onCommandOpen }: HeaderProps) {
         <Link
           href="/notifications"
           aria-label="通知"
-          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "relative h-8 w-8 text-muted-foreground")}
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            "relative h-8 w-8 text-muted-foreground"
+          )}
         >
           <Bell className="h-4 w-4" />
           {unreadCount > 0 ? (
@@ -67,7 +70,10 @@ export function Header({ onMenuClick, onCommandOpen }: HeaderProps) {
         <Link
           href="/login"
           aria-label="切换操作人"
-          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 text-muted-foreground")}
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            "h-8 w-8 text-muted-foreground"
+          )}
         >
           <User className="h-4 w-4" />
         </Link>

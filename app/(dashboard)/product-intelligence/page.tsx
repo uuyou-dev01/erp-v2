@@ -18,56 +18,144 @@ export const dynamic = "force-dynamic";
 
 type ProductIntelligenceListItem = Awaited<ReturnType<typeof getProductIntelligenceItems>>[number];
 
+type PriceView = "AUTO" | "NEW" | "USED";
+type CardColumnCount = "6" | "8" | "10";
+
+type SkuMarketSignal = {
+  key: string;
+  sku: string;
+  condition: string;
+  priceText: string;
+  weight: number;
+};
+
+function compactCurrency(value: string, currency: string) {
+  return formatCurrency(value, currency).replace(/\.00\b/g, "");
+}
+
 function saleRangeText(ranges?: Array<{ currency: string; min: string; max: string }>) {
   if (!ranges || ranges.length === 0) return "暂无售价";
-  return ranges.map((range) => `${formatCurrency(range.min, range.currency)} 起`).join(" / ");
+  return ranges.map((range) => `${compactCurrency(range.min, range.currency)} 起`).join(" / ");
 }
 
 function conditionRank(condition: string) {
+  const normalized = condition.trim().replace(/\s+/g, " ");
   const rank: Record<string, number> = {
     全新: 1,
     "二手 S": 2,
     "二手 A": 3,
     "二手 B": 4,
+    "二手 C": 5,
     未标注: 9,
     综合: 10,
   };
-  return rank[condition] ?? 8;
+  return rank[normalized] ?? 8;
 }
 
-function skuMarketSignals(item: ProductIntelligenceListItem, limit = 3) {
-  return item.variantSummaries
-    .flatMap((variant) => {
-      const conditionSignals = variant.conditionSummaries
-        .filter((summary) => summary.saleRanges.length > 0)
-        .map((summary) => ({
-          key: `${variant.id}-${summary.condition}`,
-          sku: variant.title,
-          condition: summary.condition,
-          priceText: saleRangeText(summary.saleRanges),
-          weight: summary.observationCount,
-        }));
+function conditionDisplayLabel(condition: string) {
+  const normalized = condition.trim().replace(/\s+/g, " ");
+  if (normalized === "全新") return "全新";
+  if (normalized === "未标注") return "未标";
+  if (normalized === "综合") return "综合";
+  const usedMatch = normalized.match(/^二手\s*([A-Z])$/i);
+  if (usedMatch) return usedMatch[1].toUpperCase();
+  return normalized.replace(/^二手\s*/i, "");
+}
 
-      if (conditionSignals.length > 0) return conditionSignals;
-      if (variant.summary.saleRanges.length > 0) {
-        return [
-          {
-            key: `${variant.id}-all`,
-            sku: variant.title,
-            condition: "综合",
-            priceText: saleRangeText(variant.summary.saleRanges),
-            weight: variant.summary.observationCount,
-          },
-        ];
-      }
-      return [];
-    })
-    .sort((a, b) => (
-      conditionRank(a.condition) - conditionRank(b.condition)
-      || b.weight - a.weight
-      || a.sku.localeCompare(b.sku, "zh-CN")
-    ))
-    .slice(0, limit);
+function conditionToneClass(condition: string) {
+  const label = conditionDisplayLabel(condition);
+  if (label === "全新") return "border-sky-500/25 bg-sky-500/10 text-sky-700";
+  if (label === "S") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700";
+  if (label === "A") return "border-blue-500/25 bg-blue-500/10 text-blue-700";
+  if (label === "B") return "border-amber-500/30 bg-amber-500/10 text-amber-800";
+  if (label === "C") return "border-rose-500/25 bg-rose-500/10 text-rose-700";
+  return "border-border bg-muted/50 text-muted-foreground";
+}
+
+function isNewCondition(condition: string) {
+  return conditionDisplayLabel(condition) === "全新";
+}
+
+function isUsedCondition(condition: string) {
+  const normalized = condition.trim().replace(/\s+/g, " ");
+  const label = conditionDisplayLabel(condition);
+  return normalized.startsWith("二手") || ["S", "A", "B", "C"].includes(label);
+}
+
+function skuMarketSignalGroups(item: ProductIntelligenceListItem, priceView: PriceView, limit = 3) {
+  const signals: SkuMarketSignal[] = [];
+
+  for (const variant of item.variantSummaries) {
+    const conditionSignals = variant.conditionSummaries
+      .filter((summary) => summary.saleRanges.length > 0)
+      .map((summary) => ({
+        key: `${variant.id}-${summary.condition}`,
+        sku: variant.title,
+        condition: summary.condition,
+        priceText: saleRangeText(summary.saleRanges),
+        weight: summary.observationCount,
+      }))
+      .sort(
+        (a, b) =>
+          conditionRank(a.condition) - conditionRank(b.condition) ||
+          b.weight - a.weight ||
+          a.condition.localeCompare(b.condition, "zh-CN")
+      );
+
+    if (conditionSignals.length > 0) {
+      signals.push(...conditionSignals);
+    } else if (variant.summary.saleRanges.length > 0) {
+      signals.push({
+        key: `${variant.id}-all`,
+        sku: variant.title,
+        condition: "综合",
+        priceText: saleRangeText(variant.summary.saleRanges),
+        weight: variant.summary.observationCount,
+      });
+    }
+  }
+
+  const newSignals = signals.filter((signal) => isNewCondition(signal.condition));
+  const usedSignals = signals.filter((signal) => isUsedCondition(signal.condition));
+  const scopedSignals =
+    priceView === "NEW"
+      ? newSignals
+      : priceView === "USED"
+        ? usedSignals
+        : newSignals.length > 0
+          ? newSignals
+          : usedSignals.length > 0
+            ? usedSignals
+            : signals;
+
+  const grouped = new Map<string, { key: string; sku: string; signals: SkuMarketSignal[] }>();
+  for (const signal of scopedSignals.slice(0, limit)) {
+    const group = grouped.get(signal.sku) ?? {
+      key: signal.sku,
+      sku: signal.sku,
+      signals: [],
+    };
+    group.signals.push(signal);
+    grouped.set(signal.sku, group);
+  }
+
+  return {
+    groups: Array.from(grouped.values()),
+    totalCount: scopedSignals.length,
+    visibleCount: Math.min(scopedSignals.length, limit),
+  };
+}
+
+function productIntelligenceHref(
+  params: Record<string, string | undefined>,
+  nextParams: Record<string, string | undefined>
+) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries({ ...params, ...nextParams })) {
+    if (value) query.set(key, value);
+  }
+  const search = query.toString();
+  return `/product-intelligence${search ? `?${search}` : ""}`;
 }
 
 function contributorSummary(item: ProductIntelligenceListItem) {
@@ -99,25 +187,69 @@ export default async function ProductIntelligencePage({
     condition?: string;
     hasPrice?: string;
     cols?: string;
+    priceView?: string;
   }>;
 }) {
   const params = await searchParams;
-  const columnCount = params.cols === "5" || params.cols === "6" ? params.cols : "4";
+  const columnCount: CardColumnCount =
+    params.cols === "8" || params.cols === "10" ? params.cols : "6";
+  const priceView: PriceView =
+    params.priceView === "NEW" || params.priceView === "USED" ? params.priceView : "AUTO";
+  const priceViewLabel = {
+    AUTO: "智能",
+    NEW: "全新",
+    USED: "二手",
+  }[priceView];
   const gridClass = {
-    "4": "grid gap-3 md:grid-cols-2 xl:grid-cols-4",
-    "5": "grid gap-3 md:grid-cols-2 xl:grid-cols-5",
     "6": "grid gap-3 md:grid-cols-3 xl:grid-cols-6",
+    "8": "grid gap-3 md:grid-cols-4 xl:grid-cols-8",
+    "10": "grid gap-2 md:grid-cols-5 xl:grid-cols-10",
   }[columnCount];
-  const signalLimit = columnCount === "6" ? 3 : columnCount === "5" ? 4 : 5;
+  const signalLimit = columnCount === "6" ? 3 : 2;
   const cardMediaClass = {
-    "4": "h-[96px] w-[96px]",
-    "5": "h-[78px] w-[78px]",
     "6": "h-[68px] w-[68px]",
+    "8": "h-[54px] w-[54px]",
+    "10": "h-[44px] w-[44px]",
   }[columnCount];
   const cardTopGridClass = {
-    "4": "grid-cols-[96px_1fr]",
-    "5": "grid-cols-[78px_1fr]",
-    "6": "grid-cols-[68px_1fr]",
+    "6": "grid-cols-[68px_1fr] gap-3 p-3",
+    "8": "grid-cols-[54px_1fr] gap-2 p-2.5",
+    "10": "grid-cols-[44px_1fr] gap-2 p-2",
+  }[columnCount];
+  const cardTitleClass = {
+    "6": "line-clamp-2 text-sm leading-5",
+    "8": "line-clamp-2 text-xs leading-4",
+    "10": "line-clamp-2 text-[11px] leading-[0.95rem]",
+  }[columnCount];
+  const cardContentClass = {
+    "6": "flex flex-1 flex-col p-3",
+    "8": "flex flex-1 flex-col p-2.5",
+    "10": "flex flex-1 flex-col p-2",
+  }[columnCount];
+  const pricePanelClass = {
+    "6": "rounded-md bg-muted/25 p-2",
+    "8": "rounded-md bg-muted/25 p-1.5",
+    "10": "rounded-md bg-muted/25 p-1.5",
+  }[columnCount];
+  const singleSignalRowClass = {
+    "6": "grid grid-cols-[minmax(24px,0.8fr)_auto_minmax(0,1.7fr)] items-center gap-1.5 text-xs",
+    "8": "grid grid-cols-[minmax(22px,0.75fr)_auto_minmax(58px,1.9fr)] items-center gap-1 text-[11px]",
+    "10": "grid grid-cols-[minmax(18px,0.55fr)_auto_minmax(60px,2fr)] items-center gap-1 text-[10px]",
+  }[columnCount];
+  const multiSignalRowClass = {
+    "6": "grid grid-cols-[42px_minmax(0,1fr)] items-center gap-2 text-xs",
+    "8": "grid grid-cols-[34px_minmax(0,1fr)] items-center gap-1.5 text-[11px]",
+    "10": "grid grid-cols-[28px_minmax(0,1fr)] items-center gap-1 text-[10px]",
+  }[columnCount];
+  const conditionBadgeClass = {
+    "6": "inline-flex h-5 min-w-[30px] shrink-0 items-center justify-center whitespace-nowrap rounded border px-1.5 text-[10px] font-medium",
+    "8": "inline-flex h-4 min-w-[26px] shrink-0 items-center justify-center whitespace-nowrap rounded border px-1 text-[9px] font-medium",
+    "10": "inline-flex h-4 min-w-[26px] shrink-0 items-center justify-center whitespace-nowrap rounded border px-1 text-[9px] font-medium",
+  }[columnCount];
+  const signalSkuClass = {
+    "6": "min-w-0 truncate text-[11px] font-medium text-foreground",
+    "8": "min-w-0 truncate text-[10px] font-medium text-foreground",
+    "10": "min-w-0 truncate text-[10px] font-medium text-foreground",
   }[columnCount];
   const [items, categories, conditions] = await Promise.all([
     getProductIntelligenceItems(params),
@@ -126,13 +258,14 @@ export default async function ProductIntelligencePage({
   ]);
 
   return (
-    <div className="space-y-4">
-      <div className="sticky top-0 z-30 -mx-1 bg-background/95 px-1 pb-3 pt-2 backdrop-blur supports-[backdrop-filter]:bg-background/85">
+    <div className="-m-4 flex h-full min-h-0 flex-col overflow-hidden bg-background md:-m-6">
+      <div className="shrink-0 border-b bg-background px-4 pb-3 pt-4 shadow-sm md:px-6 md:pt-6">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold tracking-tight">商品情报</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              按商品组、SKU 和成色聚合会员贡献的地区售价、平台来源和品类经验；这里只展示数据，不承接库存和交易。
+              按商品组、SKU
+              和成色聚合会员贡献的地区售价、平台来源和品类经验；这里只展示数据，不承接库存和交易。
             </p>
           </div>
           <Link href="/product-intelligence/new">
@@ -146,6 +279,8 @@ export default async function ProductIntelligencePage({
         <Card>
           <CardContent className="p-3">
             <form className="grid gap-3 lg:grid-cols-[minmax(240px,1fr)_150px_130px_130px_130px_110px_auto]">
+              <input type="hidden" name="cols" value={columnCount} />
+              <input type="hidden" name="priceView" value={priceView === "AUTO" ? "" : priceView} />
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <input
@@ -211,19 +346,48 @@ export default async function ProductIntelligencePage({
               <Button type="submit" variant="outline">
                 筛选
               </Button>
-              <div className="flex items-center gap-2 lg:col-span-full">
-                <span className="text-xs text-muted-foreground">视图</span>
-                <select
-                  name="cols"
-                  defaultValue={columnCount}
-                  className="flex h-8 rounded-md border border-input bg-background px-2 py-1 text-xs"
-                >
-                  <option value="4">每行 4 个</option>
-                  <option value="5">每行 5 个</option>
-                  <option value="6">每行 6 个</option>
-                </select>
+              <div className="flex flex-wrap items-center gap-3 lg:col-span-full">
+                <div className="flex items-center gap-1">
+                  <span className="mr-1 text-xs text-muted-foreground">价格</span>
+                  {[
+                    { value: "AUTO", label: "智能" },
+                    { value: "NEW", label: "全新" },
+                    { value: "USED", label: "二手" },
+                  ].map((option) => (
+                    <Link
+                      key={option.value}
+                      href={productIntelligenceHref(params, {
+                        priceView: option.value === "AUTO" ? undefined : option.value,
+                      })}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={priceView === option.value ? "default" : "outline"}
+                        className="h-8 px-3"
+                      >
+                        {option.label}
+                      </Button>
+                    </Link>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="mr-1 text-xs text-muted-foreground">视图</span>
+                  {(["6", "8", "10"] satisfies CardColumnCount[]).map((cols) => (
+                    <Link key={cols} href={productIntelligenceHref(params, { cols })}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={columnCount === cols ? "default" : "outline"}
+                        className="h-8 px-3"
+                      >
+                        每行 {cols}
+                      </Button>
+                    </Link>
+                  ))}
+                </div>
                 <span className="text-xs text-muted-foreground">
-                  更多卡片会压缩图片和价格行，适合快速扫货。
+                  智能模式优先看全新价；没有全新样本时自动展示二手价。
                 </span>
               </div>
             </form>
@@ -231,91 +395,141 @@ export default async function ProductIntelligencePage({
         </Card>
       </div>
 
-      {items.length === 0 ? (
-        <EmptyState
-          icon={Search}
-          title="暂无商品情报"
-          description="先添加一条你熟悉的商品、行情或价格观察。"
-          actionHref="/product-intelligence/new"
-          actionLabel="添加情报"
-        />
-      ) : (
-        <div className={gridClass}>
-          {items.map((item) => {
-            const signals = skuMarketSignals(item, signalLimit);
-            return (
-              <Link key={item.id} href={`/product-intelligence/${item.id}`}>
-                <Card className="h-full overflow-hidden transition-colors hover:border-primary">
-                  <div className={`grid gap-3 border-b bg-muted/20 p-3 ${cardTopGridClass}`}>
-                    <div className={`relative overflow-hidden rounded-md bg-background/60 text-muted-foreground shadow-sm ${cardMediaClass}`}>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
+        {items.length === 0 ? (
+          <EmptyState
+            icon={Search}
+            title="暂无商品情报"
+            description="先添加一条你熟悉的商品、行情或价格观察。"
+            actionHref="/product-intelligence/new"
+            actionLabel="添加情报"
+          />
+        ) : (
+          <div className={gridClass}>
+            {items.map((item) => {
+              const signalPreview = skuMarketSignalGroups(item, priceView, signalLimit);
+              const signalGroups = signalPreview.groups;
+              const hasSignals = signalGroups.length > 0;
+              const overflowSignalCount = signalPreview.totalCount - signalPreview.visibleCount;
+              return (
+                <Link key={item.id} href={`/product-intelligence/${item.id}`}>
+                  <Card className="flex h-full flex-col overflow-hidden transition-colors hover:border-primary">
+                    <div className={`grid border-b bg-muted/20 ${cardTopGridClass}`}>
+                      <div
+                        className={`relative overflow-hidden rounded-md bg-background/60 text-muted-foreground shadow-sm ${cardMediaClass}`}
+                      >
                         {item.imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={item.imageUrl} alt={item.title} className="h-full w-full object-cover" />
+                          <img
+                            src={item.imageUrl}
+                            alt={item.title}
+                            className="h-full w-full object-cover"
+                          />
                         ) : (
                           <div className="flex h-full items-center justify-center">
                             <ImageIcon className="h-8 w-8" />
                           </div>
                         )}
-                    </div>
-                    <div className="flex min-w-0 flex-col justify-between gap-2">
-                      <div className="space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <CardTitle className="line-clamp-2 text-sm leading-5">{item.title}</CardTitle>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                          <VisibilityBadge visibility={item.visibility} />
-                          <IntelligenceStatusBadge status={item.status} />
-                          </div>
-                        </div>
-                        <p className="line-clamp-2 text-xs text-muted-foreground">
-                          {[item.brand, item.model, item.category].filter(Boolean).join(" · ") || "未分类"}
-                        </p>
                       </div>
-                      <div className={`flex flex-wrap gap-1 text-[11px] ${columnCount === "6" ? "hidden 2xl:flex" : ""}`}>
-                        <span className="rounded bg-background px-1.5 py-0.5 text-muted-foreground">
-                          {item.category || "未分类"}
-                        </span>
-                        <span className="rounded bg-background px-1.5 py-0.5 text-muted-foreground">
+                      <div className="flex min-w-0 flex-col justify-between gap-2">
+                        <div className="space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <CardTitle className={cardTitleClass}>{item.title}</CardTitle>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <VisibilityBadge visibility={item.visibility} />
+                              <IntelligenceStatusBadge status={item.status} />
+                            </div>
+                          </div>
+                          {item.brand ? (
+                            <p className="truncate text-[11px] text-muted-foreground">
+                              {item.brand}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                    <CardContent className={cardContentClass}>
+                      <div className={pricePanelClass}>
+                        <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                          <span>SKU 售价参考 · {priceViewLabel}</span>
+                          <span>成色 / 最低价</span>
+                        </div>
+                        {hasSignals ? (
+                          <>
+                            <div className="space-y-1.5">
+                              {signalGroups.map((group) => (
+                                <div
+                                  key={group.key}
+                                  className="rounded-md border bg-background/80 px-2 py-1.5"
+                                >
+                                  {group.signals.length === 1 ? (
+                                    group.signals.map((signal) => (
+                                      <div key={signal.key} className={singleSignalRowClass}>
+                                        <span className={signalSkuClass}>{group.sku}</span>
+                                        <span
+                                          className={`${conditionBadgeClass} ${conditionToneClass(signal.condition)}`}
+                                        >
+                                          {conditionDisplayLabel(signal.condition)}
+                                        </span>
+                                        <span
+                                          className="min-w-0 truncate text-right font-semibold tabular-nums"
+                                          title={signal.priceText}
+                                        >
+                                          {signal.priceText}
+                                        </span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <>
+                                      <p className="mb-1 truncate text-[11px] font-medium text-foreground">
+                                        {group.sku}
+                                      </p>
+                                      <div className="space-y-1">
+                                        {group.signals.map((signal) => (
+                                          <div key={signal.key} className={multiSignalRowClass}>
+                                            <span
+                                              className={`${conditionBadgeClass} ${conditionToneClass(signal.condition)}`}
+                                            >
+                                              {conditionDisplayLabel(signal.condition)}
+                                            </span>
+                                            <span className="min-w-0 truncate text-right font-semibold tabular-nums">
+                                              {signal.priceText}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                            {overflowSignalCount > 0 ? (
+                              <div className="rounded-md border border-dashed bg-background/70 px-2 py-1.5 text-[11px] text-muted-foreground">
+                                还有 {overflowSignalCount} 条成色/价格，进入详情查看完整行情。
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            暂无 SKU 售价，可进入详情添加观察。
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="mt-auto flex items-center justify-between gap-2 pt-2 text-[11px] text-muted-foreground">
+                        <span>
                           {item.variantCount > 0 ? `${item.variantCount} SKU` : "独立 SKU"}
                         </span>
-                        <span className="rounded bg-background px-1.5 py-0.5 text-muted-foreground">
-                          {signals.length > 0 ? "有售价参考" : "待补售价"}
-                        </span>
-                        </div>
-                    </div>
-                  </div>
-                  <CardContent className="space-y-2 p-3">
-                    <div className="rounded-md bg-muted/30 p-2">
-                      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                        <span>SKU 成色售价参考</span>
-                        <span>最低价</span>
+                        <span className="truncate">{contributorSummary(item)}</span>
                       </div>
-                      {signals.length > 0 ? (
-                        <div className="space-y-1">
-                          {signals.map((signal) => (
-                            <div key={signal.key} className="flex items-center justify-between gap-2 text-xs">
-                              <span className="min-w-0 truncate">
-                                {signal.sku} · {signal.condition}
-                              </span>
-                              <span className="shrink-0 font-semibold">{signal.priceText}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">暂无 SKU 售价，可进入详情添加观察。</p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                      <span>{item.variantCount > 0 ? `${item.variantCount} SKU` : "独立 SKU"}</span>
-                      <span className="truncate">{contributorSummary(item)}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

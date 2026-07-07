@@ -31,7 +31,7 @@ import {
 import { productKindLabel } from "@/lib/application/sku-catalog";
 import { formatCurrency } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Eye, Plus, X } from "lucide-react";
+import { AlertTriangle, Plus, X } from "lucide-react";
 
 interface ListingCoverageCardProps {
   product: ListingCoverageProduct;
@@ -162,7 +162,7 @@ function StockMetricBadge({
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone: "green" | "blue" | "amber" | "muted";
 }) {
   return (
@@ -190,11 +190,15 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
   );
 }
 
-function PlatformCoverageDots({
-  platforms,
-}: {
-  platforms: ListingCoveragePlatform[];
-}) {
+function SkuCodeLine({ code }: { code: string }) {
+  return (
+    <span className="truncate font-mono text-[10px] text-muted-foreground">
+      {code || "未设置货号"}
+    </span>
+  );
+}
+
+function PlatformCoverageDots({ platforms }: { platforms: ListingCoveragePlatform[] }) {
   if (platforms.length === 0) return null;
 
   return (
@@ -211,7 +215,11 @@ function PlatformCoverageDots({
                 : `${platform.name} 已上架`;
 
         return (
-          <span key={platform.id} title={title} className={cn(platform.state === "delisted" && "opacity-30")}>
+          <span
+            key={platform.id}
+            title={title}
+            className={cn(platform.state === "delisted" && "opacity-30")}
+          >
             <ListingPlatformMark
               code={platform.code}
               name={platform.name}
@@ -221,32 +229,6 @@ function PlatformCoverageDots({
           </span>
         );
       })}
-    </div>
-  );
-}
-
-function VariantStockPills({
-  sellableQty,
-  inTransitQty,
-}: {
-  sellableQty: number;
-  inTransitQty: number;
-}) {
-  return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1 sm:justify-center">
-      <span className="inline-flex h-5 items-center rounded-md border bg-background px-1.5 text-[10px] leading-none text-foreground">
-        现货 <span className="ml-1 font-semibold tabular-nums">{sellableQty}</span>
-      </span>
-      <span
-        className={cn(
-          "inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] leading-none",
-          inTransitQty > 0
-            ? "border-blue-500/25 bg-blue-500/10 text-blue-700"
-            : "bg-background text-muted-foreground"
-        )}
-      >
-        在途 <span className="ml-1 font-semibold tabular-nums">{inTransitQty}</span>
-      </span>
     </div>
   );
 }
@@ -280,7 +262,9 @@ export function ListingCoverageCard({
     })
   );
   const defaultVariantView =
-    variantViews.find((variant) => variant.scopedSellableQty > 0 || variant.scopedInTransitQty > 0) ??
+    variantViews.find(
+      (variant) => variant.scopedSellableQty > 0 || variant.scopedInTransitQty > 0
+    ) ??
     variantViews[0] ??
     null;
   const visibleVariantViews = variantViews.filter((variant) => variant.scopedSellableQty > 0);
@@ -322,9 +306,8 @@ export function ListingCoverageCard({
   const cardItemUnitSummary: ItemUnitChannelSummary = selectedVariant
     ? {
         sellableCount: selectedVariant.scopedSellableItemUnitCount,
-        activeListingCount: cardItemUnitListingRecords.filter(
-          (record) => record.state === "active"
-        ).length,
+        activeListingCount: cardItemUnitListingRecords.filter((record) => record.state === "active")
+          .length,
         pendingListingCount: cardSellableItemUnits.filter(
           (unit) => !activeCardItemUnitIds.has(unit.id)
         ).length,
@@ -355,18 +338,14 @@ export function ListingCoverageCard({
         hasItemUnits: selectedVariant.scopedItemUnits.length > 0,
       }
     : product;
-  const detailRecords = selectedVariant
-    ? selectedVariant.scopedRecords
-    : product.records;
+  const detailRecords = selectedVariant ? selectedVariant.scopedRecords : product.records;
   const detailSkuListingRecords = detailRecords.filter(
     (record) => record.listingScope !== "ITEM_UNIT"
   );
   const detailItemUnitListingRecords = detailRecords.filter(
     (record) => record.listingScope === "ITEM_UNIT"
   );
-  const detailItemUnits = selectedVariant
-    ? selectedVariant.scopedItemUnits
-    : product.itemUnits;
+  const detailItemUnits = selectedVariant ? selectedVariant.scopedItemUnits : product.itemUnits;
   const detailSellableUnits = detailItemUnits.filter((unit) => unit.sellable);
   const detailInTransitUnits = detailItemUnits.filter((unit) => unit.inTransit);
   const detailPendingItemUnitWork = detailSellableUnits.filter(
@@ -433,7 +412,10 @@ export function ListingCoverageCard({
         hasItemUnits: selectedVariant.scopedItemUnits.length > 0,
       }
     : product;
-  const detailLotInTransitQty = Math.max(0, detailProduct.inTransitQty - detailInTransitUnits.length);
+  const detailLotInTransitQty = Math.max(
+    0,
+    detailProduct.inTransitQty - detailInTransitUnits.length
+  );
   const cardCatalogHref = withReturnTo(`/inventory/skus/${cardProduct.skuId}`, currentHref);
   const detailCatalogHref = withReturnTo(`/inventory/skus/${detailProduct.skuId}`, currentHref);
   const palletLabel = focusMarket ? marketLabel(focusMarket) : product.marketLabel;
@@ -442,6 +424,13 @@ export function ListingCoverageCard({
   );
   const displayedVariantViews =
     visibleVariantViews.length > 0 ? visibleVariantViews.slice(0, 2) : variantViews.slice(0, 2);
+  const skuCount = visibleVariantViews.length || product.variantRows.length || 1;
+  const readySkuCount = visibleVariantViews.filter(
+    (variant) => variant.scopedSellableQty > 0
+  ).length;
+  const transitSkuCount = variantViews.filter((variant) => variant.scopedInTransitQty > 0).length;
+  const cardStatusLabel =
+    lowStockVariants.length > 0 ? "快没货" : cardProduct.records.length === 0 ? "待上架" : "可卖";
 
   useEffect(() => {
     if (!detailsOpen || product.variantRows.length <= 1) return;
@@ -471,51 +460,72 @@ export function ListingCoverageCard({
 
   return (
     <>
-      <article className="flex min-h-[190px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md">
-        <div className="flex items-stretch gap-0 border-b">
+      <article className="flex min-h-[190px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:border-primary/30 hover:shadow-md">
+        <div className="border-b px-3 py-2.5">
           <button
             type="button"
             onClick={() => setDetailsOpen(true)}
-            className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left hover:bg-muted/40"
+            className="flex w-full min-w-0 items-start justify-between gap-2 rounded-md text-left"
           >
-            <ProductImage
-              src={product.imageUrl ?? cardProduct.imageUrl}
-              alt={product.skuName}
-              size="sm"
-              className="h-9 w-9 shrink-0 rounded-md"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium leading-tight">{product.skuName}</p>
-              <p className="truncate text-[10px] text-muted-foreground">
-                {palletLabel} · {visibleVariantViews.length || product.variantRows.length} 个规格 SKU
-              </p>
+            <div className="flex min-w-0 items-start gap-2.5">
+              <ProductImage
+                src={product.imageUrl}
+                alt={product.skuName}
+                size="lg"
+                className="h-14 w-14 shrink-0 rounded-md"
+              />
+              <div className="min-w-0 pt-0.5">
+                <p className="truncate text-sm font-semibold leading-tight">{product.skuName}</p>
+                <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                  {palletLabel} · {primaryLocationLabel(cardProduct, focusLocationId)}
+                </p>
+                <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                  可上架 SKU {readySkuCount || skuCount} 个
+                  {transitSkuCount > 0 ? ` · 有在途 ${transitSkuCount} 个` : ""}
+                </p>
+              </div>
             </div>
-          </button>
-          <div className="flex shrink-0 items-center px-2.5 py-2">
-            {lowStockVariants.length > 0 ? (
+            {cardStatusLabel === "快没货" ? (
               <Badge
                 variant="outline"
-                className="h-5 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
+                className="h-5 shrink-0 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
               >
-                快没货
+                {cardStatusLabel}
+              </Badge>
+            ) : cardStatusLabel === "待上架" ? (
+              <Badge
+                variant="outline"
+                className="h-5 shrink-0 border-blue-500/25 bg-blue-500/10 px-1.5 text-[10px] text-blue-700"
+              >
+                {cardStatusLabel}
               </Badge>
             ) : (
-              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
-                可卖
+              <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[10px]">
+                {cardStatusLabel}
               </Badge>
             )}
-          </div>
+          </button>
         </div>
 
-        <div className="flex flex-1 flex-col space-y-1.5 px-2.5 py-2">
+        <div className="flex flex-1 flex-col space-y-2 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2 px-0.5 text-[10px] font-medium text-muted-foreground">
+            <span>可上架 SKU</span>
+            <span>现货 / 在途 / 单件 / 平台</span>
+          </div>
           <div className="space-y-1">
             {displayedVariantViews.map((variant) => {
               const skuRecords = variant.scopedSkuRecords;
-              const variantPlatforms = platformStateFromRecords(variant.scopedPlatforms, skuRecords);
+              const variantPlatforms = platformStateFromRecords(
+                variant.scopedPlatforms,
+                skuRecords
+              );
               const activeCount = activePlatformCount(skuRecords, variant.scopedPlatforms);
-              const missingCount = variantPlatforms.filter((platform) => platform.state === "missing").length;
+              const missingCount = variantPlatforms.filter(
+                (platform) => platform.state === "missing"
+              ).length;
               const lowStock = variant.scopedSellableQty > 0 && variant.scopedSellableQty <= 2;
               const isSelected = selectedVariant?.skuId === variant.skuId;
+              const isReady = variant.scopedSellableQty > 0;
 
               return (
                 <button
@@ -523,54 +533,81 @@ export function ListingCoverageCard({
                   type="button"
                   onClick={() => setSelectedVariantSkuId(variant.skuId)}
                   className={cn(
-                    "grid w-full gap-1.5 rounded-md border px-1.5 py-1.5 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center",
-                    isSelected ? "border-primary/40 bg-primary/5" : "bg-background/70 hover:bg-muted/40"
+                    "w-full rounded-md border px-2 py-1.5 text-left transition-colors",
+                    isSelected
+                      ? "border-primary/40 bg-primary/5"
+                      : "bg-background/70 hover:bg-muted/40"
                   )}
                 >
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <ProductImage
-                      src={variant.imageUrl}
-                      alt={variant.skuName}
-                      size="sm"
-                      className="h-7 w-7 shrink-0 rounded-md"
-                    />
+                  <div className="flex min-w-0 items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-[11px] font-medium leading-4">
+                      <p className="truncate text-[12px] font-semibold leading-4">
                         {shortVariantName(product.skuName, variant.skuName)}
                       </p>
-                      <div className="flex flex-wrap gap-1">
-                        {activeCount === 0 ? (
-                          <Badge variant="outline" className="h-4 px-1 text-[9px]">
-                            未上架
-                          </Badge>
-                        ) : missingCount > 0 ? (
-                          <Badge
-                            variant="outline"
-                            className="h-4 border-amber-500/30 bg-amber-500/10 px-1 text-[9px] text-amber-800"
-                          >
-                            待平台 {missingCount}
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="h-4 px-1 text-[9px]">
-                            已覆盖
-                          </Badge>
-                        )}
-                        {lowStock ? (
-                          <Badge
-                            variant="outline"
-                            className="h-4 border-amber-500/30 bg-amber-500/10 px-1 text-[9px] text-amber-800"
-                          >
-                            快没货
-                          </Badge>
-                        ) : null}
-                      </div>
+                      <SkuCodeLine code={variant.skuCode} />
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {isReady ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-emerald-500/25 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-700"
+                        >
+                          可上架
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                          无现货
+                        </Badge>
+                      )}
+                      {activeCount === 0 ? (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                          未上架
+                        </Badge>
+                      ) : missingCount > 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
+                        >
+                          待平台 {missingCount}
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                          已覆盖
+                        </Badge>
+                      )}
+                      {lowStock ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
+                        >
+                          快没货
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
-                  <VariantStockPills
-                    sellableQty={variant.scopedSellableQty}
-                    inTransitQty={variant.scopedInTransitQty}
-                  />
-                  <div className="flex items-center sm:justify-end">
+                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                    <div className="flex flex-wrap gap-1">
+                      <StockMetricBadge
+                        label="现货"
+                        value={variant.scopedSellableQty}
+                        tone={variant.scopedSellableQty > 0 ? "green" : "muted"}
+                      />
+                      <StockMetricBadge
+                        label="在途"
+                        value={variant.scopedInTransitQty}
+                        tone={variant.scopedInTransitQty > 0 ? "blue" : "muted"}
+                      />
+                      <StockMetricBadge
+                        label="单件"
+                        value={variant.scopedSellableItemUnitCount}
+                        tone={variant.scopedSellableItemUnitCount > 0 ? "amber" : "muted"}
+                      />
+                      <StockMetricBadge
+                        label="平台"
+                        value={`${activeCount}/${variant.scopedPlatforms.length || 0}`}
+                        tone={missingCount > 0 ? "amber" : activeCount > 0 ? "blue" : "muted"}
+                      />
+                    </div>
                     <PlatformCoverageDots platforms={variantPlatforms} />
                   </div>
                 </button>
@@ -582,7 +619,8 @@ export function ListingCoverageCard({
                 onClick={() => setDetailsOpen(true)}
                 className="w-full rounded-md border border-dashed px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
               >
-                更多 {visibleVariantViews.length - displayedVariantViews.length} 个规格 SKU
+                还有 {visibleVariantViews.length - displayedVariantViews.length} 个
+                SKU，打开库存明细查看
               </button>
             ) : null}
           </div>
@@ -603,11 +641,15 @@ export function ListingCoverageCard({
               className="h-7 px-2 text-[11px] text-muted-foreground"
               onClick={() => setDetailsOpen(true)}
             >
-              详情
+              库存明细
             </Button>
             <Link href={cardCatalogHref}>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground">
-                <Eye className="h-3.5 w-3.5" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px] text-muted-foreground"
+              >
+                商品档案
               </Button>
             </Link>
           </div>
@@ -621,12 +663,6 @@ export function ListingCoverageCard({
               <div className="relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl">
                 <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
                   <div className="flex min-w-0 items-center gap-2">
-                    <ProductImage
-                      src={detailProduct.imageUrl}
-                      alt={detailProduct.skuName}
-                      size="sm"
-                      className="shrink-0 rounded-md"
-                    />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">{detailProduct.skuName}</p>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">
@@ -746,42 +782,35 @@ export function ListingCoverageCard({
                                     : "bg-background/80 hover:bg-muted/50"
                                 )}
                               >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <ProductImage
-                                    src={variant.imageUrl}
-                                    alt={variant.skuName}
-                                    size="sm"
-                                    className="h-9 w-9 shrink-0 rounded-md"
-                                  />
-                                  <div className="min-w-0">
-                                    <p className="truncate font-medium">
-                                      {shortVariantName(product.skuName, variant.skuName)}
-                                    </p>
-                                    <div className="mt-1 flex flex-wrap gap-1">
-                                      {activeCount === 0 ? (
-                                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                                          未上架
-                                        </Badge>
-                                      ) : missingCount > 0 ? (
-                                        <StockMetricBadge
-                                          label="待平台"
-                                          value={missingCount}
-                                          tone="amber"
-                                        />
-                                      ) : (
-                                        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
-                                          已覆盖
-                                        </Badge>
-                                      )}
-                                      {lowStock ? (
-                                        <Badge
-                                          variant="outline"
-                                          className="h-5 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
-                                        >
-                                          快没货
-                                        </Badge>
-                                      ) : null}
-                                    </div>
+                                <div className="min-w-0">
+                                  <p className="truncate font-medium">
+                                    {shortVariantName(product.skuName, variant.skuName)}
+                                  </p>
+                                  <SkuCodeLine code={variant.skuCode} />
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {activeCount === 0 ? (
+                                      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                                        未上架
+                                      </Badge>
+                                    ) : missingCount > 0 ? (
+                                      <StockMetricBadge
+                                        label="待平台"
+                                        value={missingCount}
+                                        tone="amber"
+                                      />
+                                    ) : (
+                                      <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                        已覆盖
+                                      </Badge>
+                                    )}
+                                    {lowStock ? (
+                                      <Badge
+                                        variant="outline"
+                                        className="h-5 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-800"
+                                      >
+                                        快没货
+                                      </Badge>
+                                    ) : null}
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1 sm:justify-end">
@@ -902,8 +931,7 @@ export function ListingCoverageCard({
                             {
                               label: "件数",
                               value: detailItemUnitSummary.sellableCount,
-                              tone:
-                                detailItemUnitSummary.sellableCount > 0 ? "green" : "muted",
+                              tone: detailItemUnitSummary.sellableCount > 0 ? "green" : "muted",
                             },
                           ]}
                         />
@@ -1016,8 +1044,7 @@ export function ListingCoverageCard({
                   </Button>
                   <Link href={detailCatalogHref}>
                     <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
-                      <Eye className="mr-1 h-3.5 w-3.5" />
-                      档案
+                      商品档案
                     </Button>
                   </Link>
                   {detailSellableUnits.length === 1 ? (

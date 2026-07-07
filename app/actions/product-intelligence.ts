@@ -1,5 +1,6 @@
 "use server";
 
+import type { Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
@@ -143,7 +144,12 @@ function serializeItem<
     tags: unknown;
     store: { id: string; name: string; code: string };
     observations?: Array<Parameters<typeof serializeObservation>[0]>;
-    parentItem?: { id: string; title: string; brand: string | null; category: string | null } | null;
+    parentItem?: {
+      id: string;
+      title: string;
+      brand: string | null;
+      category: string | null;
+    } | null;
     childItems?: Array<{
       id: string;
       title: string;
@@ -160,16 +166,19 @@ function serializeItem<
 >(item: T) {
   return {
     ...item,
-    tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : [],
+    tags: Array.isArray(item.tags)
+      ? item.tags.filter((tag): tag is string => typeof tag === "string")
+      : [],
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
     observations: item.observations?.map(serializeObservation) ?? [],
-    childItems: item.childItems?.map((child) => ({
-      ...child,
-      updatedAt: child.updatedAt.toISOString(),
-      observations: child.observations.map(serializeObservation),
-      summary: summarizeObservations(child.observations),
-    })) ?? [],
+    childItems:
+      item.childItems?.map((child) => ({
+        ...child,
+        updatedAt: child.updatedAt.toISOString(),
+        observations: child.observations.map(serializeObservation),
+        summary: summarizeObservations(child.observations),
+      })) ?? [],
   };
 }
 
@@ -184,10 +193,7 @@ function itemVisibilityWhere(storeId: string) {
 
 function observationVisibilityWhere(storeId: string) {
   return {
-    OR: [
-      { visibility: "PUBLIC" },
-      { storeId },
-    ],
+    OR: [{ visibility: "PUBLIC" }, { storeId }],
   };
 }
 
@@ -197,7 +203,12 @@ function revalidateProductIntelligence(id?: string) {
 }
 
 function summarizeObservations(
-  observations: Array<{ amount: { toString(): string }; priceType: string; currency: string; observedAt: Date }>
+  observations: Array<{
+    amount: { toString(): string };
+    priceType: string;
+    currency: string;
+    observedAt: Date;
+  }>
 ) {
   const buildRanges = (priceTypes: string[]) => {
     const pricesByCurrency = new Map<string, Decimal[]>();
@@ -228,9 +239,15 @@ function summarizeObservations(
     purchaseRanges,
     saleRanges,
     minSalePrice: salePrices.length > 0 ? Decimal.min(...salePrices).toFixed(2) : null,
-    maxSalePrice: saleRanges.length > 0 ? Decimal.max(...saleRanges.map((range) => new Decimal(range.max))).toFixed(2) : null,
+    maxSalePrice:
+      saleRanges.length > 0
+        ? Decimal.max(...saleRanges.map((range) => new Decimal(range.max))).toFixed(2)
+        : null,
     minPurchasePrice: purchasePrices.length > 0 ? Decimal.min(...purchasePrices).toFixed(2) : null,
-    maxPurchasePrice: purchaseRanges.length > 0 ? Decimal.max(...purchaseRanges.map((range) => new Decimal(range.max))).toFixed(2) : null,
+    maxPurchasePrice:
+      purchaseRanges.length > 0
+        ? Decimal.max(...purchaseRanges.map((range) => new Decimal(range.max))).toFixed(2)
+        : null,
   };
 }
 
@@ -258,7 +275,10 @@ function summarizeSaleObservationsByCondition(
       observationCount: rows.length,
       saleRanges: summarizeObservations(rows).saleRanges,
     }))
-    .sort((a, b) => b.observationCount - a.observationCount || a.condition.localeCompare(b.condition, "zh-CN"));
+    .sort(
+      (a, b) =>
+        b.observationCount - a.observationCount || a.condition.localeCompare(b.condition, "zh-CN")
+    );
 }
 
 async function resolveParentItemId(parentItemId: string | null | undefined, storeId: string) {
@@ -299,14 +319,16 @@ function compactVisibleItemSelect(storeId: string, observationTake = 10) {
 }
 
 export async function getProductIntelligenceItems(filters: ProductIntelligenceFilters = {}) {
-  const context = await requireUserContext(filters.storeId ? { storeId: filters.storeId } : undefined);
+  const context = await requireUserContext(
+    filters.storeId ? { storeId: filters.storeId } : undefined
+  );
   const q = filters.q?.trim();
   const category = filters.category?.trim();
   const visibility = filters.visibility?.trim().toUpperCase();
   const currency = filters.currency?.trim().toUpperCase();
   const condition = filters.condition?.trim();
   const hasPrice = filters.hasPrice === "1" || filters.hasPrice?.toLowerCase() === "true";
-  const observationFilter =
+  const observationFilter: Prisma.ProductIntelligenceItemWhereInput =
     (currency && SUPPORTED_CURRENCIES.has(currency)) || condition || hasPrice
       ? {
           OR: [
@@ -416,7 +438,9 @@ export async function getProductIntelligenceItems(filters: ProductIntelligenceFi
   return items.map((item) => ({
     ...serializeItem(item),
     summary: summarizeObservations(
-      item.childItems.length > 0 ? item.childItems.flatMap((child) => child.observations) : item.observations,
+      item.childItems.length > 0
+        ? item.childItems.flatMap((child) => child.observations)
+        : item.observations
     ),
     variantSummaries: item.childItems.map((child) => ({
       id: child.id,
@@ -474,7 +498,9 @@ export async function getProductIntelligenceCategories(storeId?: string) {
     distinct: ["category"],
     orderBy: { category: "asc" },
   });
-  return rows.map((row) => row.category).filter((category): category is string => Boolean(category));
+  return rows
+    .map((row) => row.category)
+    .filter((category): category is string => Boolean(category));
 }
 
 export async function getProductIntelligenceItemById(id: string, storeId?: string) {
@@ -519,7 +545,8 @@ export async function createProductIntelligenceAction(data: CreateProductIntelli
     const title = data.title.trim();
     if (!title) throw new Error("商品名称不能为空");
     if (!data.category?.trim() && !data.parentItemId) throw new Error("请选择或填写品类");
-    const observations = data.initialObservations ?? (data.initialObservation ? [data.initialObservation] : []);
+    const observations =
+      data.initialObservations ?? (data.initialObservation ? [data.initialObservation] : []);
     const parentItemId = await resolveParentItemId(data.parentItemId, context.activeStoreId);
     if (!parentItemId && observations.length > 0) {
       throw new Error("商品组只作为父级容器，请在具体 SKU 上记录价格");
@@ -541,11 +568,14 @@ export async function createProductIntelligenceAction(data: CreateProductIntelli
         status: normalizeEnum(data.status, STATUS_VALUES, "ACTIVE"),
         createdById: context.userId,
         updatedById: context.userId,
-        observations: observations.length > 0
-          ? {
-              create: observations.map((observation) => buildObservationCreateData(context, observation)),
-            }
-          : undefined,
+        observations:
+          observations.length > 0
+            ? {
+                create: observations.map((observation) =>
+                  buildObservationCreateData(context, observation)
+                ),
+              }
+            : undefined,
       },
     });
 
@@ -557,7 +587,7 @@ export async function createProductIntelligenceAction(data: CreateProductIntelli
 }
 
 export async function createProductIntelligenceVariantAction(
-  data: CreateProductIntelligenceVariantInput,
+  data: CreateProductIntelligenceVariantInput
 ) {
   try {
     const context = await requireUserContext(data.storeId ? { storeId: data.storeId } : undefined);
@@ -603,7 +633,10 @@ export async function createProductIntelligenceVariantAction(
   }
 }
 
-export async function updateProductIntelligenceAction(id: string, data: ProductIntelligenceItemInput) {
+export async function updateProductIntelligenceAction(
+  id: string,
+  data: ProductIntelligenceItemInput
+) {
   try {
     const existing = await prisma.productIntelligenceItem.findUnique({ where: { id } });
     if (!existing) throw new Error("商品情报不存在");
@@ -613,7 +646,10 @@ export async function updateProductIntelligenceAction(id: string, data: ProductI
     }
     const title = data.title.trim();
     if (!title) throw new Error("商品名称不能为空");
-    const parentItemId = data.parentItemId === existing.id ? null : await resolveParentItemId(data.parentItemId, existing.storeId);
+    const parentItemId =
+      data.parentItemId === existing.id
+        ? null
+        : await resolveParentItemId(data.parentItemId, existing.storeId);
 
     const item = await prisma.productIntelligenceItem.update({
       where: { id },
@@ -669,7 +705,9 @@ function buildObservationCreateData(
   };
 }
 
-export async function addProductIntelligenceObservationAction(data: ProductIntelligenceObservationInput) {
+export async function addProductIntelligenceObservationAction(
+  data: ProductIntelligenceObservationInput
+) {
   try {
     const item = await prisma.productIntelligenceItem.findUnique({ where: { id: data.itemId } });
     if (!item) throw new Error("商品情报不存在");
@@ -709,7 +747,9 @@ export async function deleteProductIntelligenceObservationAction(id: string, sto
   try {
     const observation = await prisma.productIntelligenceObservation.findUnique({ where: { id } });
     if (!observation) throw new Error("观察记录不存在");
-    const context = await requireUserContext(storeId ? { storeId } : { storeId: observation.storeId });
+    const context = await requireUserContext(
+      storeId ? { storeId } : { storeId: observation.storeId }
+    );
     if (observation.storeId !== context.activeStoreId) {
       throw new Error("只能删除自己贡献的观察记录");
     }

@@ -71,17 +71,13 @@ function sortProducts(products: ListingCoverageProduct[], sort?: string) {
   return [...products].sort((a, b) => {
     if (sort === "updatedAt") {
       return (
-        new Date(b.latestUpdatedAt ?? 0).getTime() -
-        new Date(a.latestUpdatedAt ?? 0).getTime()
+        new Date(b.latestUpdatedAt ?? 0).getTime() - new Date(a.latestUpdatedAt ?? 0).getTime()
       );
     }
     if (sort === "priceAsc") return primaryPrice(a) - primaryPrice(b);
     if (sort === "priceDesc") return primaryPrice(b) - primaryPrice(a);
     if (sort === "listedAt") {
-      return (
-        new Date(b.latestListedAt ?? 0).getTime() -
-        new Date(a.latestListedAt ?? 0).getTime()
-      );
+      return new Date(b.latestListedAt ?? 0).getTime() - new Date(a.latestListedAt ?? 0).getTime();
     }
     return b.sellableQty - a.sellableQty;
   });
@@ -135,10 +131,7 @@ function withSellableParams(
   return search ? `/inventory/sellable?${search}` : "/inventory/sellable";
 }
 
-function buildLocationOptions(
-  products: ListingCoverageProduct[],
-  market?: SellableMarketCode
-) {
+function buildLocationOptions(products: ListingCoverageProduct[], market?: SellableMarketCode) {
   const locations = new Map<
     string,
     {
@@ -153,14 +146,12 @@ function buildLocationOptions(
     for (const location of product.sellableLocations) {
       const locationMarket = inferMarketFromLocation(location);
       if (market && locationMarket !== market) continue;
-      const current =
-        locations.get(location.locationId) ??
-        {
-          id: location.locationId,
-          label: `${location.code} · ${location.name}`,
-          qty: 0,
-          productKeys: new Set<string>(),
-        };
+      const current = locations.get(location.locationId) ?? {
+        id: location.locationId,
+        label: `${location.code} · ${location.name}`,
+        qty: 0,
+        productKeys: new Set<string>(),
+      };
       current.qty += location.qty;
       current.productKeys.add(product.key);
       locations.set(location.locationId, current);
@@ -223,10 +214,7 @@ export default async function SellableInventoryPage({
   const currentPage = Math.max(Number(params.page ?? "1") || 1, 1);
   const totalPages = Math.max(Math.ceil(filteredProducts.length / PAGE_SIZE), 1);
   const safePage = Math.min(currentPage, totalPages);
-  const pageProducts = filteredProducts.slice(
-    (safePage - 1) * PAGE_SIZE,
-    safePage * PAGE_SIZE
-  );
+  const pageProducts = filteredProducts.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   const stats = computeSellableInventoryStats(scopedProducts);
   const guide = summarizeSellableGuides(scopedProducts);
   const fromWorkbench = params.from === "workbench";
@@ -238,7 +226,7 @@ export default async function SellableInventoryPage({
             (product) =>
               product.listingType === "SKU" &&
               product.records.length === 0 &&
-              product.sellableLotQty > 0,
+              product.sellableLotQty > 0
           )
           .map((product) => ({
             id: product.skuId,
@@ -257,6 +245,9 @@ export default async function SellableInventoryPage({
           <p className="text-sm text-muted-foreground">
             查看可发货库存、已有上架记录，并从这里添加上架或登记售出。
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            库存口径：现货=当前可发货库存；在途、已售待发和公开货盘供给不混入可售数。
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {batchListingSkus.length > 0 ? (
@@ -271,9 +262,7 @@ export default async function SellableInventoryPage({
             />
           ) : null}
           <Link href="/inventory/sellable?unlisted=1">
-            <Button variant="outline">
-              待上架 ({stats.withoutListings})
-            </Button>
+            <Button variant="outline">待上架 ({stats.withoutListings})</Button>
           </Link>
           <Link href={withReturnTo("/listing/new", returnTo)}>
             <Button>
@@ -318,9 +307,7 @@ export default async function SellableInventoryPage({
             <p className="text-sm font-semibold leading-none">
               {selectedMarket ? marketLabel(selectedMarket) : "全部货盘"}
             </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              按仓库/持有人筛选
-            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">按仓库/持有人筛选</p>
           </div>
 
           <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-0.5">
@@ -350,7 +337,6 @@ export default async function SellableInventoryPage({
               </Link>
             ))}
           </div>
-
         </div>
       </div>
 
@@ -377,9 +363,7 @@ export default async function SellableInventoryPage({
             expandIfUnlisted={params.unlisted === "1"}
             focusLocationId={params.locationId}
             focusMarket={selectedMarket}
-            emptyTitle={
-              params.unlisted === "1" ? "暂无待添加上架的商品" : "暂无可售库存"
-            }
+            emptyTitle={params.unlisted === "1" ? "暂无待添加上架的商品" : "暂无可售库存"}
             emptyDescription={
               params.unlisted === "1"
                 ? "当前可售商品都已至少有一条上架记录。"
