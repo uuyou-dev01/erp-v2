@@ -214,6 +214,85 @@ describe("listing quick sell reservations", () => {
     expect(listing).toBeNull();
   });
 
+  it("rejects duplicate active listings for the same platform target", async () => {
+    const { sku } = await createSellableListing("duplicate_sku_listing");
+
+    const duplicateSku = await createListing({
+      storeId,
+      platformId,
+      listingType: "SKU",
+      skuId: sku.id,
+      listedPrice: "188",
+      currency: "CNY",
+    });
+
+    expect(duplicateSku.success).toBe(false);
+    if (!duplicateSku.success) {
+      expect(duplicateSku.error).toContain("已在");
+    }
+
+    const duplicateBatch = await batchCreateListings({
+      storeId,
+      platformId,
+      skuIds: [sku.id],
+      listedPrice: "188",
+      currency: "CNY",
+    });
+    expect(duplicateBatch.success).toBe(false);
+    if (!duplicateBatch.success) {
+      expect(duplicateBatch.error).toContain("上架");
+    }
+
+    const itemSku = await createSku("duplicate_item_unit_listing");
+    const itemUnit = await prisma.itemUnit.create({
+      data: {
+        storeId,
+        skuId: itemSku.id,
+        locationId,
+        unitCost: "100",
+        costCurrency: "CNY",
+        sourceType: "E2E",
+        sourceId: `${runId}_duplicate_item_unit_listing`,
+        conditionGrade: "C",
+      },
+    });
+
+    const firstItemListing = await createListing({
+      storeId,
+      platformId,
+      listingType: "ITEM_UNIT",
+      skuId: itemSku.id,
+      itemUnitId: itemUnit.id,
+      listedPrice: "188",
+      currency: "CNY",
+    });
+    expect(firstItemListing.success).toBe(true);
+
+    const duplicateItemListing = await createListing({
+      storeId,
+      platformId,
+      listingType: "ITEM_UNIT",
+      skuId: itemSku.id,
+      itemUnitId: itemUnit.id,
+      listedPrice: "198",
+      currency: "CNY",
+    });
+
+    expect(duplicateItemListing.success).toBe(false);
+    if (!duplicateItemListing.success) {
+      expect(duplicateItemListing.error).toContain("已在");
+    }
+
+    const listings = await prisma.listing.findMany({
+      where: {
+        storeId,
+        platformId,
+        OR: [{ skuId: sku.id }, { itemUnitId: itemUnit.id }],
+      },
+    });
+    expect(listings).toHaveLength(2);
+  });
+
   it("rejects a negative batch listing price without creating listings", async () => {
     const sku = await createSku("negative_batch_listing_price");
 
@@ -570,7 +649,7 @@ async function createSellableListing(suffix: string) {
   expect(listing.success).toBe(true);
   if (!listing.success) throw new Error(listing.error);
 
-  return { listing, lotId: lot.id };
+  return { listing, lotId: lot.id, sku };
 }
 
 async function expectLotQuantity(lotId: string, expected: string) {

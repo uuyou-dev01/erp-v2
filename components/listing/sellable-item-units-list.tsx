@@ -1,133 +1,121 @@
-import Link from "next/link";
 import { ProductImage } from "@/components/ui/product-image";
-import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
+import { Button } from "@/components/ui/button";
+import { ListingRecordCompactRow } from "@/components/listing/listing-record-compact-row";
 import type {
-  ListingCoveragePlatform,
+  ListingCoverageProduct,
   ListingRecord,
   SellableItemUnitRow,
 } from "@/lib/application/listing-coverage";
-import {
-  inferMarketFromLocation,
-  isPlatformTargetForMarket,
-} from "@/lib/application/sellable-market";
-import { cn } from "@/lib/utils";
-import { MapPin } from "lucide-react";
+import { getMissingPlatforms } from "@/lib/application/sellable-listing-guide";
+import { MapPin, Plus } from "lucide-react";
 
-const MAX_VISIBLE = 5;
+const MAX_VISIBLE = 8;
 
 interface SellableItemUnitsListProps {
   units: SellableItemUnitRow[];
   anchorId?: string;
-  platforms?: ListingCoveragePlatform[];
+  product: ListingCoverageProduct;
   records?: ListingRecord[];
+  onAddListing?: (unitId: string) => void;
 }
 
-function UnitPlatformCoverage({
-  platforms,
-  records,
-  unit,
-}: {
-  platforms: ListingCoveragePlatform[];
-  records: ListingRecord[];
-  unit: SellableItemUnitRow;
-}) {
-  if (platforms.length === 0) return null;
-  const unitMarket = inferMarketFromLocation({
-    region: unit.locationRegion,
-    name: unit.locationName,
-  });
-  const targetPlatforms = platforms.filter((platform) =>
-    isPlatformTargetForMarket(platform, unitMarket)
-  );
-  const displayPlatforms = targetPlatforms.length > 0 ? targetPlatforms : platforms;
-  const activePlatformIds = new Set(
-    records
-      .filter(
-        (record) =>
-          record.itemUnitId === unit.id &&
-          record.listingScope === "ITEM_UNIT" &&
-          record.state === "active"
-      )
-      .map((record) => record.platformId)
-  );
-
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      {displayPlatforms.map((platform) => {
-        const active = activePlatformIds.has(platform.id);
-        return (
-          <span
-            key={platform.id}
-            className={cn(!active && "opacity-80")}
-            title={`${platform.name}${active ? " 已上架" : " 未上架"}`}
-          >
-            <ListingPlatformMark
-              code={platform.code}
-              name={platform.name}
-              muted={!active}
-              className="h-5 w-5 border-0 bg-transparent p-0 shadow-none"
-            />
-          </span>
-        );
-      })}
-    </div>
-  );
+function conditionDisplayLabel(condition?: string | null) {
+  const normalized = condition?.trim().replace(/\s+/g, " ");
+  if (!normalized) return "未确认";
+  if (normalized === "全新") return "全新";
+  if (normalized === "未标注") return "未标";
+  const usedMatch = normalized.match(/^二手\s*([A-Z])$/i);
+  if (usedMatch) return usedMatch[1].toUpperCase();
+  if (/^[SABC]$/i.test(normalized)) return normalized.toUpperCase();
+  if (normalized === "LIKE_NEW") return "S";
+  if (normalized === "GOOD") return "A";
+  if (normalized === "FAIR") return "B";
+  if (normalized === "POOR") return "C";
+  return normalized.replace(/^二手\s*/i, "");
 }
 
 export function SellableItemUnitsList({
   units,
   anchorId,
-  platforms = [],
+  product,
   records = [],
+  onAddListing,
 }: SellableItemUnitsListProps) {
   const sellable = units.filter((u) => u.sellable);
   const inTransit = units.filter((u) => u.inTransit);
-  const visible = sellable.slice(0, MAX_VISIBLE);
-  const hiddenCount = Math.max(sellable.length - MAX_VISIBLE, 0);
+  const visible = [...sellable, ...inTransit].slice(0, MAX_VISIBLE);
+  const hiddenCount = Math.max(sellable.length + inTransit.length - MAX_VISIBLE, 0);
 
   if (sellable.length === 0 && inTransit.length === 0) return null;
 
   return (
-    <div id={anchorId} className="space-y-1.5">
-      {sellable.length > 0 ? (
-        <ul className="space-y-1">
-          {visible.map((unit) => (
-            <li key={unit.id}>
-              <Link
-                href={`/inventory/items/${unit.id}`}
-                className="flex items-center gap-2 rounded-md border bg-background/80 px-2 py-1.5 text-[11px] transition-colors hover:bg-muted/50"
-              >
+    <div id={anchorId} className="space-y-2">
+      <div className="grid gap-2">
+        {visible.map((unit) => {
+          const unitRecords = records.filter(
+            (record) =>
+              record.itemUnitId === unit.id && record.listingScope === "ITEM_UNIT"
+          );
+          const canAddListing =
+            getMissingPlatforms(product, {
+              listingScope: "ITEM_UNIT",
+              itemUnitId: unit.id,
+            }).length > 0;
+
+          return (
+            <article key={unit.id} className="rounded-lg border bg-background/80 p-2">
+              <div className="flex items-center gap-2">
                 <ProductImage
                   src={unit.imageUrl}
-                  alt=""
+                  alt={conditionDisplayLabel(unit.conditionGrade)}
                   size="sm"
-                  className="h-8 w-8 shrink-0 rounded"
+                  className="h-10 w-10 shrink-0 rounded-md"
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-foreground">
-                    {unit.conditionGrade ? `品相 ${unit.conditionGrade}` : "中古单件"}
+                  <p className="truncate text-xs font-semibold text-foreground">
+                    单件商品 · 品相 {conditionDisplayLabel(unit.conditionGrade)}
                   </p>
-                  <p className="inline-flex items-center gap-1 truncate text-muted-foreground">
+                  <p className="mt-0.5 inline-flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground">
                     <MapPin className="h-3 w-3 shrink-0" />
                     {unit.locationName}
                   </p>
                 </div>
-                <UnitPlatformCoverage platforms={platforms} records={records} unit={unit} />
-                <span className="shrink-0 text-[10px] text-muted-foreground">可售</span>
-              </Link>
-            </li>
-          ))}
-          {hiddenCount > 0 ? (
-            <li className="px-2 text-[10px] text-muted-foreground">
-              另有 {hiddenCount} 件中古可售
-            </li>
-          ) : null}
-        </ul>
-      ) : null}
+                <div className="flex shrink-0 items-center gap-1">
+                  {onAddListing && canAddListing ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => onAddListing(unit.id)}
+                      title="添加上架"
+                      aria-label="添加上架"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
 
-      {inTransit.length > 0 ? (
-        <p className="text-[10px] text-muted-foreground">
-          在途中古 {inTransit.length} 件（不可售）
+              {unitRecords.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {unitRecords.map((record) => (
+                    <ListingRecordCompactRow
+                      key={record.listingId}
+                      product={product}
+                      record={record}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+
+      {hiddenCount > 0 ? (
+        <p className="px-1 text-[10px] text-muted-foreground">
+          另有 {hiddenCount} 件单件商品，进入商品详情查看完整列表。
         </p>
       ) : null}
     </div>

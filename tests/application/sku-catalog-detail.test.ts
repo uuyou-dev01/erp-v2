@@ -136,6 +136,55 @@ describe("sku catalog detail reference metrics", () => {
       fulfilledLineCount: 2,
       pendingCostLineCount: 0,
     });
+    expect(detail?.analysis.salesTimeline).toEqual([
+      {
+        date: "2026-06-20",
+        soldQty: "0",
+        orderCount: 0,
+        salesAmount: "0.00",
+        currency: null,
+        listedCount: 1,
+      },
+      {
+        date: "2026-06-21",
+        soldQty: "1",
+        orderCount: 1,
+        salesAmount: "180.00",
+        currency: "CNY",
+        listedCount: 0,
+      },
+      {
+        date: "2026-06-24",
+        soldQty: "1",
+        orderCount: 1,
+        salesAmount: "220.00",
+        currency: "CNY",
+        listedCount: 0,
+      },
+    ]);
+    expect(detail?.analysis.listingSellThrough).toMatchObject({
+      soldCount: 2,
+      matchedSaleCount: 2,
+      averageDaysToSell: "3.5",
+      medianDaysToSell: "3.5",
+      fastestDaysToSell: 2,
+      slowestDaysToSell: 5,
+    });
+    expect(detail?.analysis.listingLifecycle.map((item) => item.matchQuality)).toEqual([
+      "SKU/平台推断",
+      "SKU/平台推断",
+    ]);
+    expect(detail?.analysis.skuAverages).toMatchObject({
+      soldQty: "2",
+      salesCount: 2,
+      averageSalePrice: "200.00",
+      latestSalePrice: "220.00",
+      minSalePrice: "180.00",
+      maxSalePrice: "220.00",
+      salesCurrency: "CNY",
+      averageGrossProfit: null,
+      grossMarginRate: null,
+    });
   });
 
   it("rolls child SKU lot stock, item units, listings, and sales into parent detail", async () => {

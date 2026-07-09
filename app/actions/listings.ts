@@ -322,6 +322,23 @@ export async function createListing(data: {
       skuId: data.skuId,
       itemUnitId: data.itemUnitId,
     });
+
+    const duplicateActiveListing = await prisma.listing.findFirst({
+      where: {
+        storeId: context.activeStoreId,
+        platformId: data.platformId,
+        listingType: data.listingType,
+        status: "ACTIVE",
+        ...(data.listingType === "ITEM_UNIT"
+          ? { itemUnitId: data.itemUnitId }
+          : { skuId: data.skuId }),
+      },
+      select: { id: true },
+    });
+    if (duplicateActiveListing) {
+      return actionFailure(`该${data.listingType === "ITEM_UNIT" ? "单件" : "SKU"}已在 ${platform.name} 上架`);
+    }
+
     const platformDefaults = platform ? resolvePlatformListingDefaults(platform) : null;
 
     let pricingSkuId = data.skuId;
@@ -768,6 +785,20 @@ export async function batchCreateListings(data: {
         }),
       ),
     );
+
+    const existingActiveListings = await prisma.listing.findMany({
+      where: {
+        storeId: context.activeStoreId,
+        platformId: data.platformId,
+        listingType: "SKU",
+        status: "ACTIVE",
+        skuId: { in: data.skuIds },
+      },
+      select: { skuId: true },
+    });
+    if (existingActiveListings.length > 0) {
+      return actionFailure(`已有 ${existingActiveListings.length} 个 SKU 在 ${platform.name} 上架`);
+    }
 
     const referenceBySku = new Map<
       string,

@@ -5,7 +5,7 @@ import {
   type SkuCatalogDetail,
 } from "@/lib/application/sku-catalog";
 import { SKUDetailActions } from "@/components/inventory/sku-detail-actions";
-import { SkuPriceHistoryChart } from "@/components/inventory/sku-price-history-chart";
+import { SkuOperationsPanel } from "@/components/inventory/sku-operations-panel";
 import { SKUReferencePanel } from "@/components/inventory/sku-reference-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,15 +13,8 @@ import { ProductImage } from "@/components/ui/product-image";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import {
-  ArrowLeft,
-  BarChart3,
-  CircleDollarSign,
-  GitBranch,
-  History,
-  TrendingUp,
-} from "lucide-react";
-import { formatCurrency, formatQuantity } from "@/lib/decimal";
+import { ArrowLeft } from "lucide-react";
+import { formatCurrency } from "@/lib/decimal";
 
 export const dynamic = "force-dynamic";
 
@@ -38,42 +31,6 @@ function InfoCell({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 text-sm font-medium">{value}</dd>
-    </div>
-  );
-}
-
-function formatDateLabel(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value));
-}
-
-function MetricTile({
-  label,
-  value,
-  subtext,
-}: {
-  label: string;
-  value: React.ReactNode;
-  subtext?: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-md border bg-card px-3 py-2.5">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold leading-tight">{value}</p>
-      {subtext ? (
-        <p className="mt-1 truncate text-[11px] text-muted-foreground">{subtext}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function EmptyHint({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-      {children}
     </div>
   );
 }
@@ -165,8 +122,6 @@ export default async function SKUDetailPage({
     : returnHref;
   const coverUrl =
     images.find((i) => i.isCover)?.url ?? images[0]?.url ?? displaySku.imageUrl;
-  const salesCurrency = displaySku.business.salesCurrency ?? displaySku.currency ?? "CNY";
-  const profitCurrency = displaySku.analysis.profitOverview.currency ?? salesCurrency;
   const selectedVariantName = isViewingChildFromParent
     ? variantDisplayName(sku, displaySku)
     : null;
@@ -175,6 +130,29 @@ export default async function SKUDetailPage({
     if (returnTo) query.set("returnTo", returnTo);
     return `/inventory/skus/${sku.id}?${query.toString()}`;
   };
+  const variantFilter =
+    isProductGroup && childDetails.length > 0
+      ? {
+          label: sku.name,
+          addHref: `/inventory/skus/new?mode=variant&parentSkuId=${sku.id}`,
+          options: childDetails.map((child) => ({
+            id: child.id,
+            label: variantDisplayName(sku, child),
+            href: variantHref(child.id),
+            selected: child.id === displaySku.id,
+            meta: child.business.averageSalePrice
+              ? formatCurrency(
+                  child.business.averageSalePrice,
+                  child.business.salesCurrency ?? child.currency ?? "CNY"
+                )
+              : `${child.business.salesCount}笔`,
+          })),
+          selectedAttributes: variantEntries.map(([label, value]) => ({
+            label,
+            value: String(value),
+          })),
+        }
+      : undefined;
 
   return (
     <div className="space-y-4">
@@ -273,69 +251,6 @@ export default async function SKUDetailPage({
         />
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-        <MetricTile
-          label="参考售价"
-          value={
-            displaySku.referencePrice
-              ? formatCurrency(displaySku.referencePrice, displaySku.currency ?? salesCurrency)
-              : "—"
-          }
-          subtext="档案维护价"
-        />
-        <MetricTile
-          label="平均进货价"
-          value={
-            displaySku.business.averagePurchasePrice
-              ? formatCurrency(
-                  displaySku.business.averagePurchasePrice,
-                  displaySku.business.purchaseCurrency ?? salesCurrency
-                )
-              : "—"
-          }
-          subtext={`采购 ${displaySku.reference.purchaseLineCount} 笔`}
-        />
-        <MetricTile
-          label="近销价"
-          value={
-            displaySku.business.latestSalePrice
-              ? formatCurrency(displaySku.business.latestSalePrice, salesCurrency)
-              : "—"
-          }
-          subtext={`销售 ${displaySku.business.salesCount} 次`}
-        />
-        <MetricTile
-          label="均价"
-          value={
-            displaySku.business.averageSalePrice
-              ? formatCurrency(displaySku.business.averageSalePrice, salesCurrency)
-              : "—"
-          }
-          subtext={displaySku.business.primaryPlatformName ?? "暂无主销平台"}
-        />
-        <MetricTile
-          label="成交额"
-          value={formatCurrency(
-            displaySku.analysis.profitOverview.salesAmount,
-            profitCurrency
-          )}
-          subtext={`成本匹配 ${displaySku.analysis.profitOverview.fulfilledLineCount} 笔`}
-        />
-        <MetricTile
-          label="估算单件毛利"
-          value={
-            displaySku.business.grossProfitPerUnit
-              ? formatCurrency(displaySku.business.grossProfitPerUnit, profitCurrency)
-              : "—"
-          }
-          subtext={
-            displaySku.business.grossMarginRate
-              ? `${displaySku.business.grossMarginRate}%`
-              : "成交价/进货价币种不一致时不估算"
-          }
-        />
-      </div>
-
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <Card>
@@ -404,272 +319,14 @@ export default async function SKUDetailPage({
             </CardContent>
           </Card>
 
-          {(isProductGroup ||
-            displaySku.parentSku ||
-            variantEntries.length > 0) && (
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-                  <GitBranch className="h-3.5 w-3.5" />
-                  变体与规格
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 pt-0 text-sm">
-                {isProductGroup ? (
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-xs text-muted-foreground">
-                        选择一个规格查看价格、采购、成交与利润
-                      </p>
-                      <Link href={`/inventory/skus/new?mode=variant&parentSkuId=${sku.id}`}>
-                        <Button variant="outline" size="sm" className="h-8">
-                          新增规格
-                        </Button>
-                      </Link>
-                    </div>
-                    {childDetails.length > 0 ? (
-                      <div className="grid gap-1.5 sm:grid-cols-2">
-                        {childDetails.map((child) => {
-                          const selected = child.id === displaySku.id;
-                          return (
-                            <Link
-                              key={child.id}
-                              href={variantHref(child.id)}
-                              className={`rounded-md border px-3 py-2 transition-colors ${
-                                selected
-                                  ? "border-primary bg-primary/5"
-                                  : "hover:bg-muted/60"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="min-w-0 truncate font-medium">
-                                  {variantDisplayName(sku, child)}
-                                </span>
-                                <span className="shrink-0 text-xs text-muted-foreground">
-                                  成交 {child.business.salesCount} 次
-                                </span>
-                              </div>
-                              <p className="mt-1 truncate text-xs text-muted-foreground">
-                                {child.business.averageSalePrice
-                                  ? `均价 ${formatCurrency(
-                                      child.business.averageSalePrice,
-                                      child.business.salesCurrency ?? child.currency ?? "CNY"
-                                    )}`
-                                  : "暂无成交价"}
-                              </p>
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <EmptyHint>这个商品组还没有规格 SKU</EmptyHint>
-                    )}
-                  </div>
-                ) : null}
-                {displaySku.parentSku ? (
-                  <p>
-                    <span className="text-muted-foreground">归属商品组：</span>
-                    <Link
-                      href={`/inventory/skus/${displaySku.parentSku.id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {displaySku.parentSku.name}
-                    </Link>
-                  </p>
-                ) : null}
-                {variantEntries.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {variantEntries.map(([key, value]) => (
-                      <Badge key={key} variant="outline" className="text-xs">
-                        {key}: {String(value)}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-                <TrendingUp className="h-3.5 w-3.5" />
-                价格走势
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <SkuPriceHistoryChart data={displaySku.analysis.priceHistory} />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-                <BarChart3 className="h-3.5 w-3.5" />
-                平台表现
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-0">
-              {displaySku.analysis.platformPerformance.length ? (
-                <div className="grid gap-2">
-                  {displaySku.analysis.platformPerformance.map((platform) => (
-                    <div
-                      key={platform.platformCode}
-                      className="grid gap-2 rounded-md border px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto_auto]"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">{platform.platformName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          最近 {formatDateLabel(platform.lastSoldAt)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">次数</p>
-                        <p className="font-medium">{platform.salesCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">均价</p>
-                        <p className="font-medium">
-                          {platform.averagePrice
-                            ? formatCurrency(platform.averagePrice, platform.currency)
-                            : "—"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">成交额</p>
-                        <p className="font-medium">
-                          {formatCurrency(platform.totalAmount, platform.currency)}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <EmptyHint>暂无有效销售记录</EmptyHint>
-              )}
-
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-                  <TrendingUp className="h-3.5 w-3.5" />
-                  销售历史
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {displaySku.reference.recentSalesLines.length ? (
-                  <ul className="space-y-1.5 text-sm">
-                    {displaySku.reference.recentSalesLines.map((line) => (
-                      <li
-                        key={line.id}
-                        className="rounded-md bg-muted/40 px-2.5 py-2"
-                      >
-                        <div className="flex justify-between gap-2">
-                          <span className="truncate font-medium">
-                            {line.orderNumber}
-                          </span>
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            {formatDateLabel(line.orderDate)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {line.platformName ?? "未记录平台"} ·{" "}
-                          {formatQuantity(line.quantity)} 件 ·{" "}
-                          {formatCurrency(line.lineAmount, line.currency)}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <EmptyHint>暂无销售历史</EmptyHint>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-                  <History className="h-3.5 w-3.5" />
-                  采购历史
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {displaySku.reference.recentPurchaseLines.length ? (
-                  <ul className="space-y-1.5 text-sm">
-                    {displaySku.reference.recentPurchaseLines.map((line) => (
-                      <li
-                        key={line.id}
-                        className="rounded-md bg-muted/40 px-2.5 py-2"
-                      >
-                        <div className="flex justify-between gap-2">
-                          <span className="truncate font-medium">{line.orderNo}</span>
-                          <Badge variant="outline" className="shrink-0 text-[10px]">
-                            {line.status}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {formatDateLabel(line.orderedAt)} ·{" "}
-                          {formatQuantity(line.quantity)} 件 ·{" "}
-                          {formatCurrency(line.lineAmount, line.currency)}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <EmptyHint>暂无采购历史</EmptyHint>
-                )}
-              </CardContent>
-            </Card>
-          </div>
         </div>
 
         <div className="space-y-4">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-                <CircleDollarSign className="h-3.5 w-3.5" />
-                利润概览
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 pt-0 text-sm">
-              <InfoCell
-                label="有效成交额"
-                value={formatCurrency(
-                  displaySku.analysis.profitOverview.salesAmount,
-                  profitCurrency
-                )}
-              />
-              <InfoCell
-                label="已匹配成本销售额"
-                value={formatCurrency(
-                  displaySku.analysis.profitOverview.costMatchedSalesAmount,
-                  profitCurrency
-                )}
-              />
-              <InfoCell
-                label="库存成本"
-                value={formatCurrency(
-                  displaySku.analysis.profitOverview.allocatedInventoryCost,
-                  profitCurrency
-                )}
-              />
-              <InfoCell
-                label="毛利率"
-                value={`${displaySku.analysis.profitOverview.profitRate}%`}
-              />
-              {displaySku.analysis.profitOverview.pendingCostLineCount > 0 ? (
-                <p className="rounded-md bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">
-                  还有 {displaySku.analysis.profitOverview.pendingCostLineCount} 笔销售未匹配库存成本。
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
           <SKUReferencePanel sku={displaySku} compact />
         </div>
       </div>
+
+      <SkuOperationsPanel sku={displaySku} variantFilter={variantFilter} />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import { Upload } from "lucide-react";
 import { CSVImportDialog } from "@/components/shared/csv-import-dialog";
 import { runImport } from "@/app/actions/import";
@@ -17,7 +17,19 @@ const SKU_FIELDS = [
   { key: "description", label: "描述" },
 ];
 
-export function SKUImportButton() {
+interface SKUImportButtonProps {
+  label?: string;
+  className?: string;
+  variant?: ButtonProps["variant"];
+  size?: ButtonProps["size"];
+}
+
+export function SKUImportButton({
+  label = "批量导入",
+  className,
+  variant = "outline",
+  size,
+}: SKUImportButtonProps) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
 
@@ -29,9 +41,9 @@ export function SKUImportButton() {
 
   return (
     <>
-      <Button variant="outline" onClick={() => setOpen(true)}>
+      <Button variant={variant} size={size} className={className} onClick={() => setOpen(true)}>
         <Upload className="mr-2 h-4 w-4" />
-        批量导入
+        {label}
       </Button>
       <CSVImportDialog
         open={open}

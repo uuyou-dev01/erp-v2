@@ -18,6 +18,7 @@ interface ListingOpsToolbarProps {
   risk?: string;
   sort?: string;
   query?: string;
+  showStockSort?: boolean;
 }
 
 function withParam(
@@ -44,6 +45,7 @@ export function ListingOpsToolbar({
   risk,
   sort,
   query,
+  showStockSort = false,
 }: ListingOpsToolbarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -138,12 +140,13 @@ export function ListingOpsToolbar({
         </Select>
 
         <Select
-          value={sort ?? "listedAt"}
+          value={sort ?? (showStockSort ? "stockDesc" : "listedAt")}
           className="h-9"
           onChange={(event) =>
             router.push(withParam(searchParams, basePath, "sort", event.target.value))
           }
         >
+          {showStockSort ? <option value="stockDesc">可售数优先</option> : null}
           <option value="listedAt">最近上架</option>
           <option value="updatedAt">最近更新</option>
           <option value="priceDesc">价格从高到低</option>

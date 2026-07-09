@@ -54,6 +54,12 @@ model Store {
   supplyReservations       SupplyReservation[]
   fulfillmentRequests      FulfillmentRequest[]
   settlements              Settlement[]
+  earningRules             EarningRule[]
+  earningEvents            EarningEvent[]
+  walletAccounts           WalletAccount[]
+  walletLedgerEntries      WalletLedgerEntry[]
+  withdrawalRequests       WithdrawalRequest[]
+  payoutRecords            PayoutRecord[]
   partners                 Partner[]
   tradingRelationships     TradingRelationship[]
   supplyOffers             SupplyOffer[]
@@ -993,6 +999,202 @@ model SettlementLine {
   @@index([lineType])
   @@index([sourceType, sourceId])
   @@map("settlement_lines")
+}
+
+model EarningRule {
+  id              String    @id @default(cuid())
+  storeId         String
+  partnerId       String?
+  name            String
+  ruleType        String // SELF_SALE_COMMISSION, RESALE_COMMISSION, FULFILLMENT_SERVICE_FEE, SUPPLY_PROFIT_SHARE, STORAGE_FEE, LISTING_SERVICE_FEE, SOURCING_SERVICE_FEE, ADJUSTMENT
+  scopeType       String    @default("STORE") // STORE, PARTNER, SUPPLY_OFFER, RESALE_LISTING, PLATFORM, SKU, ORDER
+  scopeId         String?
+  calculationType String // PERCENT_OF_PROFIT, PERCENT_OF_SALES, FIXED_PER_ORDER, FIXED_PER_UNIT, FIXED_MONTHLY, MANUAL
+  rate            Decimal?  @db.Decimal(8, 4)
+  fixedAmount     Decimal?  @db.Decimal(19, 4)
+  currency        String?
+  priority        Int       @default(100)
+  status          String    @default("ACTIVE") // ACTIVE, PAUSED, ARCHIVED
+  effectiveFrom   DateTime?
+  effectiveTo     DateTime?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  earningEvents EarningEvent[]
+
+  @@index([storeId])
+  @@index([partnerId])
+  @@index([ruleType])
+  @@index([scopeType, scopeId])
+  @@index([status])
+  @@map("earning_rules")
+}
+
+model EarningEvent {
+  id              String    @id @default(cuid())
+  storeId         String
+  walletAccountId String?
+  earningRuleId   String?
+  partnerId       String?
+  userId          String?
+  sourceType      String // CUSTOMER_ORDER, FULFILLMENT_REQUEST, SUPPLY_OFFER, SETTLEMENT, MANUAL, MONTHLY_SERVICE
+  sourceId        String?
+  earningType     String // SELF_SALE_COMMISSION, RESALE_COMMISSION, FULFILLMENT_SERVICE_FEE, SUPPLY_PROFIT_SHARE, PLATFORM_REVENUE, ADJUSTMENT
+  description     String
+  grossAmount     Decimal   @default(0) @db.Decimal(19, 4)
+  costAmount      Decimal   @default(0) @db.Decimal(19, 4)
+  baseAmount      Decimal   @default(0) @db.Decimal(19, 4)
+  earningAmount   Decimal   @db.Decimal(19, 4)
+  currency        String
+  status          String    @default("PENDING") // PENDING, CONFIRMED, SETTLED, VOID
+  occurredAt      DateTime  @default(now())
+  settledAt       DateTime?
+  metadata        Json?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  store         Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  walletAccount WalletAccount?       @relation(fields: [walletAccountId], references: [id], onDelete: SetNull)
+  earningRule   EarningRule?         @relation(fields: [earningRuleId], references: [id], onDelete: SetNull)
+  ledgerEntries WalletLedgerEntry[]
+
+  @@index([storeId])
+  @@index([walletAccountId])
+  @@index([earningRuleId])
+  @@index([partnerId])
+  @@index([userId])
+  @@index([sourceType, sourceId])
+  @@index([earningType])
+  @@index([status])
+  @@index([occurredAt])
+  @@map("earning_events")
+}
+
+model WalletAccount {
+  id        String   @id @default(cuid())
+  storeId   String
+  ownerType String // USER, PARTNER, PLATFORM
+  ownerId   String
+  currency  String
+  status    String   @default("ACTIVE") // ACTIVE, FROZEN, CLOSED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store              Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  earningEvents      EarningEvent[]
+  ledgerEntries      WalletLedgerEntry[]
+  withdrawalRequests WithdrawalRequest[]
+  payoutRecords      PayoutRecord[]
+
+  @@unique([storeId, ownerType, ownerId, currency])
+  @@index([storeId])
+  @@index([ownerType, ownerId])
+  @@index([status])
+  @@map("wallet_accounts")
+}
+
+model WalletLedgerEntry {
+  id                  String    @id @default(cuid())
+  storeId             String
+  walletAccountId     String
+  withdrawalRequestId String?
+  earningEventId      String?
+  entryType           String // CREDIT, DEBIT, HOLD, RELEASE, WITHDRAWAL, ADJUSTMENT
+  amount              Decimal   @db.Decimal(19, 4)
+  currency            String
+  status              String    @default("POSTED") // POSTED, PENDING, VOID
+  sourceType          String?
+  sourceId            String?
+  description         String?   @db.Text
+  metadata            Json?
+  postedAt            DateTime?
+  voidedAt            DateTime?
+  createdById         String?
+  createdAt           DateTime  @default(now())
+
+  store             Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  walletAccount     WalletAccount      @relation(fields: [walletAccountId], references: [id], onDelete: Cascade)
+  withdrawalRequest WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id], onDelete: SetNull)
+  earningEvent      EarningEvent?      @relation(fields: [earningEventId], references: [id], onDelete: SetNull)
+
+  @@index([storeId])
+  @@index([walletAccountId])
+  @@index([withdrawalRequestId])
+  @@index([earningEventId])
+  @@index([entryType])
+  @@index([status])
+  @@index([sourceType, sourceId])
+  @@index([createdAt])
+  @@map("wallet_ledger_entries")
+}
+
+model WithdrawalRequest {
+  id              String    @id @default(cuid())
+  storeId         String
+  walletAccountId String
+  requestNo       String
+  amount          Decimal   @db.Decimal(19, 4)
+  currency        String
+  status          String    @default("REQUESTED") // REQUESTED, APPROVED, PAID, REJECTED, CANCELLED
+  paymentMethod   String?
+  paymentAccount  String?
+  accountName     String?
+  note            String?   @db.Text
+  requestedById   String?
+  reviewedById    String?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  cancelledAt     DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  store         Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  walletAccount WalletAccount       @relation(fields: [walletAccountId], references: [id], onDelete: Cascade)
+  ledgerEntries WalletLedgerEntry[]
+  payoutRecords PayoutRecord[]
+
+  @@unique([storeId, requestNo])
+  @@index([storeId])
+  @@index([walletAccountId])
+  @@index([status])
+  @@index([requestedById])
+  @@index([createdAt])
+  @@map("withdrawal_requests")
+}
+
+model PayoutRecord {
+  id                  String   @id @default(cuid())
+  storeId             String
+  walletAccountId     String
+  withdrawalRequestId String
+  amount              Decimal  @db.Decimal(19, 4)
+  currency            String
+  status              String   @default("PAID") // PAID, VOID
+  paymentMethod       String?
+  paymentAccount      String?
+  accountName         String?
+  proofUrl            String?
+  note                String?  @db.Text
+  paidById            String?
+  paidAt              DateTime @default(now())
+  createdAt           DateTime @default(now())
+
+  store             Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  walletAccount     WalletAccount     @relation(fields: [walletAccountId], references: [id], onDelete: Cascade)
+  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([walletAccountId])
+  @@index([withdrawalRequestId])
+  @@index([status])
+  @@index([paidAt])
+  @@map("payout_records")
 }
 
 model SupplyOfferItem {

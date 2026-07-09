@@ -403,6 +403,52 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
       averageMonthlyQty: string;
       averageDaysBetweenSales: string | null;
     };
+    salesTimeline: Array<{
+      date: string;
+      soldQty: string;
+      orderCount: number;
+      salesAmount: string;
+      currency: string | null;
+      listedCount: number;
+    }>;
+    listingLifecycle: Array<{
+      id: string;
+      orderNumber: string;
+      skuCode: string | null;
+      platformName: string | null;
+      soldAt: string;
+      listedAt: string | null;
+      daysToSell: number | null;
+      quantity: string;
+      lineAmount: string;
+      currency: string;
+      matchQuality: string;
+    }>;
+    listingSellThrough: {
+      soldCount: number;
+      matchedSaleCount: number;
+      averageDaysToSell: string | null;
+      medianDaysToSell: string | null;
+      fastestDaysToSell: number | null;
+      slowestDaysToSell: number | null;
+    };
+    skuAverages: {
+      soldQty: string;
+      salesCount: number;
+      averageSalePrice: string | null;
+      latestSalePrice: string | null;
+      minSalePrice: string | null;
+      maxSalePrice: string | null;
+      salesCurrency: string | null;
+      purchaseCount: number;
+      purchasedQty: string;
+      averagePurchasePrice: string | null;
+      minPurchasePrice: string | null;
+      maxPurchasePrice: string | null;
+      purchaseCurrency: string | null;
+      averageGrossProfit: string | null;
+      grossMarginRate: string | null;
+    };
     priceHistory: Array<{
       date: string;
       salePrice: string | null;
@@ -772,6 +818,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     storeStockBreakdown,
     salesLines,
     activeListings,
+    historicalListings,
     purchaseLines,
     purchaseLineCount,
     allPurchaseLines,
@@ -786,7 +833,8 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
         order: { orderStatus: { in: VALID_SALES_STATUSES } },
       },
       include: {
-        allocations: { select: { costAmount: true } },
+        sku: { select: { id: true, code: true } },
+        allocations: { select: { costAmount: true, itemUnitId: true, lotId: true } },
         order: {
           select: {
             orderNumber: true,
@@ -807,6 +855,22 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
           { itemUnit: { skuId: { in: metricSkuIds } } },
         ],
       },
+      orderBy: { listedAt: "desc" },
+      include: {
+        platform: { select: { name: true, code: true } },
+        sku: { select: { id: true, code: true } },
+        itemUnit: { select: { id: true, unitCode: true, skuId: true, sku: { select: { code: true } } } },
+      },
+    }),
+    prisma.listing.findMany({
+      where: {
+        storeId: sku.storeId,
+        OR: [
+          { skuId: { in: metricSkuIds } },
+          { itemUnit: { skuId: { in: metricSkuIds } } },
+        ],
+      },
+      take: 500,
       orderBy: { listedAt: "desc" },
       include: {
         platform: { select: { name: true, code: true } },
@@ -875,6 +939,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
   const analysis = buildSkuDetailAnalysis({
     stockBreakdown,
     listings: activeListings,
+    historicalListings,
     salesLines,
     purchaseLines: allPurchaseLines,
   });
@@ -1073,13 +1138,34 @@ function buildSkuDetailAnalysis(input: {
       sku: { code: string };
     } | null;
   }>;
+  historicalListings: Array<{
+    id: string;
+    listingType: string;
+    skuId: string | null;
+    listedAt: Date;
+    platform: { name: string; code: string };
+    sku: { id: string; code: string } | null;
+    itemUnit: {
+      id: string;
+      unitCode: string | null;
+      skuId: string;
+      sku: { code: string };
+    } | null;
+  }>;
   salesLines: Array<{
     id: string;
+    skuId: string;
+    sku: { id: string; code: string };
     quantity: { toString(): string };
     unitPrice: { toString(): string } | null;
     lineAmount: { toString(): string };
-    allocations: Array<{ costAmount: { toString(): string } }>;
+    allocations: Array<{
+      costAmount: { toString(): string };
+      itemUnitId: string | null;
+      lotId: string | null;
+    }>;
     order: {
+      orderNumber: string;
       orderDate: Date;
       currency: string;
       platform: { name: string; code: string } | null;
@@ -1154,6 +1240,16 @@ function buildSkuDetailAnalysis(input: {
     }
   }
 
+  const salesTimeline = buildSkuSalesTimeline(
+    input.salesLines,
+    input.historicalListings
+  );
+  const listingLifecycle = buildListingLifecycle(
+    input.salesLines,
+    input.historicalListings
+  );
+  const listingSellThrough = buildListingSellThrough(listingLifecycle);
+  const skuAverages = buildSkuAverageMetrics(input.salesLines, input.purchaseLines);
   const grossProfit = costMatchedSalesAmount.minus(allocatedInventoryCost);
   const profitRate = costMatchedSalesAmount.gt(0)
     ? grossProfit.div(costMatchedSalesAmount).mul(100).toFixed(1)
@@ -1215,6 +1311,10 @@ function buildSkuDetailAnalysis(input: {
       currency: profitCurrency,
     },
     salesVelocity: buildSalesVelocity(input.salesLines),
+    salesTimeline,
+    listingLifecycle,
+    listingSellThrough,
+    skuAverages,
     priceHistory: buildSkuPriceHistory(input.salesLines, input.purchaseLines),
   };
 }
@@ -1258,6 +1358,291 @@ function buildSalesVelocity(
     lastSoldAt: last.toISOString(),
     averageMonthlyQty,
     averageDaysBetweenSales,
+  };
+}
+
+function buildSkuSalesTimeline(
+  salesLines: Array<{
+    quantity: { toString(): string };
+    lineAmount: { toString(): string };
+    order: { orderNumber: string; orderDate: Date; currency: string };
+  }>,
+  listings: Array<{ listedAt: Date }>
+): SkuCatalogDetail["analysis"]["salesTimeline"] {
+  const buckets = new Map<
+    string,
+    {
+      date: string;
+      soldQty: Decimal;
+      orderNumbers: Set<string>;
+      salesAmount: Decimal;
+      currency: string | null;
+      listedCount: number;
+    }
+  >();
+
+  const getBucket = (date: Date) => {
+    const key = date.toISOString().slice(0, 10);
+    const bucket = buckets.get(key) ?? {
+      date: key,
+      soldQty: new Decimal(0),
+      orderNumbers: new Set<string>(),
+      salesAmount: new Decimal(0),
+      currency: null,
+      listedCount: 0,
+    };
+    buckets.set(key, bucket);
+    return bucket;
+  };
+
+  for (const line of salesLines) {
+    const bucket = getBucket(line.order.orderDate);
+    bucket.soldQty = bucket.soldQty.plus(new Decimal(line.quantity.toString()));
+    bucket.salesAmount = bucket.salesAmount.plus(new Decimal(line.lineAmount.toString()));
+    bucket.orderNumbers.add(line.order.orderNumber);
+    bucket.currency = bucket.currency ?? line.order.currency;
+  }
+
+  for (const listing of listings) {
+    getBucket(listing.listedAt).listedCount += 1;
+  }
+
+  return [...buckets.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((bucket) => ({
+      date: bucket.date,
+      soldQty: bucket.soldQty.toString(),
+      orderCount: bucket.orderNumbers.size,
+      salesAmount: bucket.salesAmount.toFixed(2),
+      currency: bucket.currency,
+      listedCount: bucket.listedCount,
+    }));
+}
+
+function buildListingLifecycle(
+  salesLines: Array<{
+    id: string;
+    skuId: string;
+    sku: { code: string };
+    quantity: { toString(): string };
+    lineAmount: { toString(): string };
+    allocations: Array<{ itemUnitId: string | null }>;
+    order: {
+      orderNumber: string;
+      orderDate: Date;
+      currency: string;
+      platform: { name: string; code: string } | null;
+    };
+  }>,
+  listings: Array<{
+    id: string;
+    skuId: string | null;
+    listedAt: Date;
+    platform: { name: string; code: string };
+    sku: { id: string; code: string } | null;
+    itemUnit: { id: string; skuId: string; sku: { code: string } } | null;
+  }>
+): SkuCatalogDetail["analysis"]["listingLifecycle"] {
+  return [...salesLines]
+    .sort((a, b) => b.order.orderDate.getTime() - a.order.orderDate.getTime())
+    .map((line) => {
+      const platformCode = line.order.platform?.code ?? null;
+      const itemUnitIds = new Set(
+        line.allocations
+          .map((allocation) => allocation.itemUnitId)
+          .filter((itemUnitId): itemUnitId is string => Boolean(itemUnitId))
+      );
+      const matchedListing =
+        listings
+          .filter((listing) => {
+            if (listing.listedAt > line.order.orderDate) return false;
+            if (platformCode && listing.platform.code !== platformCode) return false;
+            const listingSkuId = listing.skuId ?? listing.itemUnit?.skuId ?? null;
+            const itemUnitMatched = listing.itemUnit?.id
+              ? itemUnitIds.has(listing.itemUnit.id)
+              : false;
+            return itemUnitMatched || listingSkuId === line.skuId;
+          })
+          .sort((a, b) => {
+            const aItemMatch = a.itemUnit?.id ? itemUnitIds.has(a.itemUnit.id) : false;
+            const bItemMatch = b.itemUnit?.id ? itemUnitIds.has(b.itemUnit.id) : false;
+            if (aItemMatch && !bItemMatch) return -1;
+            if (bItemMatch && !aItemMatch) return 1;
+            return b.listedAt.getTime() - a.listedAt.getTime();
+          })[0] ?? null;
+      const daysToSell = matchedListing
+        ? Math.max(
+            0,
+            Math.ceil(
+              (line.order.orderDate.getTime() - matchedListing.listedAt.getTime()) /
+                (1000 * 60 * 60 * 24)
+            )
+          )
+        : null;
+      const itemUnitMatched = matchedListing?.itemUnit?.id
+        ? itemUnitIds.has(matchedListing.itemUnit.id)
+        : false;
+      const matchQuality = matchedListing
+        ? itemUnitMatched
+          ? "单件匹配"
+          : platformCode
+            ? "SKU/平台推断"
+            : "SKU 推断"
+        : "未匹配上架";
+
+      return {
+        id: line.id,
+        orderNumber: line.order.orderNumber,
+        skuCode: line.sku.code,
+        platformName: line.order.platform?.name ?? matchedListing?.platform.name ?? null,
+        soldAt: line.order.orderDate.toISOString(),
+        listedAt: matchedListing?.listedAt.toISOString() ?? null,
+        daysToSell,
+        quantity: line.quantity.toString(),
+        lineAmount: line.lineAmount.toString(),
+        currency: line.order.currency,
+        matchQuality,
+      };
+    });
+}
+
+function buildListingSellThrough(
+  lifecycle: SkuCatalogDetail["analysis"]["listingLifecycle"]
+): SkuCatalogDetail["analysis"]["listingSellThrough"] {
+  const days = lifecycle
+    .map((item) => item.daysToSell)
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+
+  if (days.length === 0) {
+    return {
+      soldCount: lifecycle.length,
+      matchedSaleCount: 0,
+      averageDaysToSell: null,
+      medianDaysToSell: null,
+      fastestDaysToSell: null,
+      slowestDaysToSell: null,
+    };
+  }
+
+  const totalDays = days.reduce((sum, value) => sum + value, 0);
+  const middle = Math.floor(days.length / 2);
+  const median =
+    days.length % 2 === 0 ? (days[middle - 1] + days[middle]) / 2 : days[middle];
+
+  return {
+    soldCount: lifecycle.length,
+    matchedSaleCount: days.length,
+    averageDaysToSell: new Decimal(totalDays).div(days.length).toFixed(1),
+    medianDaysToSell: new Decimal(median).toFixed(1),
+    fastestDaysToSell: days[0],
+    slowestDaysToSell: days[days.length - 1],
+  };
+}
+
+function buildSkuAverageMetrics(
+  salesLines: Array<{
+    quantity: { toString(): string };
+    unitPrice: { toString(): string } | null;
+    lineAmount: { toString(): string };
+    order: { orderDate: Date; currency: string };
+  }>,
+  purchaseLines: Array<{
+    quantity: { toString(): string };
+    unitPrice: { toString(): string };
+    lineAmount: { toString(): string };
+    purchaseOrder: {
+      currency: string;
+      status: string;
+      orderedAt: Date | null;
+      createdAt: Date;
+    };
+  }>
+): SkuCatalogDetail["analysis"]["skuAverages"] {
+  const salePrices: Decimal[] = [];
+  const purchasePrices: Decimal[] = [];
+  let soldQty = new Decimal(0);
+  let salesAmount = new Decimal(0);
+  let purchasedQty = new Decimal(0);
+  let purchaseAmount = new Decimal(0);
+  let salesCurrency: string | null = null;
+  let purchaseCurrency: string | null = null;
+
+  const sortedSales = [...salesLines].sort(
+    (a, b) => b.order.orderDate.getTime() - a.order.orderDate.getTime()
+  );
+
+  for (const line of salesLines) {
+    const qty = new Decimal(line.quantity.toString());
+    if (qty.lte(0)) continue;
+    const amount = new Decimal(line.lineAmount.toString());
+    const unitPrice = line.unitPrice
+      ? new Decimal(line.unitPrice.toString())
+      : amount.div(qty);
+    salePrices.push(unitPrice);
+    soldQty = soldQty.plus(qty);
+    salesAmount = salesAmount.plus(amount);
+    salesCurrency = salesCurrency ?? line.order.currency;
+  }
+
+  for (const line of purchaseLines) {
+    if (String(line.purchaseOrder.status ?? "").toUpperCase().includes("CANCEL")) {
+      continue;
+    }
+    const qty = new Decimal(line.quantity.toString());
+    if (qty.lte(0)) continue;
+    const amount = new Decimal(line.lineAmount.toString());
+    const unitPrice = line.unitPrice
+      ? new Decimal(line.unitPrice.toString())
+      : amount.div(qty);
+    purchasePrices.push(unitPrice);
+    purchasedQty = purchasedQty.plus(qty);
+    purchaseAmount = purchaseAmount.plus(amount);
+    purchaseCurrency = purchaseCurrency ?? line.purchaseOrder.currency;
+  }
+
+  const averageSalePrice = soldQty.gt(0) ? salesAmount.div(soldQty) : null;
+  const averagePurchasePrice = purchasedQty.gt(0)
+    ? purchaseAmount.div(purchasedQty)
+    : null;
+  const sameCurrency =
+    !salesCurrency || !purchaseCurrency || salesCurrency === purchaseCurrency;
+  const averageGrossProfit =
+    averageSalePrice && averagePurchasePrice && sameCurrency
+      ? averageSalePrice.minus(averagePurchasePrice)
+      : null;
+
+  return {
+    soldQty: soldQty.toString(),
+    salesCount: salesLines.length,
+    averageSalePrice: averageSalePrice?.toFixed(2) ?? null,
+    latestSalePrice:
+      sortedSales.length > 0
+        ? (() => {
+            const latest = sortedSales[0];
+            const qty = new Decimal(latest.quantity.toString());
+            if (qty.lte(0)) return null;
+            return latest.unitPrice
+              ? new Decimal(latest.unitPrice.toString()).toFixed(2)
+              : new Decimal(latest.lineAmount.toString()).div(qty).toFixed(2);
+          })()
+        : null,
+    minSalePrice: salePrices.length > 0 ? Decimal.min(...salePrices).toFixed(2) : null,
+    maxSalePrice: salePrices.length > 0 ? Decimal.max(...salePrices).toFixed(2) : null,
+    salesCurrency,
+    purchaseCount: purchaseLines.length,
+    purchasedQty: purchasedQty.toString(),
+    averagePurchasePrice: averagePurchasePrice?.toFixed(2) ?? null,
+    minPurchasePrice:
+      purchasePrices.length > 0 ? Decimal.min(...purchasePrices).toFixed(2) : null,
+    maxPurchasePrice:
+      purchasePrices.length > 0 ? Decimal.max(...purchasePrices).toFixed(2) : null,
+    purchaseCurrency,
+    averageGrossProfit: averageGrossProfit?.toFixed(2) ?? null,
+    grossMarginRate:
+      averageGrossProfit && averageSalePrice?.gt(0)
+        ? averageGrossProfit.div(averageSalePrice).mul(100).toFixed(1)
+        : null,
   };
 }
 

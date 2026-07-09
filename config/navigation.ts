@@ -17,6 +17,7 @@ import {
   TriangleAlert,
   Truck,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import type { QueueCounts, WorkQueue } from "@/lib/application/next-actions";
@@ -101,6 +102,7 @@ export const operationsNavigation: NavGroup[] = [
   {
     title: "财务与报表",
     items: [
+      { name: "钱包", href: "/finance/wallet", icon: Wallet },
       { name: "结算单", href: "/finance/settlements", icon: FileText },
       { name: "经营报表", href: "/reports", icon: FileText },
       { name: "团队工作量", href: "/reports/team", icon: Users },
@@ -129,6 +131,7 @@ export const commandQuickActions = [
   { id: "qa-my-offers", title: "我的供给", subtitle: "发布和维护供给货盘", href: "/marketplace/my-offers" },
   { id: "qa-resale", title: "代卖上架", subtitle: "维护从货盘创建的销售记录", href: "/resale" },
   { id: "qa-partners", title: "合作方", subtitle: "供货、代卖、代发关系", href: "/settings/partners" },
+  { id: "qa-wallet", title: "钱包", subtitle: "收益入账与提现申请", href: "/finance/wallet" },
   { id: "qa-settlements", title: "结算单", subtitle: "代卖应收应付", href: "/finance/settlements" },
   { id: "qa-team-report", title: "团队工作量", subtitle: "人员上架、发货、结算统计", href: "/reports/team" },
   { id: "qa-team-settings", title: "团队成员", subtitle: "账号角色与店铺权限", href: "/settings/team" },

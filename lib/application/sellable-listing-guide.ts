@@ -2,6 +2,10 @@ import type {
   ListingCoveragePlatform,
   ListingCoverageProduct,
 } from "@/lib/application/listing-coverage";
+import {
+  inferMarketFromLocation,
+  isPlatformTargetForMarket,
+} from "@/lib/application/sellable-market";
 
 /** 可售但尚未有任何上架记录 */
 export function isAwaitingFirstListing(product: ListingCoverageProduct) {
@@ -10,8 +14,49 @@ export function isAwaitingFirstListing(product: ListingCoverageProduct) {
 
 /** 已有上架，但仍有平台未覆盖 */
 export function getMissingPlatforms(
-  product: ListingCoverageProduct
+  product: ListingCoverageProduct,
+  options?: { listingScope?: "SKU" | "ITEM_UNIT"; itemUnitId?: string }
 ): ListingCoveragePlatform[] {
+  if (options?.listingScope === "ITEM_UNIT") {
+    const unit = product.itemUnits.find((item) => item.id === options.itemUnitId);
+    if (!unit) return [];
+
+    const unitMarket = inferMarketFromLocation({
+      region: unit.locationRegion,
+      name: unit.locationName,
+    });
+    const targetPlatforms = product.allPlatforms.filter((platform) =>
+      isPlatformTargetForMarket(platform, unitMarket)
+    );
+    const displayPlatforms = targetPlatforms.length > 0 ? targetPlatforms : product.allPlatforms;
+    const activePlatformIds = new Set(
+      product.records
+        .filter(
+          (record) =>
+            record.listingScope === "ITEM_UNIT" &&
+            record.itemUnitId === unit.id &&
+            record.state === "active"
+        )
+        .map((record) => record.platformId)
+    );
+
+    return displayPlatforms.filter((platform) => !activePlatformIds.has(platform.id));
+  }
+
+  if (options?.listingScope === "SKU") {
+    const activePlatformIds = new Set(
+      product.records
+        .filter(
+          (record) =>
+            record.listingScope === "SKU" &&
+            record.skuId === product.skuId &&
+            record.state === "active"
+        )
+        .map((record) => record.platformId)
+    );
+    return product.platforms.filter((platform) => !activePlatformIds.has(platform.id));
+  }
+
   return product.platforms.filter((platform) => platform.state === "missing");
 }
 

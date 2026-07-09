@@ -20,6 +20,11 @@ import {
   type ProductKind,
 } from "@/lib/application/sku-catalog";
 import { familyKey, familyNameFromSkuLike } from "@/lib/application/catalog-display-groups";
+import { VALID_SALES_STATUSES } from "@/lib/application/sales-metrics";
+import {
+  buildStockingDecision,
+  type StockingDecision,
+} from "@/lib/application/stocking-decision";
 
 const STALE_DAYS = 30;
 
@@ -105,6 +110,12 @@ export interface ListingCoverageVariantRow {
   skuCode: string;
   skuName: string;
   imageUrl: string | null;
+  brand?: string | null;
+  category?: string | null;
+  productKind?: ProductKind;
+  referencePrice?: string | null;
+  referenceCurrency?: string | null;
+  catalogStatus?: CatalogStatus;
   sellableQty: number;
   sellableLotQty: number;
   sellableItemUnitCount: number;
@@ -172,6 +183,8 @@ export interface ListingCoverageProduct {
   referencePrice: string | null;
   referenceCurrency: string | null;
   catalogStatus: CatalogStatus;
+  /** 仅由真实订单、真实库存和轻量参考信号派生，不把档案/情报当成实销。 */
+  stockingDecision?: StockingDecision;
 }
 
 export interface ListingCoverageStats {
@@ -618,7 +631,12 @@ function emptyVariantRow(sku: {
 }
 
 export async function getListingCoverageProducts(storeId: string) {
-  const [platforms, listings, skus, itemUnits, stockBreakdown] = await Promise.all([
+  const now = new Date();
+  const ninetyDaysAgo = new Date(now);
+  ninetyDaysAgo.setDate(now.getDate() - 90);
+
+  const [platforms, listings, skus, itemUnits, stockBreakdown, recentSalesLines, activeLots] =
+    await Promise.all([
     prisma.platform.findMany({
       where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
       select: { id: true, name: true, code: true, country: true },
@@ -651,6 +669,31 @@ export async function getListingCoverageProducts(storeId: string) {
       orderBy: { createdAt: "desc" },
     }),
     getStoreStockBreakdown(storeId),
+    prisma.orderLine.findMany({
+      where: {
+        sku: { storeId },
+        order: {
+          orderStatus: { in: [...VALID_SALES_STATUSES] },
+          orderDate: { gte: ninetyDaysAgo },
+        },
+      },
+      select: {
+        skuId: true,
+        quantity: true,
+        order: {
+          select: {
+            orderDate: true,
+          },
+        },
+      },
+    }),
+    prisma.inventoryLot.findMany({
+      where: { storeId, status: "ACTIVE" },
+      select: {
+        skuId: true,
+        receivedAt: true,
+      },
+    }),
   ]);
 
   const corePlatforms = sortCoreSellingPlatforms(platforms);
@@ -672,6 +715,32 @@ export async function getListingCoverageProducts(storeId: string) {
       ] as const;
     })
   );
+  const salesBySku = new Map<string, { sales30Qty: number; sales90Qty: number }>();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(now.getDate() - 30);
+  for (const line of recentSalesLines) {
+    const qty = Number(line.quantity.toString());
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const current = salesBySku.get(line.skuId) ?? { sales30Qty: 0, sales90Qty: 0 };
+    current.sales90Qty += qty;
+    if (line.order.orderDate >= thirtyDaysAgo) {
+      current.sales30Qty += qty;
+    }
+    salesBySku.set(line.skuId, current);
+  }
+
+  const oldestStockDateBySku = new Map<string, Date>();
+  const rememberOldestStockDate = (skuId: string, date: Date) => {
+    const current = oldestStockDateBySku.get(skuId);
+    if (!current || date < current) {
+      oldestStockDateBySku.set(skuId, date);
+    }
+  };
+  for (const lot of activeLots) {
+    const breakdown = stockBreakdown.get(lot.skuId);
+    if (!breakdown || breakdown.sellableLotQty + breakdown.inTransitLotQty <= 0) continue;
+    rememberOldestStockDate(lot.skuId, lot.receivedAt);
+  }
 
   function catalogFieldsForSku(skuId: string) {
     const c = skuCatalogById.get(skuId);
@@ -780,7 +849,10 @@ export async function getListingCoverageProducts(storeId: string) {
     if (!sku) return null;
     let row = draft.variantStats.get(skuId);
     if (!row) {
-      row = emptyVariantRow(sku);
+      row = {
+        ...emptyVariantRow(sku),
+        ...catalogFieldsForSku(skuId),
+      };
       draft.variantStats.set(skuId, row);
     }
     return row;
@@ -867,6 +939,7 @@ export async function getListingCoverageProducts(storeId: string) {
     const isSellable = item.status === "AVAILABLE" && item.location.isSellableDefault;
     const inTransit = item.status === "AVAILABLE" && !item.location.isSellableDefault;
     if (!isSellable && !inTransit) continue;
+    rememberOldestStockDate(item.skuId, item.createdAt);
 
     const draft = ensureSkuDraft(item.skuId);
     if (!draft) continue;
@@ -1006,6 +1079,36 @@ export async function getListingCoverageProducts(storeId: string) {
     );
     const sellableItemUnits = draftItemUnits.filter((unit) => unit.sellable);
 
+    const metricSkuIds = [...variantStats.keys()];
+    const productSales = metricSkuIds.reduce(
+      (acc, skuId) => {
+        const sales = salesBySku.get(skuId);
+        if (!sales) return acc;
+        acc.sales30Qty += sales.sales30Qty;
+        acc.sales90Qty += sales.sales90Qty;
+        return acc;
+      },
+      { sales30Qty: 0, sales90Qty: 0 }
+    );
+    const oldestStockDate = metricSkuIds
+      .map((skuId) => oldestStockDateBySku.get(skuId))
+      .filter((date): date is Date => Boolean(date))
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const oldestStockAgeDays = oldestStockDate
+      ? Math.floor((now.getTime() - oldestStockDate.getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+    const hasReferenceSignal =
+      Boolean(product.referencePrice) ||
+      records.some((record) => record.listedPrice || record.estimatedNet);
+    const stockingDecision = buildStockingDecision({
+      sellableQty: product.sellableQty,
+      inTransitQty: product.inTransitQty,
+      sales30Qty: productSales.sales30Qty,
+      sales90Qty: productSales.sales90Qty,
+      oldestStockAgeDays,
+      hasReferenceSignal,
+    });
+
     return {
       ...product,
       itemUnits: draftItemUnits,
@@ -1039,6 +1142,7 @@ export async function getListingCoverageProducts(storeId: string) {
       aggregateRisks: [...risks.values()],
       latestListedAt,
       latestUpdatedAt,
+      stockingDecision,
     };
   });
 }
