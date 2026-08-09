@@ -165,8 +165,8 @@ test.describe("procurement create and receive flow", () => {
 
     await expect(page.getByRole("heading", { name: "采购商品" })).toBeVisible();
     await page.getByRole("button", { name: /新建SKU/ }).click();
-    await expect(page.getByRole("heading", { name: "快速新建SKU" })).toBeVisible();
-    await page.getByLabel(/SKU代码/).fill(skuCode);
+    await expect(page.getByRole("heading", { name: /快速新建\s*SKU/ })).toBeVisible();
+    await page.getByLabel("系统 SKU 编码").fill(skuCode);
     await page.getByLabel(/商品名称/).fill("E2E 采购收货商品");
     await page.getByRole("button", { name: "创建并选中" }).click();
 
@@ -274,9 +274,9 @@ test.describe("procurement create and receive flow", () => {
     await expect(page.getByRole("heading", { name: "采购商品" })).toBeVisible();
     await page.getByRole("button", { name: /新建SKU/ }).click();
     const quickCreateDialog = page.locator(".fixed.inset-0").filter({
-      has: page.getByRole("heading", { name: "快速新建SKU" }),
+      has: page.getByRole("heading", { name: /快速新建\s*SKU/ }),
     });
-    await quickCreateDialog.getByLabel(/SKU代码/).fill(duplicateSkuCode);
+    await quickCreateDialog.getByLabel("系统 SKU 编码").fill(duplicateSkuCode);
     await quickCreateDialog.getByLabel(/商品名称/).fill("E2E 重复 SKU 名称");
     await quickCreateDialog.getByRole("button", { name: "创建并选中" }).click();
 
@@ -284,7 +284,7 @@ test.describe("procurement create and receive flow", () => {
       quickCreateDialog.getByRole("alert").filter({ hasText: "SKU代码已存在" }),
     ).toBeVisible();
     expect(dialogMessages).toEqual([]);
-    await expect(quickCreateDialog.getByRole("heading", { name: "快速新建SKU" })).toBeVisible();
+    await expect(quickCreateDialog.getByRole("heading", { name: /快速新建\s*SKU/ })).toBeVisible();
   });
 
   test("shows an inline quick-receive server error instead of an alert", async ({ page }) => {

@@ -21,6 +21,9 @@ import {
 const runId = `item_units_action_${Date.now()}`;
 const organizationCode = `org_${runId}`;
 const storeId = `store_${runId}`;
+const ownerEmail = `${runId}_owner@example.com`;
+const workerEmail = `${runId}_worker@example.com`;
+let organizationId = "";
 
 describe("item unit action results", () => {
   beforeAll(async () => {
@@ -30,6 +33,7 @@ describe("item unit action results", () => {
         name: "Item Units Action Test Organization",
       },
     });
+    organizationId = organization.id;
 
     await prisma.store.create({
       data: {
@@ -40,11 +44,66 @@ describe("item unit action results", () => {
         currency: "CNY",
       },
     });
+    const [owner, worker] = await Promise.all([
+      prisma.user.create({ data: { email: ownerEmail, password: "test", role: "OWNER", storeId } }),
+      prisma.user.create({
+        data: { email: workerEmail, password: "test", role: "FULFILLMENT", storeId },
+      }),
+    ]);
+    await prisma.membership.createMany({
+      data: [
+        { organizationId, userId: owner.id, role: "OWNER", status: "ACTIVE" },
+        { organizationId, userId: worker.id, role: "FULFILLMENT", status: "ACTIVE" },
+      ],
+    });
+    await prisma.storeAccess.createMany({
+      data: [
+        { storeId, userId: owner.id, role: "OWNER" },
+        { storeId, userId: worker.id, role: "FULFILLMENT" },
+      ],
+    });
+    process.env.ERP_DEV_USER_EMAIL = ownerEmail;
   });
 
   afterAll(async () => {
+    delete process.env.ERP_DEV_USER_EMAIL;
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
+  });
+
+  it("hides costs and blocks edit/delete for a warehouse worker", async () => {
+    process.env.ERP_DEV_USER_EMAIL = ownerEmail;
+    const sku = await prisma.sKU.create({
+      data: { storeId, code: `SKU_${runId}_PRIVATE`, name: "Private Cost Item" },
+    });
+    const location = await prisma.location.create({
+      data: { storeId, code: `WH_${runId}_PRIVATE`, name: "Private Warehouse", type: "WAREHOUSE" },
+    });
+    const created = await createItemUnitAction({
+      storeId,
+      skuId: sku.id,
+      locationId: location.id,
+      unitCost: "777.77",
+      costCurrency: "CNY",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    process.env.ERP_DEV_USER_EMAIL = workerEmail;
+    const rows = await getItemUnits(storeId);
+    const row = rows.find((candidate) => candidate.id === created.id);
+    expect(row?.costHidden).toBe(true);
+    expect(row?.unitCost).toBeNull();
+    expect(row?.costCurrency).toBeNull();
+    expect(JSON.stringify(row)).not.toContain("777.77");
+
+    const updated = await updateItemUnitAction(created.id, { notes: "worker edit" });
+    expect(updated.success).toBe(false);
+    if (!updated.success) expect(updated.error).toContain("只有库存管理员");
+    const deleted = await deleteItemUnitAction(created.id, storeId);
+    expect(deleted.success).toBe(false);
+    if (!deleted.success) expect(deleted.error).toContain("只有库存管理员");
+    process.env.ERP_DEV_USER_EMAIL = ownerEmail;
   });
 
   it("creates item units with stable identity label fields and photos", async () => {
@@ -89,6 +148,10 @@ describe("item unit action results", () => {
     expect(item.unitCode).toMatch(/^IU-\d{8}-\d{6}$/);
     expect(item.labelCode).toBe(item.unitCode);
     expect(item.labelStatus).toBe("PENDING");
+    expect(item.conditionType).toBe("USED");
+    expect(item.conditionGrade).toBe("B");
+    expect(item.functionStatus).toBe("UNTESTED");
+    expect(item.status).toBe("RETURN_CHECK");
     expect(item.photos).toEqual(photos);
   });
 
@@ -208,10 +271,7 @@ describe("item unit action results", () => {
   });
 
   it("returns a structured failure when deleting a missing item unit", async () => {
-    const result = await deleteItemUnitAction(
-      `missing_item_${runId}`,
-      `store_${runId}`
-    );
+    const result = await deleteItemUnitAction(`missing_item_${runId}`, `store_${runId}`);
 
     expect(result.success).toBe(false);
     if (!result.success) {

@@ -1,7 +1,13 @@
-import { getPurchaseOrderById } from "@/app/actions/purchase-orders";
+import { requireUserContext } from "@/lib/auth/user-context";
+import Link from "next/link";
+import {
+  getPurchaseOrderById,
+  getPurchaseReceiptInspectionSummary,
+} from "@/app/actions/purchase-orders";
 import { getLocations } from "@/app/actions/locations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -20,10 +26,17 @@ import { DeletePurchaseLineButton } from "@/components/procurement/delete-purcha
 import { BackButton } from "@/components/shared/back-button";
 import { ProductImage } from "@/components/ui/product-image";
 import { ShoppingCart, Package, Calendar, DollarSign } from "lucide-react";
+import { PurchaseOrderFxForm } from "@/components/procurement/purchase-order-fx-form";
+import { getLatestFxRate } from "@/lib/fx";
+import Decimal from "decimal.js";
+import { getChargeLedgerData } from "@/app/actions/charges";
+import { ChargeRowActions } from "@/components/finance/charge-ledger-manager";
+import { ChargeStatusBadge } from "@/components/finance/charge-status";
+import { PurchaseCostAllocationForm } from "@/components/procurement/purchase-cost-allocation-form";
+import { PurchaseReceiptInspectionForm } from "@/components/procurement/purchase-receipt-inspection-form";
+import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
-
-const STORE_ID = "store_1";
 
 const statusColors = {
   DRAFT: "secondary",
@@ -48,17 +61,65 @@ export default async function PurchaseOrderDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const { id } = await params;
-  const order = await getPurchaseOrderById(id);
-  const locations = await getLocations(STORE_ID);
+  const order = await getPurchaseOrderById(id, storeId);
+  const locations = await getLocations(storeId);
 
   if (!order) {
     notFound();
   }
+  const inspectionSummary =
+    order.status === "RECEIVED" ? await getPurchaseReceiptInspectionSummary(order.id) : [];
+  const purchaseLineIds = order.lines.map((line) => line.id);
+  const [actualUnits, actualLots] = purchaseLineIds.length
+    ? await Promise.all([
+        prisma.itemUnit.findMany({
+          where: { storeId, sourceType: "PURCHASE", sourceId: { in: purchaseLineIds } },
+          select: { sourceId: true },
+          distinct: ["sourceId"],
+        }),
+        prisma.inventoryLot.findMany({
+          where: { storeId, sourceType: "PURCHASE", sourceId: { in: purchaseLineIds } },
+          select: { sourceId: true },
+          distinct: ["sourceId"],
+        }),
+      ])
+    : [[], []];
+  const actualUnitLineIds = new Set(actualUnits.map((unit) => unit.sourceId));
+  const actualLotLineIds = new Set(actualLots.map((lot) => lot.sourceId));
+  const chargeData = await getChargeLedgerData({
+    sourceType: "PURCHASE_ORDER",
+    sourceId: order.id,
+  });
 
   const canEdit = order.status === "DRAFT";
   const canReceive =
     (order.status === "ORDERED" || order.status === "SHIPPED") && order.lines.length > 0;
+  const lineTotal = order.lines.reduce(
+    (sum, line) => sum.plus(new Decimal(line.lineAmount)),
+    new Decimal(0)
+  );
+  const allocatedFeeTotal = order.lines.reduce(
+    (sum, line) =>
+      sum.plus(new Decimal(line.allocatedFee)).minus(new Decimal(line.allocatedDiscount)),
+    new Decimal(0)
+  );
+  const hasAmountMismatch = !lineTotal.eq(new Decimal(order.subtotal));
+  const allocationMethodLabels: Record<string, string> = {
+    LINE_PRICE: "按明细金额分摊",
+    BY_QUANTITY: "按件数分摊",
+    BY_VALUE: "按商品金额分摊",
+    MANUAL: "手工分摊",
+  };
+  const suggestedFxRate =
+    order.currency.toUpperCase() === "CNY"
+      ? null
+      : await getLatestFxRate(
+          order.currency,
+          "CNY",
+          order.orderedAt ? new Date(order.orderedAt) : new Date(order.createdAt)
+        );
 
   return (
     <div className="space-y-6">
@@ -140,6 +201,37 @@ export default async function PurchaseOrderDetailPage({
               </div>
             )}
           </div>
+          {order.currency.toUpperCase() !== "CNY" ? (
+            <PurchaseOrderFxForm
+              orderId={order.id}
+              currentRate={order.fxRate}
+              suggestedRate={suggestedFxRate?.toFixed(8) ?? null}
+            />
+          ) : null}
+          {order.costAllocationStatus === "PENDING" ? (
+            <PurchaseCostAllocationForm
+              purchaseOrderId={order.id}
+              purchaseCurrency={order.currency}
+              initialTotal={order.declaredTotalAmount}
+            />
+          ) : (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm">
+              成本已确认 · 分摊方式：
+              {allocationMethodLabels[order.costAllocationMethod || ""] || "按明细单价"}
+              {order.costAllocatedAt
+                ? ` · ${new Date(order.costAllocatedAt).toLocaleString("zh-CN")}`
+                : ""}
+              {allocatedFeeTotal.gt(0)
+                ? ` · 商品 ${formatCurrency(lineTotal, order.currency)} + 分摊费用 ${formatCurrency(allocatedFeeTotal, order.currency)} = 到岸总额 ${formatCurrency(order.totalAmount, order.currency)}`
+                : ""}
+            </div>
+          )}
+          {hasAmountMismatch ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              订单金额 {formatCurrency(order.totalAmount, order.currency)} 与明细合计{" "}
+              {formatCurrency(lineTotal, order.currency)} 不一致。请核对明细或重新保存订单金额。
+            </div>
+          ) : null}
           {(order.trackingNo || order.carrier || order.shippedAt) && (
             <div className="rounded-lg border bg-slate-50 p-4 text-sm">
               <p className="font-medium">物流信息</p>
@@ -157,6 +249,63 @@ export default async function PurchaseOrderDetailPage({
         </CardContent>
       </Card>
 
+      {order.inboundShipments.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>运输过程</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {order.inboundShipments.map((shipment) => {
+              const modeLabels: Record<string, string> = {
+                HAND_CARRY: "随身携带",
+                CONSOLIDATOR: "集运 / 合箱",
+                POSTAL: "邮局直邮",
+                COURIER: "快递",
+                FREIGHT: "货运",
+                OTHER: "其他",
+              };
+              const shipmentStatusLabels: Record<string, string> = {
+                PLANNED: "待发出",
+                IN_TRANSIT: "运输中",
+                DELIVERED: "已到货",
+                CANCELLED: "已取消",
+              };
+              return (
+                <div key={shipment.id} className="rounded-lg border p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">
+                      第 {shipment.legIndex} 段 ·{" "}
+                      {modeLabels[shipment.transportMode || ""] || "运输方式待补"}
+                    </p>
+                    <Badge variant="outline">
+                      {shipmentStatusLabels[shipment.status] || shipment.status}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">
+                    {shipment.carriedBy
+                      ? `携带人：${shipment.carriedBy}`
+                      : shipment.carrier || "未填写承运方"}
+                    {shipment.trackingNo ? ` · ${shipment.trackingNo}` : ""}
+                    {shipment.grossWeightKg ? ` · ${shipment.grossWeightKg} kg` : ""}
+                  </p>
+                  {shipment.customsAmount || shipment.taxAmount ? (
+                    <p className="mt-1 text-muted-foreground">
+                      {shipment.customsAmount
+                        ? `申报 ${shipment.customsCurrency || ""} ${shipment.customsAmount}`
+                        : ""}
+                      {shipment.customsAmount && shipment.taxAmount ? " · " : ""}
+                      {shipment.taxAmount
+                        ? `税费 ${shipment.taxCurrency || ""} ${shipment.taxAmount}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>采购明细</CardTitle>
@@ -171,49 +320,84 @@ export default async function PurchaseOrderDetailPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>SKU</TableHead>
+                  <TableHead>库存管理</TableHead>
                   <TableHead className="text-right">数量</TableHead>
                   <TableHead className="text-right">单价</TableHead>
                   <TableHead className="text-right">小计</TableHead>
+                  <TableHead className="text-right">到岸成本</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {order.lines.map((line) => (
-                  <TableRow key={line.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <ProductImage
-                          src={line.sku.imageUrl}
-                          alt={line.sku.name}
-                          size="md"
-                          className="rounded-md"
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{line.sku.name}</p>
-                          <p className="truncate font-mono text-xs text-muted-foreground">
-                            {line.sku.code}
-                          </p>
+                {order.lines.map((line) => {
+                  const landedAmount = new Decimal(line.lineAmount)
+                    .plus(new Decimal(line.allocatedFee))
+                    .minus(new Decimal(line.allocatedDiscount));
+                  const landedUnitCost = new Decimal(line.quantity).gt(0)
+                    ? landedAmount.div(new Decimal(line.quantity))
+                    : new Decimal(0);
+                  return (
+                    <TableRow key={line.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <ProductImage
+                            src={line.sku.imageUrl}
+                            alt={line.sku.name}
+                            size="md"
+                            className="rounded-md"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{line.sku.name}</p>
+                            <p className="truncate font-mono text-xs text-muted-foreground">
+                              {line.sku.code}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">{formatQuantity(line.quantity)}</TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(line.unitPrice, order.currency)}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatCurrency(line.lineAmount, order.currency)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canEdit && (
-                        <DeletePurchaseLineButton
-                          lineId={line.id}
-                          orderId={order.id}
-                          skuName={line.sku.name}
-                        />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell>
+                        {actualUnitLineIds.has(line.id)
+                          ? "一物一单"
+                          : actualLotLineIds.has(line.id)
+                            ? "按数量"
+                            : line.trackingMode === "ITEM_UNIT"
+                              ? "一物一单"
+                              : "按数量"}
+                      </TableCell>
+                      <TableCell className="text-right">{formatQuantity(line.quantity)}</TableCell>
+                      <TableCell className="text-right">
+                        {line.costStatus === "PENDING"
+                          ? "待分摊"
+                          : formatCurrency(line.unitPrice, order.currency)}
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatCurrency(line.lineAmount, order.currency)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {line.costStatus === "PENDING" ? (
+                          "待分摊"
+                        ) : (
+                          <div>
+                            <p className="font-medium">
+                              {formatCurrency(landedAmount, order.currency)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              单件 {formatCurrency(landedUnitCost, order.currency)}
+                            </p>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {canEdit && (
+                          <DeletePurchaseLineButton
+                            lineId={line.id}
+                            orderId={order.id}
+                            skuName={line.sku.name}
+                          />
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -229,7 +413,7 @@ export default async function PurchaseOrderDetailPage({
             <AddPurchaseLineForm
               purchaseOrderId={order.id}
               currency={order.currency}
-              storeId={STORE_ID}
+              storeId={storeId}
             />
           </CardContent>
         </Card>
@@ -259,7 +443,10 @@ export default async function PurchaseOrderDetailPage({
 
       {order.status === "RECEIVED" && (
         <Card className="border-blue-500/50 bg-blue-500/5">
-          <CardContent className="pt-6">
+          <CardHeader>
+            <CardTitle>{inspectionSummary.length > 0 ? "质检结果" : "到货质检"}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
             <div className="flex gap-3">
               <Package className="h-5 w-5 text-blue-500" />
               <div className="space-y-1 text-sm">
@@ -270,9 +457,112 @@ export default async function PurchaseOrderDetailPage({
                 </p>
               </div>
             </div>
+            {inspectionSummary.length === 0 ? (
+              <PurchaseReceiptInspectionForm
+                purchaseOrderId={order.id}
+                lines={order.lines.map((line) => ({
+                  id: line.id,
+                  skuCode: line.sku.code,
+                  skuName: line.sku.name,
+                  quantity: line.quantity.toString(),
+                  trackingMode: line.trackingMode,
+                }))}
+              />
+            ) : (
+              <div className="divide-y rounded-lg border bg-background">
+                {order.lines.map((line) => {
+                  const inspection = inspectionSummary.find(
+                    (row) => row.purchaseLineId === line.id
+                  );
+                  return (
+                    <div
+                      key={line.id}
+                      className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_auto]"
+                    >
+                      <div>
+                        <p className="font-medium">{line.sku.name}</p>
+                        <p className="text-xs text-muted-foreground">{line.sku.code}</p>
+                      </div>
+                      <p>
+                        通过 {inspection?.passedQty ?? "0"} · 退供应商{" "}
+                        {inspection?.failedQty ?? "0"} · 待复检 {inspection?.pendingQty ?? "0"}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
+
+      {order.status === "RECEIVED" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>后续库存处理</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="font-medium">采购详情只保留订单、成本与质检记录</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                入库、集运和转仓统一在工作台或库存维护中处理，避免同一批货从多个页面重复操作。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/workbench?queue=pendingDisposition">
+                <Button variant="outline">前往工作台</Button>
+              </Link>
+              <Link href="/inventory/stocktake?action=transfer">
+                <Button>发起转仓</Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {chargeData.events.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>仓库服务记账</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-sm text-muted-foreground">
+              仓库完成检查后登记服务费；你确认后，才会成为双方认可的线下往来。
+            </p>
+            <div className="divide-y border-y">
+              {chargeData.events.map((event) => {
+                const payer = event.parties.find((party) => party.role === "PAYER");
+                const payee = event.parties.find((party) => party.role === "PAYEE");
+                return (
+                  <div
+                    key={event.id}
+                    className="grid gap-3 py-4 lg:grid-cols-[1fr_auto] lg:items-center"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{event.description}</span>
+                        <Badge variant="outline">{event.category.name}</Badge>
+                        <ChargeStatusBadge status={event.status} />
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {payer?.nameSnapshot ?? "-"} → {payee?.nameSnapshot ?? "-"} ·{" "}
+                        {event.currency} {event.amount}
+                      </p>
+                    </div>
+                    <ChargeRowActions
+                      id={event.id}
+                      status={event.status}
+                      currentOrganizationId={chargeData.currentOrganizationId}
+                      payerOrganizationId={payer?.organizationId}
+                      payeeOrganizationId={payee?.organizationId}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }

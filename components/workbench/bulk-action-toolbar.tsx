@@ -30,7 +30,12 @@ interface BulkActionToolbarProps {
   queue: WorkQueue | "all";
   items: WorkItem[];
   locations: WorkbenchLocationOption[];
-  consolidationBatches: Array<{ id: string; label: string; fromLocationId: string | null; toLocationId: string | null }>;
+  consolidationBatches: Array<{
+    id: string;
+    label: string;
+    fromLocationId: string | null;
+    toLocationId: string | null;
+  }>;
   selectedIds: string[];
   onClear: () => void;
 }
@@ -59,7 +64,9 @@ export function BulkActionToolbar({
   const [bulkTransferCarrier, setBulkTransferCarrier] = useState("");
   const [bulkTransferEtaDate, setBulkTransferEtaDate] = useState("");
   const [bulkTransferNote, setBulkTransferNote] = useState("");
-  const [bulkDispositionMode, setBulkDispositionMode] = useState<"inbound" | "consolidate" | "transfer" | "return">("inbound");
+  const [bulkDispositionMode, setBulkDispositionMode] = useState<
+    "inbound" | "consolidate" | "transfer" | "return"
+  >("inbound");
   const [bulkReturnReason, setBulkReturnReason] = useState("");
   const [bulkReturnTrackingNo, setBulkReturnTrackingNo] = useState("");
   const [bulkReturnCarrier, setBulkReturnCarrier] = useState("");
@@ -72,6 +79,13 @@ export function BulkActionToolbar({
   const shipmentIds = selectedItems
     .filter((item) => item.entityType === "shipment")
     .map((item) => item.entityId);
+  const consolidationBatchIds = Array.from(
+    new Set(
+      selectedItems
+        .map((item) => item.metadata?.consolidationBatchId)
+        .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+    )
+  );
 
   if (selectedIds.length === 0) return null;
 
@@ -109,7 +123,9 @@ export function BulkActionToolbar({
     <div className="mb-3 rounded-lg border bg-muted/30 p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm font-medium">已选择 {selectedIds.length} 项</p>
-        <Button variant="ghost" size="sm" onClick={clearSelection}>清空</Button>
+        <Button variant="ghost" size="sm" onClick={clearSelection}>
+          清空
+        </Button>
       </div>
       {notice ? (
         <p
@@ -135,7 +151,8 @@ export function BulkActionToolbar({
           <div>
             <p className="text-sm font-medium">登记卖家发货 · 进入在途</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              为所选采购单填写<strong>采购物流单号</strong>，并选择<strong>预计到货的仓库/集运仓</strong>。
+              为所选采购单填写<strong>采购物流单号</strong>，并选择
+              <strong>预计到货的仓库/集运仓</strong>。
               保存后采购单变为「已发货」，进入待确认收货；与单条「填写物流」操作一致。
             </p>
           </div>
@@ -182,9 +199,7 @@ export function BulkActionToolbar({
             </div>
             <Button
               className="self-end"
-              disabled={
-                pending || purchaseOrderIds.length === 0 || !destinationLocationId
-              }
+              disabled={pending || purchaseOrderIds.length === 0 || !destinationLocationId}
               onClick={() =>
                 run(() =>
                   bulkUpdatePurchaseOrderLogistics(purchaseOrderIds, {
@@ -206,7 +221,33 @@ export function BulkActionToolbar({
         </div>
       )}
 
-      {(queue === "inTransit" || queue === "pendingArrival") && (
+      {queue === "pendingArrival" && (
+        <div className="mt-3">
+          <Button
+            disabled={pending || (shipmentIds.length === 0 && purchaseOrderIds.length === 0)}
+            onClick={() => run(() => bulkConfirmArrivals({ shipmentIds, purchaseOrderIds }))}
+          >
+            <PackageCheck className="h-4 w-4" />
+            批量确认到货
+          </Button>
+        </div>
+      )}
+
+      {queue === "inTransit" && consolidationBatchIds.length === 1 && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            所选任务属于同一集运批次，请在批次中统一登记国际单号、发出和确认到货。
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => router.push(`/logistics/consolidations/${consolidationBatchIds[0]}`)}
+          >
+            打开集运批次
+          </Button>
+        </div>
+      )}
+
+      {queue === "inTransit" && consolidationBatchIds.length === 0 && (
         <div className="mt-3">
           <Button
             disabled={pending || (shipmentIds.length === 0 && purchaseOrderIds.length === 0)}
@@ -223,8 +264,8 @@ export function BulkActionToolbar({
           <div className="grid rounded-md border bg-muted/30 p-1 sm:grid-cols-4">
             {[
               ["inbound", "确认入库"],
-              ["consolidate", "加入集运"],
-              ["transfer", "发往其他位置"],
+              ["consolidate", "加入待集运"],
+              ["transfer", "立即发起转仓"],
               ["return", "退货终止"],
             ].map(([value, label]) => (
               <Button
@@ -263,10 +304,14 @@ export function BulkActionToolbar({
               <Button
                 className="self-end"
                 disabled={pending || purchaseOrderIds.length === 0 || !bulkInboundLocationId}
-                onClick={() => run(() => bulkInboundPurchases({
-                  purchaseOrderIds,
-                  locationId: bulkInboundLocationId,
-                }))}
+                onClick={() =>
+                  run(() =>
+                    bulkInboundPurchases({
+                      purchaseOrderIds,
+                      locationId: bulkInboundLocationId,
+                    })
+                  )
+                }
               >
                 批量确认入库
               </Button>
@@ -281,17 +326,24 @@ export function BulkActionToolbar({
                   value={bulkBatchMode}
                   onChange={(event) => setBulkBatchMode(event.target.value as "existing" | "new")}
                 >
-                  <option value="existing" disabled={consolidationBatches.length === 0}>加入已有批次</option>
+                  <option value="existing" disabled={consolidationBatches.length === 0}>
+                    加入已有批次
+                  </option>
                   <option value="new">创建新批次</option>
                 </Select>
               </div>
               {bulkBatchMode === "existing" ? (
                 <div className="space-y-1">
                   <Label className="text-xs">集运批次</Label>
-                  <Select value={bulkBatchId} onChange={(event) => setBulkBatchId(event.target.value)}>
+                  <Select
+                    value={bulkBatchId}
+                    onChange={(event) => setBulkBatchId(event.target.value)}
+                  >
                     <option value="">请选择集运批次</option>
                     {consolidationBatches.map((batch) => (
-                      <option key={batch.id} value={batch.id}>{batch.label}</option>
+                      <option key={batch.id} value={batch.id}>
+                        {batch.label}
+                      </option>
                     ))}
                   </Select>
                 </div>
@@ -318,14 +370,19 @@ export function BulkActionToolbar({
                   purchaseOrderIds.length === 0 ||
                   (bulkBatchMode === "existing" ? !bulkBatchId : !bulkConsolidationToLocationId)
                 }
-                onClick={() => run(() => bulkConsolidatePurchases({
-                  purchaseOrderIds,
-                  batchMode: bulkBatchMode,
-                  batchId: bulkBatchMode === "existing" ? bulkBatchId : undefined,
-                  toLocationId: bulkBatchMode === "new" ? bulkConsolidationToLocationId : undefined,
-                }))}
+                onClick={() =>
+                  run(() =>
+                    bulkConsolidatePurchases({
+                      purchaseOrderIds,
+                      batchMode: bulkBatchMode,
+                      batchId: bulkBatchMode === "existing" ? bulkBatchId : undefined,
+                      toLocationId:
+                        bulkBatchMode === "new" ? bulkConsolidationToLocationId : undefined,
+                    })
+                  )
+                }
               >
-                批量加入集运
+                批量加入待集运
               </Button>
             </div>
           )}
@@ -348,33 +405,50 @@ export function BulkActionToolbar({
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">物流单号</Label>
-                <Input value={bulkTransferTrackingNo} onChange={(event) => setBulkTransferTrackingNo(event.target.value)} />
+                <Input
+                  value={bulkTransferTrackingNo}
+                  onChange={(event) => setBulkTransferTrackingNo(event.target.value)}
+                />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">承运商</Label>
-                <Input value={bulkTransferCarrier} onChange={(event) => setBulkTransferCarrier(event.target.value)} />
+                <Input
+                  value={bulkTransferCarrier}
+                  onChange={(event) => setBulkTransferCarrier(event.target.value)}
+                />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">预计到货日</Label>
-                <Input type="date" value={bulkTransferEtaDate} onChange={(event) => setBulkTransferEtaDate(event.target.value)} />
+                <Input
+                  type="date"
+                  value={bulkTransferEtaDate}
+                  onChange={(event) => setBulkTransferEtaDate(event.target.value)}
+                />
               </div>
               <div className="space-y-1 sm:col-span-3">
                 <Label className="text-xs">备注</Label>
-                <Input value={bulkTransferNote} onChange={(event) => setBulkTransferNote(event.target.value)} />
+                <Input
+                  value={bulkTransferNote}
+                  onChange={(event) => setBulkTransferNote(event.target.value)}
+                />
               </div>
               <Button
                 className="self-end"
                 disabled={pending || purchaseOrderIds.length === 0 || !bulkTransferToLocationId}
-                onClick={() => run(() => bulkTransferPurchases({
-                  purchaseOrderIds,
-                  toLocationId: bulkTransferToLocationId,
-                  trackingNo: bulkTransferTrackingNo,
-                  carrier: bulkTransferCarrier,
-                  etaDate: bulkTransferEtaDate,
-                  note: bulkTransferNote,
-                }))}
+                onClick={() =>
+                  run(() =>
+                    bulkTransferPurchases({
+                      purchaseOrderIds,
+                      toLocationId: bulkTransferToLocationId,
+                      trackingNo: bulkTransferTrackingNo,
+                      carrier: bulkTransferCarrier,
+                      etaDate: bulkTransferEtaDate,
+                      note: bulkTransferNote,
+                    })
+                  )
+                }
               >
-                批量发往其他位置
+                批量立即发起转仓
               </Button>
             </div>
           )}
@@ -383,31 +457,47 @@ export function BulkActionToolbar({
             <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
               <div className="space-y-1">
                 <Label className="text-xs">退货原因</Label>
-                <Input value={bulkReturnReason} onChange={(event) => setBulkReturnReason(event.target.value)} />
+                <Input
+                  value={bulkReturnReason}
+                  onChange={(event) => setBulkReturnReason(event.target.value)}
+                />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">退货物流单号</Label>
-                <Input value={bulkReturnTrackingNo} onChange={(event) => setBulkReturnTrackingNo(event.target.value)} />
+                <Input
+                  value={bulkReturnTrackingNo}
+                  onChange={(event) => setBulkReturnTrackingNo(event.target.value)}
+                />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">承运商</Label>
-                <Input value={bulkReturnCarrier} onChange={(event) => setBulkReturnCarrier(event.target.value)} />
+                <Input
+                  value={bulkReturnCarrier}
+                  onChange={(event) => setBulkReturnCarrier(event.target.value)}
+                />
               </div>
               <div className="space-y-1 sm:col-span-3">
                 <Label className="text-xs">备注</Label>
-                <Input value={bulkReturnNote} onChange={(event) => setBulkReturnNote(event.target.value)} />
+                <Input
+                  value={bulkReturnNote}
+                  onChange={(event) => setBulkReturnNote(event.target.value)}
+                />
               </div>
               <Button
                 className="self-end"
                 variant="destructive"
                 disabled={pending || purchaseOrderIds.length === 0}
-                onClick={() => run(() => bulkReturnPurchases({
-                  purchaseOrderIds,
-                  reason: bulkReturnReason,
-                  trackingNo: bulkReturnTrackingNo,
-                  carrier: bulkReturnCarrier,
-                  note: bulkReturnNote,
-                }))}
+                onClick={() =>
+                  run(() =>
+                    bulkReturnPurchases({
+                      purchaseOrderIds,
+                      reason: bulkReturnReason,
+                      trackingNo: bulkReturnTrackingNo,
+                      carrier: bulkReturnCarrier,
+                      note: bulkReturnNote,
+                    })
+                  )
+                }
               >
                 批量退货终止
               </Button>

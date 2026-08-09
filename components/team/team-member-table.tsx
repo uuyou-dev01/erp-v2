@@ -129,6 +129,18 @@ export function TeamMemberTable({
               <Input id="email" name="email" type="email" required placeholder="name@example.com" />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="password">初始密码</Label>
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                minLength={8}
+                required
+                autoComplete="new-password"
+                placeholder="至少 8 位"
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="role">角色</Label>
               <Select id="role" name="role" defaultValue="FULFILLMENT">
                 {roles.map((role) => (

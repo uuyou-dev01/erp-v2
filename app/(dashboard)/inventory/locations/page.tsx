@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getLocations } from "@/app/actions/locations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,11 +7,9 @@ import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
 import { LocationCreateDialog } from "@/components/inventory/location-create-dialog";
 import { LocationRowActions } from "@/components/inventory/location-row-actions";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
-import { inferMarketFromLocation, marketLabel } from "@/lib/application/sellable-market";
+import { capabilityLabel, fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 
 export const dynamic = "force-dynamic";
-
-const STORE_ID = "store_1";
 
 const locationTypeIcons = {
   WAREHOUSE: Warehouse,
@@ -36,13 +35,18 @@ const locationTypeColors = {
 type LocationRow = Awaited<ReturnType<typeof getLocations>>[number];
 
 export default async function LocationsPage() {
-  const locations = await getLocations(STORE_ID);
+  const { activeStoreId: storeId } = await requireUserContext();
+  const locations = await getLocations(storeId);
 
   const stats = {
     total: locations.length,
     warehouse: locations.filter((l) => l.type === "WAREHOUSE").length,
     forwarder: locations.filter((l) => l.type === "FORWARDER").length,
-    sellable: locations.filter((l) => l.isSellableDefault).length,
+    fulfillment: locations.filter((location) =>
+      location.capabilities.some(
+        (capability) => capability.enabled && capability.code === "DIRECT_FULFILLMENT"
+      )
+    ).length,
   };
 
   const columns: Column<LocationRow>[] = [
@@ -58,16 +62,8 @@ export default async function LocationsPage() {
     },
     {
       key: "region",
-      header: "地区 / 货盘",
-      cell: (row) => {
-        const market = marketLabel(inferMarketFromLocation(row));
-        return (
-          <div className="space-y-0.5">
-            <p className="text-sm">{formatLocationRegion(row.region)}</p>
-            <p className="text-xs text-muted-foreground">{market}</p>
-          </div>
-        );
-      },
+      header: "实际地区",
+      cell: (row) => formatLocationRegion(row.region),
     },
     {
       key: "type",
@@ -76,7 +72,9 @@ export default async function LocationsPage() {
         const Icon = locationTypeIcons[row.type as keyof typeof locationTypeIcons];
         const colorClass = locationTypeColors[row.type as keyof typeof locationTypeColors];
         return (
-          <div className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-0.5 text-xs font-semibold ${colorClass}`}>
+          <div
+            className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-0.5 text-xs font-semibold ${colorClass}`}
+          >
             <Icon className="h-3 w-3" />
             <span>{locationTypeLabels[row.type as keyof typeof locationTypeLabels]}</span>
           </div>
@@ -84,14 +82,33 @@ export default async function LocationsPage() {
       },
     },
     {
-      key: "sellable",
-      header: "库存口径",
-      cell: (row) =>
-        row.isSellableDefault ? (
-          <Badge variant="default">计入可售</Badge>
-        ) : (
-          <Badge variant="secondary">在途/暂存</Badge>
-        ),
+      key: "capabilities",
+      header: "能力 / 可履约范围",
+      cell: (row) => {
+        const destinations = row.shippingLanesFrom
+          .filter((lane) => lane.active && lane.laneType === "CUSTOMER_DELIVERY")
+          .map((lane) => lane.destinationCountry)
+          .filter((country): country is string => Boolean(country));
+        return (
+          <div className="space-y-1">
+            <div className="flex flex-wrap gap-1">
+              {row.capabilities.slice(0, 3).map((capability) => (
+                <Badge key={capability.code} variant="outline">
+                  {capabilityLabel(capability.code)}
+                </Badge>
+              ))}
+              {row.capabilities.length > 3 ? (
+                <Badge variant="outline">+{row.capabilities.length - 3}</Badge>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {destinations.length > 0
+                ? `可发往 ${destinations.map(fulfillmentDestinationLabel).join("、")}`
+                : "不直接履约客户订单"}
+            </p>
+          </div>
+        );
+      },
     },
     {
       key: "createdAt",
@@ -103,9 +120,7 @@ export default async function LocationsPage() {
       key: "actions",
       header: "操作",
       className: "text-right",
-      cell: (row) => (
-        <LocationRowActions id={row.id} name={row.name} storeId={STORE_ID} />
-      ),
+      cell: (row) => <LocationRowActions id={row.id} name={row.name} storeId={storeId} />,
     },
   ];
 
@@ -115,10 +130,10 @@ export default async function LocationsPage() {
         <div>
           <h1 className="text-3xl font-bold">仓库位置</h1>
           <p className="text-muted-foreground">
-            管理仓库、货代和持有人位置；地区决定货盘，可售开关决定库存看板口径。
+            将仓库、集运点和持有人作为履约网络节点；实际地区、运营能力和发货范围分别配置。
           </p>
         </div>
-        <LocationCreateDialog storeId={STORE_ID} />
+        <LocationCreateDialog storeId={storeId} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -157,12 +172,12 @@ export default async function LocationsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">计入可售</CardTitle>
+            <CardTitle className="text-sm font-medium">订单履约节点</CardTitle>
             <Navigation className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.sellable}</div>
-            <p className="text-xs text-muted-foreground">进入库存看板可售层</p>
+            <div className="text-2xl font-bold">{stats.fulfillment}</div>
+            <p className="text-xs text-muted-foreground">具备订单发货能力</p>
           </CardContent>
         </Card>
       </div>
@@ -180,10 +195,8 @@ export default async function LocationsPage() {
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Warehouse className="mb-4 h-12 w-12 text-muted-foreground" />
                 <h3 className="mb-2 text-lg font-semibold">暂无位置</h3>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  创建第一个仓库位置开始使用系统
-                </p>
-                <LocationCreateDialog storeId={STORE_ID} triggerText="添加位置" />
+                <p className="mb-4 text-sm text-muted-foreground">创建第一个仓库位置开始使用系统</p>
+                <LocationCreateDialog storeId={storeId} triggerText="添加位置" />
               </div>
             }
           />

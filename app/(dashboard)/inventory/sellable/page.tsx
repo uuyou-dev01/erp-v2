@@ -1,10 +1,11 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import Link from "next/link";
-import { MapPin, Plus } from "lucide-react";
+import { ArrowRightLeft, Plus } from "lucide-react";
 import { getPlatforms } from "@/app/actions/platforms";
 import { ListingCoverageGrid } from "@/components/listing/listing-coverage-grid";
 import { BatchListingDialog } from "@/components/listing/batch-listing-dialog";
-import { ListingOpsToolbar } from "@/components/listing/listing-ops-toolbar";
-import { InventoryDashboardOverview } from "@/components/inventory/inventory-dashboard-overview";
+import { InventoryDashboardActions } from "@/components/inventory/inventory-dashboard-overview";
+import { InventorySellableToolbar } from "@/components/inventory/inventory-sellable-toolbar";
 import { StockingPoolBoard } from "@/components/inventory/stocking-pool-board";
 import { Button } from "@/components/ui/button";
 import { SellableNewStockGuide } from "@/components/listing/sellable-new-stock-guide";
@@ -14,20 +15,15 @@ import {
   type ListingCoverageProduct,
 } from "@/lib/application/listing-coverage";
 import { summarizeSellableGuides } from "@/lib/application/sellable-listing-guide";
-import { buildInventoryDashboardSummary } from "@/lib/application/inventory-dashboard";
 import {
-  inferMarketFromLocation,
-  marketLabel,
+  isPlatformTargetForMarket,
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
+import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 const PAGE_SIZE = 50;
-const GRID_COLUMN_OPTIONS = ["2", "3", "4"] as const;
-
-type GridColumnCount = (typeof GRID_COLUMN_OPTIONS)[number];
 
 function hasPlatform(product: ListingCoverageProduct, platformId?: string) {
   if (!platformId) return true;
@@ -46,6 +42,27 @@ function hasRisk(product: ListingCoverageProduct, risk?: string) {
   return product.aggregateRisks.some((item) => item.key === risk);
 }
 
+function hasProductKind(product: ListingCoverageProduct, kind?: string) {
+  if (!kind) return true;
+  const effectiveKind = product.hasItemUnits && !product.hasLotStock ? "USED" : product.productKind;
+  if (effectiveKind === kind) return true;
+  return product.variantRows.some((variant) => variant.productKind === kind);
+}
+
+function hasCategory(product: ListingCoverageProduct, category?: string) {
+  if (!category) return true;
+  if (product.category?.trim() === category) return true;
+  return product.variantRows.some((variant) => variant.category?.trim() === category);
+}
+
+function hasStockType(product: ListingCoverageProduct, stockType?: string) {
+  if (!stockType) return true;
+  if (stockType === "LOT") return product.hasLotStock && !product.hasItemUnits;
+  if (stockType === "ITEM_UNIT") return product.hasItemUnits && !product.hasLotStock;
+  if (stockType === "MIXED") return product.hasLotStock && product.hasItemUnits;
+  return true;
+}
+
 function matchesUnlisted(product: ListingCoverageProduct, unlisted?: string) {
   if (unlisted !== "1") return true;
   return product.records.length === 0;
@@ -62,6 +79,8 @@ function matchesQuery(product: ListingCoverageProduct, query?: string) {
     ...product.variantRows.map((variant) => variant.skuName),
     ...product.records.map((record) => record.platformName),
     ...product.records.map((record) => record.platformCode),
+    product.brand ?? "",
+    product.category ?? "",
   ].some((value) => value.toLowerCase().includes(keyword));
 }
 
@@ -114,13 +133,17 @@ function withReturnTo(href: string, returnTo: string) {
 }
 
 function parseMarket(value?: string): SellableMarketCode | undefined {
-  if (value === "CN" || value === "JP" || value === "US" || value === "UNKNOWN") return value;
+  if (
+    value === "CN" ||
+    value === "JP" ||
+    value === "US" ||
+    value === "EU" ||
+    value === "GLOBAL" ||
+    value === "UNKNOWN"
+  ) {
+    return value;
+  }
   return undefined;
-}
-
-function parseGridColumns(value?: string): GridColumnCount {
-  if (value === "2" || value === "3" || value === "4") return value;
-  return "4";
 }
 
 function withSellableParams(
@@ -149,18 +172,28 @@ function buildLocationOptions(products: ListingCoverageProduct[], market?: Sella
       id: string;
       label: string;
       qty: number;
+      market: SellableMarketCode;
       productKeys: Set<string>;
     }
   >();
 
   for (const product of products) {
     for (const location of product.sellableLocations) {
-      const locationMarket = inferMarketFromLocation(location);
-      if (market && locationMarket !== market) continue;
+      const fulfillmentMarkets = location.fulfillableMarkets ?? [];
+      if (
+        market &&
+        !fulfillmentMarkets.includes(market) &&
+        !fulfillmentMarkets.includes("GLOBAL")
+      ) {
+        continue;
+      }
+      const locationMarket =
+        market ?? fulfillmentMarkets.find((value) => value !== "GLOBAL") ?? "GLOBAL";
       const current = locations.get(location.locationId) ?? {
         id: location.locationId,
         label: `${location.code} · ${location.name}`,
         qty: 0,
+        market: locationMarket,
         productKeys: new Set<string>(),
       };
       current.qty += location.qty;
@@ -170,6 +203,25 @@ function buildLocationOptions(products: ListingCoverageProduct[], market?: Sella
   }
 
   return [...locations.values()].sort((a, b) => b.qty - a.qty);
+}
+
+function buildCategoryOptions(products: ListingCoverageProduct[]) {
+  const counts = new Map<string, number>();
+
+  for (const product of products) {
+    const productCategories = new Set(
+      [product.category, ...product.variantRows.map((variant) => variant.category)]
+        .map((category) => category?.trim())
+        .filter((category): category is string => Boolean(category))
+    );
+    for (const category of productCategories) {
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([label, count]) => ({ value: label, label, count }))
+    .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
 }
 
 export default async function SellableInventoryPage({
@@ -187,13 +239,16 @@ export default async function SellableInventoryPage({
     market?: string;
     locationId?: string;
     view?: string;
-    cols?: string;
+    kind?: string;
+    category?: string;
+    stockType?: string;
   }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const params = await searchParams;
   const [products, platforms] = await Promise.all([
-    getListingCoverageProducts(STORE_ID),
-    getPlatforms(STORE_ID),
+    getListingCoverageProducts(storeId),
+    getPlatforms(storeId),
   ]);
 
   const selectedMarket = parseMarket(params.market);
@@ -206,21 +261,18 @@ export default async function SellableInventoryPage({
     .filter((product): product is ListingCoverageProduct => Boolean(product));
   const marketProducts = marketInventoryProducts.filter((product) => product.sellableQty > 0);
   const locationOptions = buildLocationOptions(marketProducts, selectedMarket);
-  const scopedInventoryProducts = products
-    .map((product) =>
-      buildScopedListingCoverageProduct(product, {
-        market: selectedMarket,
-        locationId: params.locationId,
-      })
-    )
-    .filter((product): product is ListingCoverageProduct => {
-      if (!product) return false;
-      return product.sellableQty > 0 || product.inTransitQty > 0;
-    });
+  const selectedLocation = locationOptions.find((location) => location.id === params.locationId);
+  const effectiveMarket = selectedMarket ?? selectedLocation?.market;
+  const visiblePlatforms = effectiveMarket
+    ? platforms.filter((platform) => isPlatformTargetForMarket(platform, effectiveMarket))
+    : platforms;
+  const activePlatformId = visiblePlatforms.some((platform) => platform.id === params.platformId)
+    ? params.platformId
+    : undefined;
   const scopedProducts = marketProducts
     .map((product) =>
       buildScopedListingCoverageProduct(product, {
-        market: selectedMarket,
+        market: effectiveMarket,
         locationId: params.locationId,
       })
     )
@@ -228,9 +280,12 @@ export default async function SellableInventoryPage({
   const filteredProducts = sortProducts(
     scopedProducts.filter((product) => {
       if (!matchesUnlisted(product, params.unlisted)) return false;
-      if (!hasPlatform(product, params.platformId)) return false;
+      if (!hasPlatform(product, activePlatformId)) return false;
       if (!hasStatus(product, params.status)) return false;
       if (!hasRisk(product, params.risk)) return false;
+      if (!hasProductKind(product, params.kind)) return false;
+      if (!hasCategory(product, params.category)) return false;
+      if (!hasStockType(product, params.stockType)) return false;
       return matchesQuery(product, params.q);
     }),
     params.sort ?? "stockDesc"
@@ -239,12 +294,11 @@ export default async function SellableInventoryPage({
   const totalPages = Math.max(Math.ceil(filteredProducts.length / PAGE_SIZE), 1);
   const safePage = Math.min(currentPage, totalPages);
   const pageProducts = filteredProducts.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-  const dashboardSummary = buildInventoryDashboardSummary(scopedInventoryProducts);
   const guide = summarizeSellableGuides(scopedProducts);
+  const categoryOptions = buildCategoryOptions(scopedProducts);
   const fromWorkbench = params.from === "workbench";
   const returnTo = currentHref(params);
   const isStockingPoolView = params.view === "pools";
-  const gridColumns = parseGridColumns(params.cols);
   const batchListingSkus =
     params.unlisted === "1"
       ? pageProducts
@@ -264,22 +318,33 @@ export default async function SellableInventoryPage({
       : [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold">库存看板</h1>
-          <p className="hidden text-sm text-muted-foreground sm:block">
-            查看自有货、可操作 SKU、仓位分布和平台覆盖。
+          <p className="mt-1 text-sm text-muted-foreground">
+            按商品、节点和履约目的地集中查看可分配库存。
           </p>
-          <p className="mt-1 hidden text-xs text-muted-foreground sm:block">
-            库存口径：现货=当前可发货库存；在途、已售待发和公开货盘供给不混入可售数。
+          <p className="mt-1 hidden text-xs text-muted-foreground lg:block">
+            库存口径：可分配表示实物在库且未占用；是否可向某个国家发货由节点能力和配送线路计算。
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <Link href="/marketplace/new">
+            <Button variant="outline" className="h-9">
+              <Plus className="mr-2 h-4 w-4" />
+              发布共享货盘
+            </Button>
+          </Link>
+          <InventoryDashboardActions
+            storeId={storeId}
+            pendingFirstListingCount={guide.awaitingFirstListing}
+            pendingHref={withSellableParams(params, { unlisted: "1" })}
+          />
           {batchListingSkus.length > 0 ? (
             <BatchListingDialog
-              storeId={STORE_ID}
-              platforms={platforms.map((platform) => ({
+              storeId={storeId}
+              platforms={visiblePlatforms.map((platform) => ({
                 id: platform.id,
                 name: platform.name,
                 code: platform.code,
@@ -287,8 +352,19 @@ export default async function SellableInventoryPage({
               skus={batchListingSkus}
             />
           ) : null}
-          <Link href={withReturnTo("/listing/new", returnTo)}>
-            <Button>
+          <Link href="/inventory/stocktake?action=transfer">
+            <Button variant="outline" className="h-9">
+              <ArrowRightLeft className="mr-2 h-4 w-4" />
+              发起转仓
+            </Button>
+          </Link>
+          <Link
+            href={withReturnTo(
+              effectiveMarket ? `/listing/new?market=${effectiveMarket}` : "/listing/new",
+              returnTo
+            )}
+          >
+            <Button className="h-9">
               <Plus className="mr-2 h-4 w-4" />
               添加上架记录
             </Button>
@@ -296,55 +372,36 @@ export default async function SellableInventoryPage({
         </div>
       </div>
 
-      <InventoryDashboardOverview
-        summary={dashboardSummary}
-        pendingFirstListingCount={guide.awaitingFirstListing}
-        pendingHref={withSellableParams(params, { unlisted: "1" })}
+      <InventorySellableToolbar
+        platforms={visiblePlatforms.map((platform) => ({
+          id: platform.id,
+          name: platform.name,
+          code: platform.code,
+        }))}
+        locations={locationOptions.map((location) => ({
+          id: location.id,
+          label: location.label,
+          qty: location.qty,
+        }))}
+        activePlatformId={activePlatformId}
+        locationId={params.locationId}
+        productKind={params.kind}
+        category={params.category}
+        categories={categoryOptions}
+        stockType={params.stockType}
+        status={params.status}
+        risk={params.risk}
+        sort={params.sort ?? "stockDesc"}
+        query={params.q}
+        scopeLabel={
+          effectiveMarket
+            ? `可履约：${fulfillmentDestinationLabel(effectiveMarket)}`
+            : "全部履约目的地"
+        }
+        view={isStockingPoolView ? "pools" : undefined}
+        resultCount={filteredProducts.length}
+        totalCount={scopedProducts.length}
       />
-
-      <div className="flex flex-col gap-2 rounded-xl border bg-card p-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-1.5 overflow-x-auto">
-          <Link href={withSellableParams(params, { view: undefined })}>
-            <Button
-              variant={!isStockingPoolView ? "default" : "outline"}
-              size="sm"
-              className="h-8 shrink-0"
-            >
-              库存列表
-            </Button>
-          </Link>
-          <Link href={withSellableParams(params, { view: "pools" })}>
-            <Button
-              variant={isStockingPoolView ? "default" : "outline"}
-              size="sm"
-              className="h-8 shrink-0"
-            >
-              经营池
-            </Button>
-          </Link>
-        </div>
-
-        {!isStockingPoolView ? (
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">每行</span>
-            {GRID_COLUMN_OPTIONS.map((columns) => (
-              <Link
-                key={columns}
-                href={withSellableParams(params, { cols: columns })}
-                aria-label={`每行显示 ${columns} 个商品`}
-              >
-                <Button
-                  variant={gridColumns === columns ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 min-w-10 px-2.5 text-xs"
-                >
-                  {columns}个
-                </Button>
-              </Link>
-            ))}
-          </div>
-        ) : null}
-      </div>
 
       {fromWorkbench || params.unlisted === "1" ? (
         <SellableNewStockGuide
@@ -356,70 +413,17 @@ export default async function SellableInventoryPage({
         />
       ) : null}
 
-      <div className="rounded-xl border bg-card px-3 py-2.5">
-        <div className="grid gap-2 xl:grid-cols-[auto_1fr] xl:items-center">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold leading-none">
-              {selectedMarket ? marketLabel(selectedMarket) : "全部货盘"}
-            </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">按仓库/持有人筛选</p>
-          </div>
-
-          <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-0.5">
-            <Link href={withSellableParams(params, { locationId: undefined })}>
-              <Button
-                variant={!params.locationId ? "default" : "outline"}
-                size="sm"
-                className="h-7 shrink-0 px-2.5 text-xs"
-              >
-                全部仓位
-              </Button>
-            </Link>
-            {locationOptions.map((location) => (
-              <Link
-                key={location.id}
-                href={withSellableParams(params, { locationId: location.id })}
-              >
-                <Button
-                  variant={params.locationId === location.id ? "default" : "outline"}
-                  size="sm"
-                  className="h-7 shrink-0 gap-1 px-2.5 text-xs"
-                >
-                  <MapPin className="h-3 w-3" />
-                  <span className="max-w-[150px] truncate">{location.label}</span>
-                  <span className="tabular-nums opacity-70">{location.qty}</span>
-                </Button>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </div>
-
       {isStockingPoolView ? (
         <StockingPoolBoard products={filteredProducts} />
       ) : (
         <>
-          <ListingOpsToolbar
-            basePath="/inventory/sellable"
-            platforms={platforms.map((platform) => ({
-              id: platform.id,
-              name: platform.name,
-              code: platform.code,
-            }))}
-            activePlatformId={params.platformId}
-            status={params.status}
-            risk={params.risk}
-            sort={params.sort ?? "stockDesc"}
-            query={params.q}
-            showStockSort
-          />
-
           <ListingCoverageGrid
+            storeId={storeId}
             products={pageProducts}
             expandIfUnlisted={params.unlisted === "1"}
             focusLocationId={params.locationId}
-            focusMarket={selectedMarket}
-            columns={gridColumns}
+            focusMarket={effectiveMarket}
+            categoryOptions={categoryOptions.map((option) => option.value)}
             emptyTitle={params.unlisted === "1" ? "暂无待添加上架的商品" : "暂无可售库存"}
             emptyDescription={
               params.unlisted === "1"

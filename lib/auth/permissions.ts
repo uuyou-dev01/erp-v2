@@ -26,3 +26,61 @@ export function hasRoleAtLeast(
 ) {
   return (ROLE_RANK[role ?? ""] ?? 0) >= (ROLE_RANK[minimum] ?? 0);
 }
+
+export function canViewInventoryCost(role: string | null | undefined) {
+  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.FINANCE])
+    .has(role ?? "");
+}
+
+export function canUseQuickEntry(role: string | null | undefined) {
+  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.LISTING])
+    .has(role ?? "");
+}
+
+export function isNavigationHrefAllowed(role: string | null | undefined, href: string) {
+  if (hasRoleAtLeast(role, ROLES.MANAGER)) return true;
+  const path = href.split("?")[0];
+  const allowedPrefixesByRole: Record<string, string[]> = {
+    FULFILLMENT: [
+      "/workbench",
+      "/notifications",
+      "/fulfillment/requests",
+      "/logistics/consolidations",
+      "/inventory/items",
+      "/sales/after-sales",
+      "/finance/wallet",
+      "/settings/personal",
+    ],
+    LISTING: [
+      "/workbench",
+      "/notifications",
+      "/inventory/skus",
+      "/inventory/sellable",
+      "/inventory/items",
+      "/listing",
+      "/sales",
+      "/marketplace",
+      "/resale",
+      "/finance/wallet",
+      "/settings/personal",
+    ],
+    FINANCE: [
+      "/workbench",
+      "/notifications",
+      "/finance",
+      "/reports",
+      "/settings/personal",
+      "/settings/system",
+    ],
+    VIEWER: [
+      "/workbench",
+      "/notifications",
+      "/inventory/sellable",
+      "/marketplace",
+      "/settings/personal",
+    ],
+  };
+  return (allowedPrefixesByRole[role ?? ""] ?? []).some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+}

@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 const labels: Record<string, string> = {
   DRAFT: "草稿",
   CONFIRMED: "已确认",
-  PAID: "已支付",
+  PAID: "已线下结清",
   VOID: "已作废",
 };
 

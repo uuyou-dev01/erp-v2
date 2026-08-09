@@ -21,6 +21,7 @@ import { PendingActionPanel } from "./pending-action-panel";
 import type { WorkbenchPlatformOption } from "./action-drawer-forms";
 import type { AssignableMemberOption } from "./task-assignment-card";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { Button } from "@/components/ui/button";
 
 function Panel({
   title,
@@ -49,6 +50,17 @@ interface QuickEntrySuggestions {
   location: string[];
   listingPlatform: string[];
   salePlatform: string[];
+  catalogProducts: Array<{
+    id: string;
+    name: string;
+    brand: string | null;
+    category: string | null;
+    catalogRole: string;
+  }>;
+  catalogVariants: Array<{
+    parentSkuId: string;
+    label: string;
+  }>;
 }
 
 interface RecentEntry {
@@ -57,6 +69,8 @@ interface RecentEntry {
   rawProductName: string;
   rawVariant: string | null;
   conditionType: string | null;
+  conditionGrade: string | null;
+  functionStatus: string | null;
   purchasePrice: string | null;
   purchaseCurrency: string | null;
   purchaseTrackingNo: string | null;
@@ -123,6 +137,7 @@ export function NextActionWorkbench({
   );
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<WorkItemDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [showQuickEntry, setShowQuickEntry] = useState(false);
   const [taskScope, setTaskScope] = useState<"all" | "mine" | "delegated">("all");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -147,7 +162,10 @@ export function NextActionWorkbench({
         (i) =>
           i.title.toLowerCase().includes(q) ||
           i.subtitle?.toLowerCase().includes(q) ||
-          i.skuCode?.toLowerCase().includes(q)
+          i.skuCode?.toLowerCase().includes(q) ||
+          Object.values(i.metadata ?? {}).some(
+            (value) => typeof value === "string" && value.toLowerCase().includes(q)
+          )
       );
     }
     return items;
@@ -162,6 +180,7 @@ export function NextActionWorkbench({
     setSelectedQueue(queue);
     setSelectedItem(null);
     setSelectedDetail(null);
+    setDetailError(null);
     setCheckedIds([]);
     setCancelTarget(null);
     setCancelError(null);
@@ -175,12 +194,22 @@ export function NextActionWorkbench({
 
   const handleSelectItem = (item: WorkItem) => {
     setSelectedItem(item);
+    setSelectedDetail(null);
+    setDetailError(null);
     setCancelTarget(null);
     setCancelError(null);
     setShowQuickEntry(false);
     startTransition(async () => {
-      const data = await getWorkbenchWorkItemDetail(item.entityType, item.entityId);
-      setSelectedDetail(data);
+      try {
+        const data = await getWorkbenchWorkItemDetail(item.entityType, item.entityId);
+        if (!data) {
+          setDetailError("任务对应的业务数据不存在或已发生变化，请刷新后重试。");
+          return;
+        }
+        setSelectedDetail(data);
+      } catch (error) {
+        setDetailError(error instanceof Error ? error.message : "任务详情加载失败，请重试。");
+      }
     });
   };
 
@@ -215,6 +244,7 @@ export function NextActionWorkbench({
   const handleCloseDrawer = () => {
     setSelectedItem(null);
     setSelectedDetail(null);
+    setDetailError(null);
   };
 
   const handleCloseQuickEntry = () => {
@@ -228,6 +258,7 @@ export function NextActionWorkbench({
   const openQuickEntry = () => {
     setSelectedItem(null);
     setSelectedDetail(null);
+    setDetailError(null);
     setShowQuickEntry(true);
   };
 
@@ -239,15 +270,27 @@ export function NextActionWorkbench({
     if (openParam) {
       const [type, id] = openParam.split(":");
       if (type && id) {
+        const matchedItem = initialItems.find(
+          (item) => item.entityType === type && item.entityId === id
+        );
+        if (matchedItem) {
+          handleSelectItem(matchedItem);
+          return;
+        }
         startTransition(async () => {
-          const data = await getWorkbenchWorkItemDetail(type as WorkItem["entityType"], id);
-          setSelectedDetail(data);
-          setSelectedItem(data ?? null);
-          setShowQuickEntry(false);
+          try {
+            const data = await getWorkbenchWorkItemDetail(type as WorkItem["entityType"], id);
+            setSelectedDetail(data);
+            setSelectedItem(data ?? null);
+            setDetailError(data ? null : "任务对应的业务数据不存在或已发生变化。");
+            setShowQuickEntry(false);
+          } catch (error) {
+            setDetailError(error instanceof Error ? error.message : "任务详情加载失败，请重试。");
+          }
         });
       }
     }
-  }, [searchParams]);
+  }, [initialItems, searchParams]);
 
   return (
     <div className="space-y-4">
@@ -328,7 +371,15 @@ export function NextActionWorkbench({
             checkedIds={checkedIds}
             onCheckedChange={(item, checked) => {
               setCheckedIds((ids) =>
-                checked ? [...ids, item.id] : ids.filter((id) => id !== item.id)
+                checked ? [...new Set([...ids, item.id])] : ids.filter((id) => id !== item.id)
+              );
+            }}
+            onGroupCheckedChange={(groupItems, checked) => {
+              const groupIds = new Set(groupItems.map((item) => item.id));
+              setCheckedIds((ids) =>
+                checked
+                  ? [...new Set([...ids, ...groupIds])]
+                  : ids.filter((id) => !groupIds.has(id))
               );
             }}
             onCancelPurchase={handleCancelPurchase}
@@ -342,7 +393,7 @@ export function NextActionWorkbench({
       </div>
 
       <ActionDrawer
-        open={Boolean(selectedItem && selectedDetail)}
+        open={Boolean(selectedItem)}
         onClose={handleCloseDrawer}
         className="max-w-[min(560px,calc(100vw-1rem))]"
       >
@@ -361,11 +412,28 @@ export function NextActionWorkbench({
             }}
           />
         )}
-        {selectedItem && !selectedDetail && pending && (
-          <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
-            加载详情...
-          </div>
-        )}
+        {selectedItem && !selectedDetail ? (
+          detailError ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+              <div>
+                <p className="text-sm font-medium text-foreground">无法打开任务详情</p>
+                <p className="mt-1 max-w-sm text-xs text-muted-foreground">{detailError}</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleSelectItem(selectedItem)}
+              >
+                重新加载
+              </Button>
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+              {pending ? "加载详情..." : "正在准备任务详情..."}
+            </div>
+          )
+        ) : null}
       </ActionDrawer>
 
       <ActionDrawer

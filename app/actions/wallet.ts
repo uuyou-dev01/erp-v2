@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { summarizeWalletLedger } from "@/lib/application/wallet-ledger";
 import { buildWithdrawalHoldPlan } from "@/lib/application/wallet-withdrawal";
+import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
 
@@ -20,6 +21,24 @@ export type SerializedWalletOverview = {
     status: string;
   };
   summary: ReturnType<typeof summarizeWalletLedger>;
+  earningSummary: {
+    pending: string;
+    confirmed: string;
+    settled: string;
+    total: string;
+  };
+  earningEvents: Array<{
+    id: string;
+    sourceType: string;
+    sourceId: string | null;
+    earningType: string;
+    description: string;
+    earningAmount: string;
+    currency: string;
+    status: string;
+    occurredAt: Date;
+    settledAt: Date | null;
+  }>;
   ledgerEntries: Array<{
     id: string;
     entryType: string;
@@ -131,7 +150,27 @@ export async function getWalletOverview(input?: {
     currency: input?.currency,
   });
 
-  const [ledgerEntries, withdrawalRequests] = await Promise.all([
+  const [earningEvents, ledgerEntries, withdrawalRequests] = await Promise.all([
+    prisma.earningEvent.findMany({
+      where: {
+        storeId: context.activeStoreId,
+        OR: [{ userId: context.userId }, { walletAccountId: account.id }],
+      },
+      select: {
+        id: true,
+        sourceType: true,
+        sourceId: true,
+        earningType: true,
+        description: true,
+        earningAmount: true,
+        currency: true,
+        status: true,
+        occurredAt: true,
+        settledAt: true,
+      },
+      orderBy: { occurredAt: "desc" },
+      take: 100,
+    }),
     prisma.walletLedgerEntry.findMany({
       where: { walletAccountId: account.id },
       select: {
@@ -168,6 +207,24 @@ export async function getWalletOverview(input?: {
     }),
   ]);
 
+  const earningTotals = earningEvents.reduce(
+    (totals, event) => {
+      if (event.status === "VOID" || event.currency !== account.currency) return totals;
+      const amount = new Decimal(event.earningAmount.toString());
+      totals.total = totals.total.plus(amount);
+      if (event.status === "PENDING") totals.pending = totals.pending.plus(amount);
+      if (event.status === "CONFIRMED") totals.confirmed = totals.confirmed.plus(amount);
+      if (event.status === "SETTLED") totals.settled = totals.settled.plus(amount);
+      return totals;
+    },
+    {
+      pending: new Decimal(0),
+      confirmed: new Decimal(0),
+      settled: new Decimal(0),
+      total: new Decimal(0),
+    },
+  );
+
   return {
     account: {
       id: account.id,
@@ -177,6 +234,16 @@ export async function getWalletOverview(input?: {
       status: account.status,
     },
     summary: summarizeWalletLedger(ledgerEntries),
+    earningSummary: {
+      pending: earningTotals.pending.toDecimalPlaces(4).toString(),
+      confirmed: earningTotals.confirmed.toDecimalPlaces(4).toString(),
+      settled: earningTotals.settled.toDecimalPlaces(4).toString(),
+      total: earningTotals.total.toDecimalPlaces(4).toString(),
+    },
+    earningEvents: earningEvents.map((event) => ({
+      ...event,
+      earningAmount: event.earningAmount.toString(),
+    })),
     ledgerEntries: ledgerEntries.map(serializeLedgerEntry),
     withdrawalRequests: withdrawalRequests.map(serializeWithdrawalRequest),
   };
@@ -282,6 +349,9 @@ export async function markWithdrawalPaidAction(
     });
     if (!existing) throw new Error("提现申请不存在");
     const context = await requireUserContext({ storeId: existing.storeId });
+    if (!hasRoleAtLeast(context.role, ROLES.FINANCE)) {
+      throw new Error("只有财务或管理员可以确认提现打款");
+    }
     if (existing.status === "PAID") throw new Error("提现申请已经打款");
     if (["REJECTED", "CANCELLED"].includes(existing.status)) {
       throw new Error("已关闭的提现申请不能打款");

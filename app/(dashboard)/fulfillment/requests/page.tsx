@@ -4,11 +4,17 @@ import { getFulfillmentRequests } from "@/app/actions/fulfillment-requests";
 import { FulfillmentStatusBadge } from "@/components/fulfillment/fulfillment-status";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { getWarehouseInboundTasks } from "@/app/actions/purchase-orders";
+import { WarehouseInboundActions } from "@/components/fulfillment/warehouse-inbound-actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function FulfillmentRequestsPage() {
-  const requests = await getFulfillmentRequests();
+  const [requests, inboundTasks] = await Promise.all([
+    getFulfillmentRequests(),
+    getWarehouseInboundTasks(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -43,6 +49,9 @@ export default async function FulfillmentRequestsPage() {
                         {request.requestNo}
                       </Link>
                       <FulfillmentStatusBadge status={request.status} />
+                      <Badge variant={request.isCollaboration ? "default" : "outline"}>
+                        {request.isCollaboration ? "合作任务" : "内部任务"}
+                      </Badge>
                     </div>
                     <div className="text-sm text-muted-foreground">
                       代卖 {request.resaleListing?.title ?? "-"} · 货盘 {request.supplyOffer.title} · 收件人 {request.recipientName}
@@ -65,6 +74,13 @@ export default async function FulfillmentRequestsPage() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>合作仓收货与检查</CardTitle></CardHeader>
+        <CardContent>
+          {inboundTasks.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">暂无合作方采购入库任务。</p> : <div className="divide-y">{inboundTasks.map((task) => <div key={task.id} className="grid gap-3 py-4 lg:grid-cols-[1fr_auto] lg:items-center"><div className="space-y-1"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{task.orderNo}</span><Badge variant="outline">{task.status}</Badge>{task.inspectionPending ? <Badge>待检查</Badge> : null}</div><p className="text-sm text-muted-foreground">客户 {task.clientName} · {task.lines.map((line) => `${line.sku.name} × ${line.quantity}`).join("，")}</p></div><WarehouseInboundActions id={task.id} locationId={task.locationId} status={task.status} inspectionPending={task.inspectionPending} lines={task.lines} /></div>)}</div>}
         </CardContent>
       </Card>
     </div>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getActivePartners } from "@/app/actions/partners";
-import { getSupplyOfferById, getSupplyOfferVisibilityStoreOptions } from "@/app/actions/supply-offers";
+import { getSupplyOfferById, getSupplyOfferFormContext } from "@/app/actions/supply-offers";
 import { SupplyOfferForm } from "@/components/marketplace/supply-offer-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,10 @@ export const dynamic = "force-dynamic";
 
 export default async function EditSupplyOfferPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [context, partners, visibilityStoreOptions, offer] = await Promise.all([
+  const [context, partners, formContext, offer] = await Promise.all([
     requireUserContext(),
     getActivePartners(),
-    getSupplyOfferVisibilityStoreOptions(),
+    getSupplyOfferFormContext(),
     getSupplyOfferById(id),
   ]);
 
@@ -40,7 +40,7 @@ export default async function EditSupplyOfferPage({ params }: { params: Promise<
           <SupplyOfferForm
             storeId={context.activeStoreId}
             partners={partners}
-            visibilityStoreOptions={visibilityStoreOptions}
+            formContext={formContext}
             initialData={offer}
           />
         </CardContent>

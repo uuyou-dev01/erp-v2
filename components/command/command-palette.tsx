@@ -7,13 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X } from "lucide-react";
 import { commandQuickActions } from "@/config/navigation";
+import { isNavigationHrefAllowed } from "@/lib/auth/permissions";
 
 interface CommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  role: string;
 }
 
-export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+export function CommandPalette({ open, onOpenChange, role }: CommandPaletteProps) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CommandSearchResult[]>([]);
@@ -39,8 +41,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   }, [open, query]);
 
   const items = useMemo<CommandSearchResult[]>(
-    () => (query.trim() ? results : commandQuickActions),
-    [query, results]
+    () => (query.trim() ? results : commandQuickActions).filter((item) =>
+      isNavigationHrefAllowed(role, item.href),
+    ),
+    [query, results, role]
   );
   if (!open) return null;
 

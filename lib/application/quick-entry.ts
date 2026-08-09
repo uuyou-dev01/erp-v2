@@ -1,15 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma, QuickEntry } from "@prisma/client";
 import Decimal from "decimal.js";
-import {
-  createInboundInventoryLot,
-  createInboundItemUnit,
-} from "@/lib/application/inventory";
-import {
-  computeOrderFees,
-  feeResultToStrings,
-  parseFeeText,
-} from "@/lib/application/order-fees";
+import { createInboundInventoryLot, createInboundItemUnit } from "@/lib/application/inventory";
+import { computeOrderFees, feeResultToStrings, parseFeeText } from "@/lib/application/order-fees";
 import {
   detectIncompleteFields,
   isUsedCondition,
@@ -17,9 +10,18 @@ import {
   normalizeSkuCode,
   parsePlatformList,
   parseQuantity,
+  shouldCreateQuickEntryInventory,
 } from "@/lib/quick-entry-utils";
 import { getLatestFxRate } from "@/lib/fx";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
+import { resolveProductCategory } from "@/lib/application/product-category-service";
+import {
+  itemConditionReadyForSale,
+  normalizeItemConditionType,
+  normalizeItemFunctionStatus,
+  normalizeUsedItemGrade,
+  validateItemCondition,
+} from "@/lib/inventory/item-condition";
 
 export type WorkflowStage =
   | "PURCHASE"
@@ -33,12 +35,15 @@ export type WorkflowStage =
 
 export interface QuickEntryRowInput {
   storeId: string;
+  existingSkuId?: string;
   sourceType?: string;
   rawBrand?: string;
   rawProductName: string;
   rawVariant?: string;
   rawCategory?: string;
   conditionType?: string;
+  conditionGrade?: string;
+  functionStatus?: string;
   quantity?: string;
   purchasePrice?: string;
   purchaseCurrency?: string;
@@ -89,6 +94,8 @@ function entryToInput(entry: QuickEntry): QuickEntryRowInput {
     rawVariant: entry.rawVariant ?? undefined,
     rawCategory: entry.rawCategory ?? undefined,
     conditionType: entry.conditionType ?? undefined,
+    conditionGrade: entry.conditionGrade ?? undefined,
+    functionStatus: entry.functionStatus ?? undefined,
     quantity: entry.quantity.toString(),
     purchasePrice: entry.purchasePrice?.toString(),
     purchaseCurrency: entry.purchaseCurrency ?? undefined,
@@ -132,11 +139,7 @@ async function resolveLocation(
   const locations = await tx.location.findMany({ where: { storeId } });
   const hit =
     locations.find(
-      (l) =>
-        l.name === text ||
-        l.code === text ||
-        l.name.includes(text) ||
-        text.includes(l.name)
+      (l) => l.name === text || l.code === text || l.name.includes(text) || text.includes(l.name)
     ) ?? null;
 
   if (hit) return hit;
@@ -153,57 +156,189 @@ async function resolveLocation(
   });
 }
 
-async function matchOrCreateSku(
+export async function matchOrCreateQuickEntrySku(
   tx: Prisma.TransactionClient,
   storeId: string,
   input: QuickEntryRowInput
 ) {
+  if (input.existingSkuId?.trim()) {
+    const sku = await tx.sKU.findFirst({
+      where: {
+        id: input.existingSkuId.trim(),
+        storeId,
+        catalogRole: { in: ["SIMPLE", "VARIANT"] },
+        OR: [{ mergeStatus: null }, { mergeStatus: { not: "MERGED" } }],
+      },
+    });
+    if (!sku) throw new Error("指定的正式 SKU 不存在、已合并或无权访问");
+    return { sku, created: false };
+  }
   const name = input.rawProductName.trim();
   const variant = input.rawVariant?.trim();
   const brand = input.rawBrand?.trim();
-  const codeCandidate = normalizeSkuCode(name, variant);
+  const category = input.rawCategory?.trim();
+  const supportsCategoryMaster = "store" in tx && "productCategory" in tx;
+  const store = supportsCategoryMaster
+    ? await tx.store.findUnique({
+        where: { id: storeId },
+        select: { organizationId: true },
+      })
+    : null;
+  if (supportsCategoryMaster && !store?.organizationId) {
+    throw new Error("当前店铺尚未关联经营主体");
+  }
+  const categoryRecord =
+    category && store?.organizationId
+      ? await resolveProductCategory({
+          organizationId: store.organizationId,
+          legacyName: category,
+          db: tx,
+        })
+      : null;
 
+  if (variant) {
+    let parent = await tx.sKU.findFirst({
+      where: {
+        storeId,
+        catalogRole: "GROUP",
+        name: { equals: name, mode: "insensitive" },
+      },
+    });
+
+    if (!parent) {
+      parent = await tx.sKU.create({
+        data: {
+          storeId,
+          code: await ensureUniqueSkuCode(tx, storeId, normalizeSkuCode(name)),
+          name,
+          catalogRole: "GROUP",
+          variantAxes: ["规格"],
+          brand: brand || undefined,
+          categoryId: categoryRecord?.id,
+          category: categoryRecord?.name ?? category ?? undefined,
+          isAutoCreated: true,
+          mergeStatus: "PENDING",
+        },
+      });
+    }
+
+    const existingVariant = await tx.sKU.findFirst({
+      where: {
+        storeId,
+        parentSkuId: parent.id,
+        catalogRole: "VARIANT",
+        variantLabel: { equals: variant, mode: "insensitive" },
+      },
+    });
+    if (existingVariant) return { sku: existingVariant, created: false };
+
+    const codeCandidate = normalizeSkuCode(name, variant);
+    const legacySimple = await tx.sKU.findFirst({
+      where: {
+        storeId,
+        catalogRole: "SIMPLE",
+        isAutoCreated: true,
+        OR: [
+          { code: codeCandidate },
+          { name: { equals: `${name} ${variant}`, mode: "insensitive" } },
+          { name: { equals: `${name} · ${variant}`, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    if (legacySimple) {
+      const legacyAttributes =
+        legacySimple.attributes &&
+        typeof legacySimple.attributes === "object" &&
+        !Array.isArray(legacySimple.attributes)
+          ? (legacySimple.attributes as Record<string, unknown>)
+          : {};
+      const sku = await tx.sKU.update({
+        where: { id: legacySimple.id },
+        data: {
+          name: `${name} · ${variant}`,
+          parentSkuId: parent.id,
+          catalogRole: "VARIANT",
+          variantLabel: variant,
+          variantValues: { 规格: variant },
+          brand: legacySimple.brand || brand || undefined,
+          categoryId:
+            legacySimple.categoryId || categoryRecord?.id || parent.categoryId || undefined,
+          category:
+            legacySimple.category ||
+            categoryRecord?.name ||
+            category ||
+            parent.category ||
+            undefined,
+          attributes: {
+            ...legacyAttributes,
+            规格: variant,
+          } as Prisma.InputJsonValue,
+          mergeStatus: "PENDING",
+        },
+      });
+      return { sku, created: true };
+    }
+
+    const sku = await tx.sKU.create({
+      data: {
+        storeId,
+        code: await ensureUniqueSkuCode(tx, storeId, codeCandidate),
+        name: `${name} · ${variant}`,
+        parentSkuId: parent.id,
+        catalogRole: "VARIANT",
+        variantLabel: variant,
+        variantValues: { 规格: variant },
+        brand: brand || parent.brand || undefined,
+        categoryId: categoryRecord?.id || parent.categoryId || undefined,
+        category: categoryRecord?.name || category || parent.category || undefined,
+        attributes: { 规格: variant } as Prisma.InputJsonValue,
+        isAutoCreated: true,
+        mergeStatus: "PENDING",
+      },
+    });
+    return { sku, created: true };
+  }
+
+  const existingGroup = await tx.sKU.findFirst({
+    where: {
+      storeId,
+      catalogRole: "GROUP",
+      name: { equals: name, mode: "insensitive" },
+    },
+  });
+  if (existingGroup) {
+    throw new Error(`「${name}」按规格管理，请填写尺码、颜色或版本等具体规格`);
+  }
+
+  const codeCandidate = normalizeSkuCode(name);
   const existing = await tx.sKU.findFirst({
     where: {
       storeId,
-      OR: [
-        { code: codeCandidate },
-        {
-          AND: [
-            { name: { contains: name, mode: "insensitive" as const } },
-            ...(variant
-              ? [{ name: { contains: variant, mode: "insensitive" as const } }]
-              : []),
-          ],
-        },
-      ],
+      catalogRole: "SIMPLE",
+      OR: [{ code: codeCandidate }, { name: { equals: name, mode: "insensitive" } }],
     },
   });
-
   if (existing) return { sku: existing, created: false };
 
-  const uniqueCode = await ensureUniqueSkuCode(tx, storeId, codeCandidate);
   const sku = await tx.sKU.create({
     data: {
       storeId,
-      code: uniqueCode,
-      name: variant ? `${name} ${variant}` : name,
+      code: await ensureUniqueSkuCode(tx, storeId, codeCandidate),
+      name,
+      catalogRole: "SIMPLE",
       brand: brand || undefined,
-      category: input.rawCategory?.trim() || undefined,
+      categoryId: categoryRecord?.id,
+      category: categoryRecord?.name ?? category ?? undefined,
       isAutoCreated: true,
       mergeStatus: "PENDING",
-      attributes: variant ? ({ variant } as Prisma.InputJsonValue) : undefined,
     },
   });
 
   return { sku, created: true };
 }
 
-async function ensureUniqueSkuCode(
-  tx: Prisma.TransactionClient,
-  storeId: string,
-  base: string
-) {
+async function ensureUniqueSkuCode(tx: Prisma.TransactionClient, storeId: string, base: string) {
   let code = base.slice(0, 48);
   let suffix = 0;
   while (true) {
@@ -224,6 +359,7 @@ async function findOrCreatePurchaseOrder(
     supplierName?: string;
     purchaseDate?: Date;
     trackingNo?: string;
+    destinationLocationId?: string;
     fxRate?: string | null;
     reuseExisting?: boolean;
   }
@@ -236,15 +372,7 @@ async function findOrCreatePurchaseOrder(
       )
     : null;
   const dayEnd = dayStart
-    ? new Date(
-        dayStart.getFullYear(),
-        dayStart.getMonth(),
-        dayStart.getDate(),
-        23,
-        59,
-        59,
-        999
-      )
+    ? new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(), 23, 59, 59, 999)
     : null;
 
   if (params.reuseExisting) {
@@ -255,9 +383,7 @@ async function findOrCreatePurchaseOrder(
         currency: params.currency,
         supplierName: params.supplierName || null,
         trackingNo: params.trackingNo || null,
-        ...(dayStart && dayEnd
-          ? { orderedAt: { gte: dayStart, lte: dayEnd } }
-          : {}),
+        ...(dayStart && dayEnd ? { orderedAt: { gte: dayStart, lte: dayEnd } } : {}),
       },
       orderBy: { createdAt: "desc" },
     });
@@ -280,15 +406,12 @@ async function findOrCreatePurchaseOrder(
       status: "ORDERED",
       orderedAt: params.purchaseDate ?? new Date(),
       trackingNo: params.trackingNo,
+      destinationLocationId: params.destinationLocationId,
     },
   });
 }
 
-async function resolvePlatforms(
-  tx: Prisma.TransactionClient,
-  storeId: string,
-  labels: string[]
-) {
+async function resolvePlatforms(tx: Prisma.TransactionClient, storeId: string, labels: string[]) {
   const platforms = await tx.platform.findMany({ where: { storeId } });
   const resolved: Array<{ id: string; code: string; name: string }> = [];
 
@@ -315,9 +438,7 @@ async function resolvePlatformId(
   const text = label?.trim();
   if (!text) return null;
   const code = matchPlatformCode(text);
-  const OR: Prisma.PlatformWhereInput[] = [
-    { name: { contains: text, mode: "insensitive" } },
-  ];
+  const OR: Prisma.PlatformWhereInput[] = [{ name: { contains: text, mode: "insensitive" } }];
   if (code) OR.push({ code: { equals: code, mode: "insensitive" } });
   return (await tx.platform.findFirst({ where: { storeId, OR } }))?.id ?? null;
 }
@@ -362,13 +483,29 @@ export async function processQuickEntry(entryId: string) {
       const currency = entry.purchaseCurrency?.trim() || "CNY";
       const receivedAt = entry.purchaseDate ?? new Date();
       const used = isUsedCondition(entry.conditionType);
+      const conditionType = normalizeItemConditionType(entry.conditionType);
+      const conditionGrade = used
+        ? (normalizeUsedItemGrade(entry.conditionGrade) ?? "UNASSESSED")
+        : null;
+      const functionStatus = normalizeItemFunctionStatus(entry.functionStatus, conditionType);
 
       let skuId = entry.generatedSkuId;
       let skuCreated = false;
       if (skuId) {
-        await tx.sKU.findUniqueOrThrow({ where: { id: skuId } });
+        const generatedSku = await tx.sKU.findUniqueOrThrow({
+          where: { id: skuId },
+        });
+        if (
+          input.rawVariant?.trim() &&
+          generatedSku.catalogRole === "SIMPLE" &&
+          generatedSku.isAutoCreated
+        ) {
+          const repaired = await matchOrCreateQuickEntrySku(tx, entry.storeId, input);
+          skuId = repaired.sku.id;
+          skuCreated = repaired.created;
+        }
       } else {
-        const { sku, created } = await matchOrCreateSku(tx, entry.storeId, input);
+        const { sku, created } = await matchOrCreateQuickEntrySku(tx, entry.storeId, input);
         skuId = sku.id;
         skuCreated = created;
       }
@@ -392,6 +529,9 @@ export async function processQuickEntry(entryId: string) {
           if (rate) fxRate = rate.toFixed(8);
         }
 
+        const destinationLocationId = entry.currentLocationText?.trim()
+          ? (await resolveLocation(tx, entry.storeId, entry.currentLocationText)).id
+          : undefined;
         const po = purchaseOrderId
           ? await tx.purchaseOrder.findUniqueOrThrow({ where: { id: purchaseOrderId } })
           : await findOrCreatePurchaseOrder(tx, {
@@ -399,10 +539,25 @@ export async function processQuickEntry(entryId: string) {
               currency,
               supplierName: entry.purchasePlatformText?.trim(),
               purchaseDate: entry.purchaseDate ?? undefined,
+              trackingNo: entry.purchaseTrackingNo?.trim(),
+              destinationLocationId,
               fxRate,
               reuseExisting: false,
             });
         purchaseOrderId = po.id;
+
+        if (
+          (!po.trackingNo && entry.purchaseTrackingNo?.trim()) ||
+          (!po.destinationLocationId && destinationLocationId)
+        ) {
+          await tx.purchaseOrder.update({
+            where: { id: po.id },
+            data: {
+              trackingNo: po.trackingNo ?? entry.purchaseTrackingNo?.trim() ?? undefined,
+              destinationLocationId: po.destinationLocationId ?? destinationLocationId,
+            },
+          });
+        }
 
         const lineAmount = qty.times(unitCost);
         const line = await tx.purchaseLine.create({
@@ -412,6 +567,7 @@ export async function processQuickEntry(entryId: string) {
             quantity: qty.toFixed(4),
             unitPrice: unitCost.toFixed(4),
             lineAmount: lineAmount.toFixed(4),
+            trackingMode: used ? "ITEM_UNIT" : "LOT",
           },
         });
         purchaseLineId = line.id;
@@ -431,10 +587,7 @@ export async function processQuickEntry(entryId: string) {
           },
         });
 
-        if (
-          entry.purchaseShippingFee &&
-          new Decimal(entry.purchaseShippingFee.toString()).gt(0)
-        ) {
+        if (entry.purchaseShippingFee && new Decimal(entry.purchaseShippingFee.toString()).gt(0)) {
           const existingFee = await tx.fee.findFirst({
             where: {
               refType: "PURCHASE_ORDER",
@@ -462,10 +615,7 @@ export async function processQuickEntry(entryId: string) {
       const itemUnitIds = parseExistingIds(entry.generatedItemUnitIds);
 
       const inspectionFailed = entry.inspectionResult === "FAILED";
-      const canInspect =
-        !inspectionFailed &&
-        entry.currentLocationText?.trim() &&
-        (entry.inspectionResult === "PASSED" || !entry.purchaseTrackingNo?.trim());
+      const canInspect = !inspectionFailed && shouldCreateQuickEntryInventory(entry);
 
       if (inspectionFailed) {
         await tx.inspectionEvent.create({
@@ -479,21 +629,18 @@ export async function processQuickEntry(entryId: string) {
           },
         });
         workflowStage = "CLOSED";
-      } else if (
-        canInspect &&
-        !lotId &&
-        itemUnitIds.length === 0 &&
-        unitCost.gt(0)
-      ) {
-        if (used && !entry.batchNote?.trim() && !entry.note?.trim()) {
-          throw new Error("中古/非全新商品需要填写批次描述");
+      } else if (canInspect && !lotId && itemUnitIds.length === 0 && unitCost.gt(0)) {
+        const conditionError = validateItemCondition({
+          conditionType,
+          conditionGrade,
+          functionStatus,
+          notes: [entry.batchNote, entry.note].filter(Boolean).join(" / "),
+        });
+        if (conditionError) {
+          throw new Error(conditionError);
         }
 
-        const location = await resolveLocation(
-          tx,
-          entry.storeId,
-          entry.currentLocationText
-        );
+        const location = await resolveLocation(tx, entry.storeId, entry.currentLocationText);
         const notes = [entry.batchNote, entry.note].filter(Boolean).join(" / ") || undefined;
 
         if (used) {
@@ -506,7 +653,9 @@ export async function processQuickEntry(entryId: string) {
               locationId: location.id,
               unitCost: unitCost.toFixed(4),
               costCurrency: currency,
-              conditionGrade: entry.conditionType ?? undefined,
+              conditionType,
+              conditionGrade: conditionGrade ?? undefined,
+              functionStatus,
               notes,
               batchLabel: entry.batchNote ?? undefined,
               sourceType: "QUICK_ENTRY",
@@ -514,6 +663,15 @@ export async function processQuickEntry(entryId: string) {
               receivedAt,
               refType: "QUICK_ENTRY",
               refId: entryId,
+              status: itemConditionReadyForSale({
+                conditionType,
+                conditionGrade,
+                functionStatus,
+                notes,
+                photoCount: 0,
+              })
+                ? "AVAILABLE"
+                : "RETURN_CHECK",
             });
             itemUnitIds.push(item.id);
           }
@@ -564,16 +722,20 @@ export async function processQuickEntry(entryId: string) {
       const listingIds = [...existingListingIds];
       const platformLabels = parsePlatformList(entry.listingPlatformsText);
       const platforms = await resolvePlatforms(tx, entry.storeId, platformLabels);
+      const usedItemsReady =
+        !used ||
+        itemUnitIds.length === 0 ||
+        (await tx.itemUnit.count({
+          where: { id: { in: itemUnitIds }, status: "AVAILABLE" },
+        })) === itemUnitIds.length;
 
-      if ((lotId || itemUnitIds.length > 0) && platforms.length > 0) {
+      if ((lotId || itemUnitIds.length > 0) && platforms.length > 0 && usedItemsReady) {
         for (const platform of platforms) {
           const dupWhere: Prisma.ListingWhereInput = {
             storeId: entry.storeId,
             platformId: platform.id,
             status: "ACTIVE",
-            ...(used && itemUnitIds[0]
-              ? { itemUnitId: itemUnitIds[0] }
-              : { skuId: skuId! }),
+            ...(used && itemUnitIds[0] ? { itemUnitId: itemUnitIds[0] } : { skuId: skuId! }),
           };
           const dup = await tx.listing.findFirst({ where: dupWhere });
           if (dup) {
@@ -605,17 +767,14 @@ export async function processQuickEntry(entryId: string) {
         entry.salePrice &&
         new Decimal(entry.salePrice.toString()).gt(0) &&
         !customerOrderId &&
-        (lotId || itemUnitIds.length > 0)
+        (lotId || itemUnitIds.length > 0) &&
+        usedItemsReady
       ) {
         const salePrice = new Decimal(entry.salePrice.toString());
         const saleCurrency = entry.saleCurrency?.trim() || currency;
         const saleQty = used && itemUnitIds.length > 0 ? new Decimal(1) : qty;
         const lineAmount = salePrice.times(saleQty);
-        const salePlatformId = await resolvePlatformId(
-          tx,
-          entry.storeId,
-          entry.salePlatformText
-        );
+        const salePlatformId = await resolvePlatformId(tx, entry.storeId, entry.salePlatformText);
 
         const platform = salePlatformId
           ? await tx.platform.findUnique({ where: { id: salePlatformId } })
@@ -695,6 +854,9 @@ export async function processQuickEntry(entryId: string) {
               quantity: "1",
               unitCost: item.unitCost,
               costAmount: item.unitCost,
+              costCurrency: item.costCurrency,
+              costSourceType: item.sourceType,
+              costSourceId: item.sourceId,
               status: "PENDING",
             },
           });
@@ -709,6 +871,9 @@ export async function processQuickEntry(entryId: string) {
               quantity: saleQty.toFixed(4),
               unitCost: lot.unitCost,
               costAmount: costAmount.toFixed(4),
+              costCurrency: lot.costCurrency,
+              costSourceType: lot.sourceType,
+              costSourceId: lot.sourceId,
               status: "PENDING",
             },
           });
@@ -718,21 +883,22 @@ export async function processQuickEntry(entryId: string) {
       }
 
       const incomplete = detectIncompleteFields({
-        purchasePrice: entry.purchasePrice
-          ? new Decimal(entry.purchasePrice.toString())
-          : null,
+        purchasePrice: entry.purchasePrice ? new Decimal(entry.purchasePrice.toString()) : null,
         currentLocationText: entry.currentLocationText,
         salePrice: entry.salePrice ? new Decimal(entry.salePrice.toString()) : null,
         isAutoCreatedSku: skuCreated,
         purchaseCurrency: entry.purchaseCurrency,
+        inspectionResult: entry.inspectionResult,
       });
+      if (used && itemUnitIds.length > 0 && !usedItemsReady) {
+        incomplete.push("incomplete_item_condition");
+      }
 
       if (inspectionFailed) {
         incomplete.length = 0;
       }
 
-      const status =
-        inspectionFailed || incomplete.length === 0 ? "COMPLETED" : "PARTIAL";
+      const status = inspectionFailed || incomplete.length === 0 ? "COMPLETED" : "PARTIAL";
       workflowStage = resolveWorkflowStage({
         ...entry,
         generatedSkuId: skuId,
@@ -758,9 +924,7 @@ export async function processQuickEntry(entryId: string) {
           generatedListingIds: listingIds.length ? listingIds : undefined,
           generatedCustomerOrderId: customerOrderId,
           generatedOrderLineId: orderLineId,
-          errorMessage: incomplete.length
-            ? `待补全: ${incomplete.join(", ")}`
-            : null,
+          errorMessage: incomplete.length ? `待补全: ${incomplete.join(", ")}` : null,
         },
       });
 
@@ -794,6 +958,22 @@ export async function processQuickEntry(entryId: string) {
 
 export async function createAndProcessQuickEntry(input: QuickEntryRowInput) {
   const qty = parseQuantity(input.quantity);
+  const conditionType = normalizeItemConditionType(input.conditionType);
+  if (conditionType === "USED" && !qty.eq(1)) {
+    throw new Error("中古单件必须每件独立一行录入");
+  }
+  const conditionGrade =
+    conditionType === "USED"
+      ? (normalizeUsedItemGrade(input.conditionGrade) ?? "UNASSESSED")
+      : null;
+  const functionStatus = normalizeItemFunctionStatus(input.functionStatus, conditionType);
+  const conditionError = validateItemCondition({
+    conditionType,
+    conditionGrade,
+    functionStatus,
+    notes: [input.batchNote, input.note].filter(Boolean).join(" / "),
+  });
+  if (conditionError) throw new Error(conditionError);
   const entry = await prisma.quickEntry.create({
     data: {
       storeId: input.storeId,
@@ -802,7 +982,9 @@ export async function createAndProcessQuickEntry(input: QuickEntryRowInput) {
       rawProductName: input.rawProductName.trim(),
       rawVariant: input.rawVariant?.trim(),
       rawCategory: input.rawCategory?.trim(),
-      conditionType: input.conditionType?.trim(),
+      conditionType,
+      conditionGrade,
+      functionStatus,
       quantity: qty.toFixed(4),
       purchasePrice: decimalOrNull(input.purchasePrice),
       purchaseCurrency: input.purchaseCurrency?.trim() || "CNY",
@@ -826,6 +1008,7 @@ export async function createAndProcessQuickEntry(input: QuickEntryRowInput) {
       inspectionResult: input.inspectionResult?.trim(),
       inspectionNote: input.inspectionNote?.trim(),
       workflowStage: "PURCHASE",
+      generatedSkuId: input.existingSkuId?.trim() || undefined,
     },
   });
 
@@ -856,9 +1039,22 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
     if (!price || new Decimal(price).lte(0)) {
       throw new Error(`「${row.rawProductName}」缺少有效购入价`);
     }
-    if (isUsedCondition(row.conditionType) && !row.batchNote?.trim() && !row.note?.trim()) {
-      throw new Error(`「${row.rawProductName}」为中古/瑕疵，请填写批次描述`);
+    const conditionType = normalizeItemConditionType(row.conditionType);
+    if (conditionType === "USED" && !parseQuantity(row.quantity).eq(1)) {
+      throw new Error(`「${row.rawProductName}」为中古单件，请拆成独立一行录入`);
     }
+    const conditionGrade =
+      conditionType === "USED"
+        ? (normalizeUsedItemGrade(row.conditionGrade) ?? "UNASSESSED")
+        : null;
+    const functionStatus = normalizeItemFunctionStatus(row.functionStatus, conditionType);
+    const conditionError = validateItemCondition({
+      conditionType,
+      conditionGrade,
+      functionStatus,
+      notes: [row.batchNote, row.note].filter(Boolean).join(" / "),
+    });
+    if (conditionError) throw new Error(`「${row.rawProductName}」：${conditionError}`);
   }
 
   return prisma.$transaction(async (tx) => {
@@ -884,11 +1080,12 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
 
     const entryIds: string[] = [];
     const lineIds: string[] = [];
+    const skuIds: string[] = [];
 
     for (const row of rows) {
       const qty = parseQuantity(row.quantity);
       const unitCost = new Decimal(decimalOrNull(row.purchasePrice)!);
-      const { sku } = await matchOrCreateSku(tx, storeId, row);
+      const { sku } = await matchOrCreateQuickEntrySku(tx, storeId, row);
       const entry = await tx.quickEntry.create({
         data: {
           storeId,
@@ -897,7 +1094,15 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
           rawProductName: row.rawProductName.trim(),
           rawVariant: row.rawVariant?.trim(),
           rawCategory: row.rawCategory?.trim(),
-          conditionType: row.conditionType?.trim(),
+          conditionType: normalizeItemConditionType(row.conditionType),
+          conditionGrade:
+            normalizeItemConditionType(row.conditionType) === "USED"
+              ? (normalizeUsedItemGrade(row.conditionGrade) ?? "UNASSESSED")
+              : null,
+          functionStatus: normalizeItemFunctionStatus(
+            row.functionStatus,
+            normalizeItemConditionType(row.conditionType)
+          ),
           quantity: qty.toFixed(4),
           purchasePrice: unitCost.toFixed(4),
           purchaseCurrency: currency,
@@ -917,6 +1122,7 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
           batchNote: row.batchNote?.trim(),
           workflowStage: "PURCHASE",
           processedStatus: "PROCESSING",
+          generatedSkuId: row.existingSkuId?.trim() || undefined,
         },
       });
 
@@ -928,6 +1134,7 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
           quantity: qty.toFixed(4),
           unitPrice: unitCost.toFixed(4),
           lineAmount: lineAmount.toFixed(4),
+          trackingMode: isUsedCondition(row.conditionType) ? "ITEM_UNIT" : "LOT",
         },
       });
 
@@ -946,6 +1153,7 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
 
       entryIds.push(entry.id);
       lineIds.push(line.id);
+      skuIds.push(sku.id);
     }
 
     const lines = await tx.purchaseLine.findMany({
@@ -963,7 +1171,7 @@ export async function createGroupedPurchaseQuickEntries(rows: QuickEntryRowInput
       },
     });
 
-    return { purchaseOrderId: po.id, entryIds, lineIds };
+    return { purchaseOrderId: po.id, entryIds, lineIds, skuIds };
   });
 }
 
@@ -974,6 +1182,26 @@ export async function updateAndProcessQuickEntry(
   const existing = await prisma.quickEntry.findUnique({ where: { id: entryId } });
   if (!existing) throw new Error("快速录入记录不存在");
 
+  const conditionType = normalizeItemConditionType(input.conditionType ?? existing.conditionType);
+  const conditionGrade =
+    conditionType === "USED"
+      ? (normalizeUsedItemGrade(input.conditionGrade ?? existing.conditionGrade) ?? "UNASSESSED")
+      : null;
+  const functionStatus = normalizeItemFunctionStatus(
+    input.functionStatus ?? existing.functionStatus,
+    conditionType
+  );
+  const nextNotes = [input.batchNote ?? existing.batchNote, input.note ?? existing.note]
+    .filter(Boolean)
+    .join(" / ");
+  const conditionError = validateItemCondition({
+    conditionType,
+    conditionGrade,
+    functionStatus,
+    notes: nextNotes,
+  });
+  if (conditionError) throw new Error(conditionError);
+
   await prisma.quickEntry.update({
     where: { id: entryId },
     data: {
@@ -981,36 +1209,30 @@ export async function updateAndProcessQuickEntry(
       rawProductName: input.rawProductName?.trim() ?? existing.rawProductName,
       rawVariant: input.rawVariant?.trim() ?? existing.rawVariant,
       rawCategory: input.rawCategory?.trim() ?? existing.rawCategory,
-      conditionType: input.conditionType?.trim() ?? existing.conditionType,
-      quantity: input.quantity
-        ? parseQuantity(input.quantity).toFixed(4)
-        : existing.quantity,
+      conditionType,
+      conditionGrade,
+      functionStatus,
+      quantity: input.quantity ? parseQuantity(input.quantity).toFixed(4) : existing.quantity,
       purchasePrice:
         input.purchasePrice !== undefined
           ? decimalOrNull(input.purchasePrice)
           : existing.purchasePrice,
       purchaseCurrency: input.purchaseCurrency?.trim() ?? existing.purchaseCurrency,
-      purchasePlatformText:
-        input.purchasePlatformText?.trim() ?? existing.purchasePlatformText,
+      purchasePlatformText: input.purchasePlatformText?.trim() ?? existing.purchasePlatformText,
       purchaseDate:
-        input.purchaseDate !== undefined
-          ? dateOrNull(input.purchaseDate)
-          : existing.purchaseDate,
-      purchaseTrackingNo:
-        input.purchaseTrackingNo?.trim() ?? existing.purchaseTrackingNo,
+        input.purchaseDate !== undefined ? dateOrNull(input.purchaseDate) : existing.purchaseDate,
+      purchaseTrackingNo: input.purchaseTrackingNo?.trim() ?? existing.purchaseTrackingNo,
       purchaseShippingFee:
         input.purchaseShippingFee !== undefined
           ? decimalOrNull(input.purchaseShippingFee)
           : existing.purchaseShippingFee,
-      currentLocationText:
-        input.currentLocationText?.trim() ?? existing.currentLocationText,
+      currentLocationText: input.currentLocationText?.trim() ?? existing.currentLocationText,
       transitTrackingNo: input.transitTrackingNo?.trim() ?? existing.transitTrackingNo,
       transitShippingFee:
         input.transitShippingFee !== undefined
           ? decimalOrNull(input.transitShippingFee)
           : existing.transitShippingFee,
-      listingPlatformsText:
-        input.listingPlatformsText?.trim() ?? existing.listingPlatformsText,
+      listingPlatformsText: input.listingPlatformsText?.trim() ?? existing.listingPlatformsText,
       salePlatformText: input.salePlatformText?.trim() ?? existing.salePlatformText,
       saleCurrency: input.saleCurrency?.trim() ?? existing.saleCurrency,
       salePrice:
@@ -1020,17 +1242,14 @@ export async function updateAndProcessQuickEntry(
           ? decimalOrNull(input.saleShippingFee)
           : existing.saleShippingFee,
       saleMiscFee:
-        input.saleMiscFee !== undefined
-          ? decimalOrNull(input.saleMiscFee)
-          : existing.saleMiscFee,
-      salePlatformFeeText:
-        input.salePlatformFeeText?.trim() ?? existing.salePlatformFeeText,
-      saleDate:
-        input.saleDate !== undefined ? dateOrNull(input.saleDate) : existing.saleDate,
+        input.saleMiscFee !== undefined ? decimalOrNull(input.saleMiscFee) : existing.saleMiscFee,
+      salePlatformFeeText: input.salePlatformFeeText?.trim() ?? existing.salePlatformFeeText,
+      saleDate: input.saleDate !== undefined ? dateOrNull(input.saleDate) : existing.saleDate,
       note: input.note?.trim() ?? existing.note,
       batchNote: input.batchNote?.trim() ?? existing.batchNote,
       inspectionResult: input.inspectionResult?.trim() ?? existing.inspectionResult,
       inspectionNote: input.inspectionNote?.trim() ?? existing.inspectionNote,
+      generatedSkuId: input.existingSkuId?.trim() ?? existing.generatedSkuId,
       inspectedAt:
         input.inspectionResult && input.inspectionResult !== existing.inspectionResult
           ? new Date()

@@ -102,7 +102,9 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
         defaultCurrency: formData.defaultCurrency || undefined,
         shippingRules: shippingRules
           .filter((rule) =>
-            [rule.name, rule.carrier, rule.sizeClass, rule.fee, rule.notes].some((value) => value.trim())
+            [rule.name, rule.carrier, rule.sizeClass, rule.fee, rule.notes].some((value) =>
+              value.trim()
+            )
           )
           .map((rule) => ({
             ...rule,
@@ -124,11 +126,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
       router.refresh();
     } catch (error) {
       setSubmitError(
-        error instanceof Error
-          ? error.message
-          : initialData
-            ? "保存平台失败"
-            : "创建平台失败"
+        error instanceof Error ? error.message : initialData ? "保存平台失败" : "创建平台失败"
       );
     } finally {
       setLoading(false);
@@ -139,11 +137,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
     ? (parseFloat(formData.defaultFeeRate) * 100).toFixed(1)
     : null;
 
-  const updateShippingRule = (
-    index: number,
-    field: keyof ShippingRuleForm,
-    value: string
-  ) => {
+  const updateShippingRule = (index: number, field: keyof ShippingRuleForm, value: string) => {
     setSubmitError(null);
     setShippingRules((prev) =>
       prev.map((rule, i) => (i === index ? { ...rule, [field]: value } : rule))
@@ -159,14 +153,10 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             id="code"
             placeholder="例如：MERCARI, YAHOO, RAKUTEN"
             value={formData.code}
-            onChange={(e) =>
-              updateFormData({ code: e.target.value.toUpperCase() })
-            }
+            onChange={(e) => updateFormData({ code: e.target.value.toUpperCase() })}
             required
           />
-          <p className="text-xs text-muted-foreground">
-            平台的唯一标识符，建议使用大写字母
-          </p>
+          <p className="text-xs text-muted-foreground">平台的唯一标识符，建议使用大写字母</p>
         </div>
 
         <div className="space-y-2">
@@ -183,21 +173,23 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="country">所属国家</Label>
+          <Label htmlFor="country">销售市场 *</Label>
           <Select
             id="country"
             value={formData.country}
-            onChange={(e) =>
-              updateFormData({ country: e.target.value })
-            }
+            onChange={(e) => updateFormData({ country: e.target.value })}
+            required
           >
-            <option value="">选择国家（选填）</option>
+            <option value="">选择销售市场</option>
             {COUNTRIES.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}
               </option>
             ))}
           </Select>
+          <p className="text-xs text-muted-foreground">
+            决定该平台会出现在哪个货盘的筛选、覆盖统计和上架入口中。
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -205,9 +197,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
           <Select
             id="defaultCurrency"
             value={formData.defaultCurrency}
-            onChange={(e) =>
-              updateFormData({ defaultCurrency: e.target.value })
-            }
+            onChange={(e) => updateFormData({ defaultCurrency: e.target.value })}
           >
             <option value="">选择币种（选填）</option>
             {CURRENCIES.map((c) => (
@@ -230,14 +220,10 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             max="1"
             placeholder="例如：0.10 (10%)"
             value={formData.defaultFeeRate}
-            onChange={(e) =>
-              updateFormData({ defaultFeeRate: e.target.value })
-            }
+            onChange={(e) => updateFormData({ defaultFeeRate: e.target.value })}
           />
           {feeRatePercent && (
-            <p className="text-xs text-muted-foreground">
-              即 {feeRatePercent}% 的平台抽成
-            </p>
+            <p className="text-xs text-muted-foreground">即 {feeRatePercent}% 的平台抽成</p>
           )}
         </div>
 
@@ -248,11 +234,11 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
             type="number"
             step="1"
             min="0"
-            placeholder={formData.defaultCurrency ? `例如：750 (${formData.defaultCurrency})` : "例如：750"}
-            value={formData.defaultShippingFee}
-            onChange={(e) =>
-              updateFormData({ defaultShippingFee: e.target.value })
+            placeholder={
+              formData.defaultCurrency ? `例如：750 (${formData.defaultCurrency})` : "例如：750"
             }
+            value={formData.defaultShippingFee}
+            onChange={(e) => updateFormData({ defaultShippingFee: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
             工作台记录已上架时会自动带出；未填写则使用下方首条有金额的配送规则。
@@ -277,7 +263,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
               setShippingRules((prev) => [
                 ...prev,
                 createEmptyShippingRule(formData.defaultCurrency || "JPY"),
-              ])
+              ]);
             }}
           >
             <Plus className="mr-2 h-4 w-4" />
@@ -397,7 +383,8 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
 
       {submitError && (
         <p className="flex items-center gap-1 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4" />{submitError}
+          <AlertCircle className="h-4 w-4" />
+          {submitError}
         </p>
       )}
 
@@ -405,12 +392,7 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
         <Button type="submit" disabled={loading}>
           {loading ? "保存中..." : initialData ? "保存平台" : "创建平台"}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => router.back()}
-          disabled={loading}
-        >
+        <Button type="button" variant="outline" onClick={() => router.back()} disabled={loading}>
           取消
         </Button>
       </div>

@@ -42,7 +42,7 @@ export interface SkuCardVariantStock {
     cost: string;
     currency: string;
     location: string;
-    status: "已上架" | "在途" | "未上架" | "已售出";
+    status: "已上架" | "在途" | "未上架" | "已售出" | "待检查 / 暂停销售";
     platforms: Array<{ code: string; name: string }>;
   }>;
 }
@@ -113,10 +113,10 @@ function listingStatusLabel(
 function itemStatusLabel(
   status: string,
   hasListing: boolean
-): "已上架" | "在途" | "未上架" | "已售出" {
+): "已上架" | "在途" | "未上架" | "已售出" | "待检查 / 暂停销售" {
   if (status === "CONSUMED" || status === "ALLOCATED") return "已售出";
   if (hasListing) return "已上架";
-  if (status === "RETURN_CHECK") return "在途";
+  if (status === "RETURN_CHECK") return "待检查 / 暂停销售";
   return "未上架";
 }
 

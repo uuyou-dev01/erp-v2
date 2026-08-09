@@ -5,6 +5,7 @@ import { runImport } from "@/app/actions/import";
 const runId = `import_action_${Date.now()}`;
 const organizationCode = `org_${runId}`;
 const storeId = `store_${runId}`;
+const additionalStoreIds: string[] = [];
 
 describe("import action preflight validation", () => {
   beforeAll(async () => {
@@ -27,7 +28,7 @@ describe("import action preflight validation", () => {
   });
 
   afterAll(async () => {
-    await prisma.store.deleteMany({ where: { id: storeId } });
+    await prisma.store.deleteMany({ where: { id: { in: [storeId, ...additionalStoreIds] } } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
   });
 
@@ -311,6 +312,7 @@ describe("import action preflight validation", () => {
         currency: "CNY",
       },
     });
+    additionalStoreIds.push(otherStore.id);
     const sku = await prisma.sKU.create({
       data: {
         storeId,

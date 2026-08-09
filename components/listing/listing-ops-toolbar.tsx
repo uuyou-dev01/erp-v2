@@ -19,6 +19,7 @@ interface ListingOpsToolbarProps {
   sort?: string;
   query?: string;
   showStockSort?: boolean;
+  scopeLabel?: string;
 }
 
 function withParam(
@@ -46,6 +47,7 @@ export function ListingOpsToolbar({
   sort,
   query,
   showStockSort = false,
+  scopeLabel,
 }: ListingOpsToolbarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -66,6 +68,11 @@ export function ListingOpsToolbar({
   return (
     <div className="space-y-2 rounded-xl border bg-card p-3">
       <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+        {scopeLabel ? (
+          <span className="inline-flex h-8 shrink-0 items-center rounded-md bg-muted px-2.5 text-xs font-medium text-muted-foreground">
+            {scopeLabel} · {platforms.length} 个平台
+          </span>
+        ) : null}
         <Link href={withParam(searchParams, basePath, "platformId")}>
           <Button
             variant={!activePlatformId ? "default" : "outline"}

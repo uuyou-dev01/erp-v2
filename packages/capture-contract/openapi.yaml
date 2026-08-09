@@ -1,0 +1,36 @@
+openapi: 3.1.0
+info:
+  title: ERP Product Intelligence Capture API
+  version: 1.0.0
+servers:
+  - url: /api/v1/product-intelligence
+paths:
+  /captures:
+    get:
+      operationId: listCaptures
+      responses: { "200": { description: Recent captures } }
+    post:
+      operationId: createCapture
+      parameters:
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Capture" }
+      responses: { "201": { description: Capture accepted } }
+components:
+  schemas:
+    Capture:
+      type: object
+      required: [captureType, businessIntent]
+      properties:
+        captureType: { enum: [SHARE_URL, SHARE_TEXT, SHARE_IMAGE, SCREENSHOT, CAMERA, MANUAL, BARCODE] }
+        businessIntent: { enum: [OBSERVE_PRICE, RECORD_PURCHASE, UNDECIDED] }
+        sourceUrl: { type: string, format: uri }
+        sourceText: { type: string }
+        platformName: { type: string }
+        title: { type: string }
+        amount: { type: string, pattern: "^[0-9]+(\\.[0-9]{1,4})?$" }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        assetIds: { type: array, items: { type: string } }

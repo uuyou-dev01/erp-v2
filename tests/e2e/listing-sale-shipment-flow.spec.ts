@@ -19,7 +19,7 @@ test.describe("listing sale and shipment flow", () => {
   test.beforeAll(async () => {
     const location =
       (await prisma.location.findFirst({
-        where: { storeId: STORE_ID, isSellableDefault: true },
+        where: { storeId: STORE_ID, isSellableDefault: true, region: { startsWith: "JP_" } },
       })) ??
       (await prisma.location.create({
         data: {
@@ -27,7 +27,7 @@ test.describe("listing sale and shipment flow", () => {
           code: `WH_${runId}`,
           name: "E2E 可售仓",
           type: "WAREHOUSE",
-          region: "CN_SHANGHAI",
+          region: "JP_TOKYO",
         },
       }));
     locationId = location.id;
@@ -183,7 +183,12 @@ test.describe("listing sale and shipment flow", () => {
     await page.getByLabel(/最终售出单价/).fill("180");
     await page.getByLabel("平台费率").fill("0.1");
     await page.getByLabel(/邮费成本/).fill("12");
-    await page.getByLabel("发货方 / 发货仓").selectOption(locationId);
+    const shipFromLocation = page.getByLabel("发货方 / 发货仓");
+    if (await shipFromLocation.isEnabled()) {
+      await shipFromLocation.selectOption(locationId);
+    } else {
+      await expect(shipFromLocation).toHaveValue(locationId);
+    }
     await page.getByLabel("客户名称").fill("E2E Buyer");
     await page.getByLabel("平台订单号").fill(externalOrderNo);
     await page.getByRole("button", { name: "确认登记" }).click();

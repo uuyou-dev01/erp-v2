@@ -2,10 +2,7 @@ import type {
   ListingCoveragePlatform,
   ListingCoverageProduct,
 } from "@/lib/application/listing-coverage";
-import {
-  inferMarketFromLocation,
-  isPlatformTargetForMarket,
-} from "@/lib/application/sellable-market";
+import { locationMatchesPlatformMarket } from "@/lib/application/sellable-market";
 
 /** 可售但尚未有任何上架记录 */
 export function isAwaitingFirstListing(product: ListingCoverageProduct) {
@@ -21,12 +18,15 @@ export function getMissingPlatforms(
     const unit = product.itemUnits.find((item) => item.id === options.itemUnitId);
     if (!unit) return [];
 
-    const unitMarket = inferMarketFromLocation({
-      region: unit.locationRegion,
-      name: unit.locationName,
-    });
     const targetPlatforms = product.allPlatforms.filter((platform) =>
-      isPlatformTargetForMarket(platform, unitMarket)
+      locationMatchesPlatformMarket(
+        {
+          region: unit.locationRegion,
+          name: unit.locationName,
+          fulfillableMarkets: unit.fulfillableMarkets,
+        },
+        platform
+      )
     );
     const displayPlatforms = targetPlatforms.length > 0 ? targetPlatforms : product.allPlatforms;
     const activePlatformIds = new Set(
@@ -72,8 +72,7 @@ export function buildListingCreateHref(
 ) {
   const params = new URLSearchParams();
   const scope =
-    options?.listingScope ??
-    (product.hasItemUnits && !product.hasLotStock ? "ITEM_UNIT" : "SKU");
+    options?.listingScope ?? (product.hasItemUnits && !product.hasLotStock ? "ITEM_UNIT" : "SKU");
   params.set("listingType", scope);
   params.set("skuId", product.skuId);
   if (scope === "ITEM_UNIT" && options?.itemUnitId) {

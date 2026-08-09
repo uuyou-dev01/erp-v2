@@ -18,21 +18,21 @@ export default async function SettlementsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">结算单</h1>
-        <p className="text-muted-foreground">管理代卖、供货和代发履约产生的应收应付。</p>
+        <h1 className="text-3xl font-bold">结算记录</h1>
+        <p className="text-muted-foreground">记录代卖、供货和代发产生的线下往来；系统不会发起真实转账。</p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>结算列表</CardTitle>
+          <CardTitle>往来记录</CardTitle>
         </CardHeader>
         <CardContent>
           {settlements.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
-              <h3 className="mb-2 text-lg font-semibold">暂无结算单</h3>
+              <h3 className="mb-2 text-lg font-semibold">暂无结算记录</h3>
               <p className="mb-4 max-w-md text-sm text-muted-foreground">
-                在已发货或已送达的履约请求中生成结算单。
+                在已发货或已送达的履约请求中整理线下结算记录。
               </p>
               <Link href="/fulfillment/requests">
                 <Button>查看履约请求</Button>

@@ -44,6 +44,7 @@ let resaleListingId = "";
 let fulfillmentRequestId = "";
 let settlementId = "";
 let customerOrderId = "";
+let testUserId = "";
 
 describe("marketplace resale collaboration flow", () => {
   beforeAll(async () => {
@@ -97,6 +98,7 @@ describe("marketplace resale collaboration flow", () => {
         storeId: supplierStore.id,
       },
     });
+    testUserId = user.id;
 
     await prisma.membership.create({
       data: {
@@ -136,12 +138,21 @@ describe("marketplace resale collaboration flow", () => {
     });
     platformId = platform.id;
 
-    await prisma.fxRate.create({
-      data: {
+    const fxEffectiveDate = new Date("2026-07-01T00:00:00.000Z");
+    await prisma.fxRate.upsert({
+      where: {
+        fromCurrency_toCurrency_effectiveDate: {
+          fromCurrency: "JPY",
+          toCurrency: "CNY",
+          effectiveDate: fxEffectiveDate,
+        },
+      },
+      update: { rate: "0.05000000" },
+      create: {
         fromCurrency: "JPY",
         toCurrency: "CNY",
         rate: "0.05000000",
-        effectiveDate: new Date("2026-07-01T00:00:00.000Z"),
+        effectiveDate: fxEffectiveDate,
       },
     });
 
@@ -153,6 +164,7 @@ describe("marketplace resale collaboration flow", () => {
       unitPrice: "6000",
       currency: "JPY",
       commissionRate: "0.2000",
+      agreementTerms: "货主收取约定供货价，代卖方按成交额 20% 获取返佣。",
       fulfillmentMode: "SUPPLIER_SHIPS",
       viewerStoreIds: [resellerStore.id],
       items: [
@@ -202,6 +214,7 @@ describe("marketplace resale collaboration flow", () => {
       storeId: supplierStoreId,
       title: "Invalid Group Offer",
       visibility: "PRIVATE",
+      agreementTerms: "测试商品组不可发布。",
       currency: "JPY",
       items: [
         {
@@ -288,6 +301,10 @@ describe("marketplace resale collaboration flow", () => {
       shippingCurrency: "JPY",
     });
     expect(shipResult.success).toBe(true);
+    if (shipResult.success) {
+      expect(shipResult.settlement).toMatchObject({ status: "CREATED" });
+      settlementId = shipResult.settlement?.id ?? "";
+    }
 
     const shippedOrder = await prisma.customerOrder.findUniqueOrThrow({
       where: { id: customerOrderId },
@@ -299,18 +316,36 @@ describe("marketplace resale collaboration flow", () => {
     expect(shippedOffer.availableQty.toString()).toBe("1");
     expect(shippedOffer.reservedQty.toString()).toBe("0");
 
+    const pendingEarning = await prisma.earningEvent.findFirstOrThrow({
+      where: {
+        storeId: resellerStoreId,
+        userId: testUserId,
+        sourceType: "SETTLEMENT",
+        sourceId: settlementId,
+        earningType: "RESALE_COMMISSION",
+      },
+    });
+    expect(pendingEarning.status).toBe("PENDING");
+    expect(pendingEarning.earningAmount.toString()).toBe("100");
+
     const settlementResult = await createSettlementFromFulfillmentAction(fulfillmentRequestId, resellerStoreId);
     expect(settlementResult.success).toBe(true);
-    if (settlementResult.success) settlementId = settlementResult.id;
+    if (settlementResult.success) {
+      expect(settlementResult.created).toBe(false);
+      expect(settlementResult.id).toBe(settlementId);
+    }
 
     const settlement = await prisma.settlement.findUniqueOrThrow({
       where: { id: settlementId },
       include: { lines: true },
     });
-    expect(settlement.totalAmount.toString()).toBe("7600");
+    // Every line is converted before aggregation. The settlement header is the
+    // base-currency net amount, not a sum of mixed-currency source numbers.
+    expect(settlement.totalAmount.toString()).toBe("240");
     expect(settlement.baseCurrency).toBe("CNY");
-    expect(settlement.fxRate?.toString()).toBe("0.05");
-    expect(settlement.baseAmount?.toString()).toBe("380");
+    expect(settlement.currency).toBe("CNY");
+    expect(settlement.fxRate?.toString()).toBe("1");
+    expect(settlement.baseAmount?.toString()).toBe("240");
     expect(settlement.lines.map((line) => line.lineType).sort()).toEqual([
       "COMMISSION",
       "PLATFORM_FEE",
@@ -320,14 +355,11 @@ describe("marketplace resale collaboration flow", () => {
     expect(settlement.lines.every((line) => line.baseCurrency === "CNY")).toBe(true);
     expect(settlement.lines.every((line) => line.fxRate?.toString() === "0.05")).toBe(true);
 
-    const pendingSettlementSummary = await getSettlementSummary(resellerStoreId, {
-      dateFrom: new Date("2026-07-01T00:00:00.000Z"),
-      dateTo: new Date("2026-07-31T23:59:59.999Z"),
-    });
+    const pendingSettlementSummary = await getSettlementSummary(resellerStoreId);
     expect(pendingSettlementSummary.baseCurrency).toBe("CNY");
-    expect(pendingSettlementSummary.pendingPayable).toBe("380.00");
-    expect(pendingSettlementSummary.pendingReceivable).toBe("50.00");
-    expect(pendingSettlementSummary.pendingNetPayable).toBe("330.00");
+    expect(pendingSettlementSummary.pendingPayable).toBe("340.00");
+    expect(pendingSettlementSummary.pendingReceivable).toBe("100.00");
+    expect(pendingSettlementSummary.pendingNetPayable).toBe("240.00");
     expect(pendingSettlementSummary.pendingCount).toBe(1);
 
     const confirmResult = await changeSettlementStatusAction(settlementId, "CONFIRMED");
@@ -335,12 +367,39 @@ describe("marketplace resale collaboration flow", () => {
     const paidResult = await changeSettlementStatusAction(settlementId, "PAID");
     expect(paidResult.success).toBe(true);
 
-    const paidSettlementSummary = await getSettlementSummary(resellerStoreId, {
-      dateFrom: new Date("2026-07-01T00:00:00.000Z"),
-      dateTo: new Date("2026-07-31T23:59:59.999Z"),
+    const earning = await prisma.earningEvent.findFirstOrThrow({
+      where: {
+        storeId: resellerStoreId,
+        userId: testUserId,
+        sourceType: "SETTLEMENT",
+        sourceId: settlementId,
+        earningType: "RESALE_COMMISSION",
+      },
+      include: { ledgerEntries: true, walletAccount: true },
     });
+    expect(earning.status).toBe("SETTLED");
+    expect(earning.earningAmount.toString()).toBe("100");
+    expect(earning.currency).toBe("CNY");
+    expect(earning.walletAccount?.ownerId).toBe(testUserId);
+    expect(earning.ledgerEntries).toHaveLength(1);
+    expect(earning.ledgerEntries[0]).toMatchObject({
+      entryType: "CREDIT",
+      currency: "CNY",
+      status: "POSTED",
+    });
+    expect(earning.ledgerEntries[0].amount.toString()).toBe("100");
+
+    const duplicatePaidResult = await changeSettlementStatusAction(settlementId, "PAID");
+    expect(duplicatePaidResult.success).toBe(false);
+    expect(
+      await prisma.walletLedgerEntry.count({
+        where: { earningEventId: earning.id },
+      }),
+    ).toBe(1);
+
+    const paidSettlementSummary = await getSettlementSummary(resellerStoreId);
     expect(paidSettlementSummary.pendingNetPayable).toBe("0.00");
-    expect(paidSettlementSummary.paidNetPayable).toBe("330.00");
+    expect(paidSettlementSummary.paidNetPayable).toBe("240.00");
     expect(paidSettlementSummary.paidCount).toBe(1);
   });
 

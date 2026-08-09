@@ -14,6 +14,7 @@ vi.mock("next/headers", () => ({
 import {
   createSKU,
   createSKUAction,
+  convertSkuStructureAction,
   deleteSKUAction,
   setSkuCatalogStatusAction,
   updateSKUAction,
@@ -213,5 +214,112 @@ describe("sku action results", () => {
     if (!result.success) {
       expect(result.error).toContain("商品组只用于管理规格");
     }
+  });
+
+  it("converts an independent SKU to a group and back without changing the operational SKU id", async () => {
+    const simple = await createSKU({
+      storeId,
+      catalogRole: "SIMPLE",
+      name: "克罗心 绿松石单珠手链 6mm",
+      brand: "Chrome Hearts",
+      category: "手链",
+      imageUrl: "/uploads/structure-test.jpg",
+    });
+    const intelligenceParent = await prisma.productIntelligenceItem.create({
+      data: {
+        storeId,
+        title: simple.name,
+        brand: simple.brand,
+        visibility: "ORGANIZATION",
+      },
+    });
+    const intelligenceChild = await prisma.productIntelligenceItem.create({
+      data: {
+        storeId,
+        parentItemId: intelligenceParent.id,
+        skuId: simple.id,
+        title: "标准款",
+        brand: simple.brand,
+        visibility: "ORGANIZATION",
+      },
+    });
+    const observation = await prisma.productIntelligenceObservation.create({
+      data: {
+        itemId: intelligenceChild.id,
+        storeId,
+        sourceType: "MARKET_SEEN",
+        priceType: "SALE",
+        amount: "85000",
+        currency: "JPY",
+        visibility: "ORGANIZATION",
+      },
+    });
+
+    const toGroup = await convertSkuStructureAction({
+      skuId: simple.id,
+      mode: "SIMPLE_TO_GROUP",
+      groupName: "克罗心 绿松石单珠手链",
+      axisName: "尺寸",
+      variantLabel: "6mm",
+    });
+    expect(toGroup.success).toBe(true);
+    if (!toGroup.success) return;
+    expect(toGroup.mode).toBe("SIMPLE_TO_GROUP");
+    if (toGroup.mode !== "SIMPLE_TO_GROUP") return;
+
+    const variantAfterConversion = await prisma.sKU.findUniqueOrThrow({
+      where: { id: simple.id },
+    });
+    expect(variantAfterConversion.catalogRole).toBe("VARIANT");
+    expect(variantAfterConversion.parentSkuId).toBe(toGroup.groupId);
+    expect(variantAfterConversion.variantLabel).toBe("6mm");
+    expect(variantAfterConversion.code).toBe(simple.code);
+    const groupAfterConversion = await prisma.sKU.findUniqueOrThrow({
+      where: { id: toGroup.groupId },
+    });
+    expect(groupAfterConversion.catalogRole).toBe("GROUP");
+    const intelligenceAfterConversion = await prisma.productIntelligenceItem.findUniqueOrThrow({
+      where: { id: intelligenceChild.id },
+      include: { parentItem: true },
+    });
+    expect(intelligenceAfterConversion.title).toBe("6mm");
+    expect(intelligenceAfterConversion.parentItem?.skuId).toBe(toGroup.groupId);
+    expect(
+      (
+        await prisma.productIntelligenceObservation.findUniqueOrThrow({
+          where: { id: observation.id },
+        })
+      ).itemId
+    ).toBe(intelligenceChild.id);
+
+    const toSimple = await convertSkuStructureAction({
+      skuId: toGroup.groupId,
+      mode: "GROUP_TO_SIMPLE",
+      simpleName: "克罗心 绿松石单珠手链 6mm",
+    });
+    expect(toSimple.success).toBe(true);
+    if (!toSimple.success) return;
+    expect(toSimple.targetSkuId).toBe(simple.id);
+
+    const simpleAfterRoundTrip = await prisma.sKU.findUniqueOrThrow({ where: { id: simple.id } });
+    expect(simpleAfterRoundTrip.catalogRole).toBe("SIMPLE");
+    expect(simpleAfterRoundTrip.parentSkuId).toBeNull();
+    expect(simpleAfterRoundTrip.variantLabel).toBeNull();
+    expect(simpleAfterRoundTrip.code).toBe(simple.code);
+    const archivedGroup = await prisma.sKU.findUniqueOrThrow({ where: { id: toGroup.groupId } });
+    expect(archivedGroup.mergeStatus).toBe("MERGED");
+    const intelligenceAfterRoundTrip = await prisma.productIntelligenceItem.findUniqueOrThrow({
+      where: { id: intelligenceChild.id },
+      include: { parentItem: true },
+    });
+    expect(intelligenceAfterRoundTrip.title).toBe("标准款");
+    expect(intelligenceAfterRoundTrip.parentItem?.skuId).toBeNull();
+    expect(
+      (
+        await prisma.productIntelligenceObservation.findUniqueOrThrow({
+          where: { id: observation.id },
+        })
+      ).itemId
+    ).toBe(intelligenceChild.id);
   });
 });

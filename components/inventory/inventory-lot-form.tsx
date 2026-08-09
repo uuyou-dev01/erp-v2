@@ -16,9 +16,15 @@ import { t, CURRENCIES } from "@/lib/i18n";
 
 interface InventoryLotFormProps {
   storeId: string;
+  initialSkuId?: string;
+  returnHref?: string;
 }
 
-export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
+export function InventoryLotForm({
+  storeId,
+  initialSkuId = "",
+  returnHref = "/inventory/lots",
+}: InventoryLotFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [skus, setSKUs] = useState<
@@ -33,7 +39,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
   >([]);
   const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [formData, setFormData] = useState({
-    skuId: "",
+    skuId: initialSkuId,
     locationId: "",
     quantity: "",
     unitCost: "",
@@ -103,7 +109,7 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
         return;
       }
 
-      router.push("/inventory/lots");
+      router.push(returnHref);
       router.refresh();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "创建入库库存失败，请重试");
@@ -261,7 +267,12 @@ export function InventoryLotForm({ storeId }: InventoryLotFormProps) {
         <Button type="submit" disabled={loading}>
           {loading ? t("common.creating") : t("inventory.create_lot")}
         </Button>
-        <Button type="button" variant="outline" onClick={() => router.back()} disabled={loading}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => router.push(returnHref)}
+          disabled={loading}
+        >
           {t("common.cancel")}
         </Button>
       </div>

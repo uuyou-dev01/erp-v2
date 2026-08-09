@@ -19,7 +19,7 @@ export default async function MySupplyOffersPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold">我的供给货盘</h1>
-          <p className="text-muted-foreground">管理本店发布给自己、合作方或市场查看的供给。</p>
+          <p className="text-muted-foreground">管理当前经营主体的共享货盘、销售账号、代卖方和履约规则。</p>
         </div>
         <Link href="/marketplace/new">
           <Button>
@@ -61,7 +61,7 @@ export default async function MySupplyOffersPage() {
                       <SupplyOfferVisibilityBadge visibility={offer.visibility} />
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {offer.items.length} 条明细 · 可供 {offer.availableQty} · 已预留 {offer.reservedQty} · 供给方 {offer.ownerPartner?.name ?? "本店自有"}
+                      {offer.items.length} 个商品 · 可接单 {Math.max(Number(offer.availableQty) - Number(offer.reservedQty), 0)} · 订单占用 {offer.reservedQty} · 在售渠道 {offer.salesChannels.filter((channel) => channel.status === "ACTIVE").length}
                     </div>
                   </div>
                   <SupplyOfferActions id={offer.id} title={offer.title} status={offer.status} />

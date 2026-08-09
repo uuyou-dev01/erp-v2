@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getCustomerOrderById } from "@/app/actions/customer-orders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,10 +23,10 @@ import {
   computeOrderDetailProfit,
   resolveAllocationCostCurrency,
 } from "@/lib/application/order-detail-profit";
+import { BackButton } from "@/components/shared/back-button";
+import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 
 export const dynamic = "force-dynamic";
-
-const STORE_ID = "store_1";
 
 const statusColors = {
   DRAFT: "secondary",
@@ -54,6 +55,7 @@ export default async function CustomerOrderDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const { id } = await params;
   const order = await getCustomerOrderById(id);
 
@@ -71,12 +73,16 @@ export default async function CustomerOrderDetailPage({
   const totalPaid = new Decimal(order.totalPaid.toString());
   const subtotal = new Decimal(order.subtotal.toString());
 
-  const platformFeeRate = order.platform?.defaultFeeRate
+  const defaultPlatformFeeRate = order.platform?.defaultFeeRate
     ? new Decimal(order.platform.defaultFeeRate.toString())
     : new Decimal(0);
 
   const existingPlatformFee = new Decimal(order.platformFee.toString());
   const existingShippingFee = new Decimal(order.shippingFee.toString());
+  const platformFeeRate =
+    existingPlatformFee.gt(0) && subtotal.gt(0)
+      ? existingPlatformFee.div(subtotal)
+      : defaultPlatformFeeRate;
 
   const platformFee = existingPlatformFee.gt(0)
     ? existingPlatformFee
@@ -102,9 +108,7 @@ export default async function CustomerOrderDetailPage({
           itemUnit: allocation.itemUnit,
         }),
         effectiveAt:
-          allocation.inventoryLot?.receivedAt ??
-          allocation.itemUnit?.createdAt ??
-          order.orderDate,
+          allocation.inventoryLot?.receivedAt ?? allocation.itemUnit?.createdAt ?? order.orderDate,
       })),
     })),
   });
@@ -123,11 +127,12 @@ export default async function CustomerOrderDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">订单: {order.id.slice(0, 8)}</h1>
-          <p className="text-muted-foreground">
-            {order.externalOrderNo || "无外部订单号"}
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <BackButton label="" fallbackHref="/sales" className="mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <h1 className="text-3xl font-bold">订单: {order.id.slice(0, 8)}</h1>
+            <p className="text-muted-foreground">{order.externalOrderNo || "无外部订单号"}</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {canConfirm && <ConfirmOrderButton orderId={order.id} />}
@@ -188,11 +193,12 @@ export default async function CustomerOrderDetailPage({
             <Store className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-sm font-medium">
-              {order.platform?.name || "未指定"}
-            </div>
+            <div className="text-sm font-medium">{order.platform?.name || "未指定"}</div>
             <p className="text-xs text-muted-foreground">
-              {new Date(order.createdAt).toLocaleDateString("zh-CN")}
+              收货地：
+              {order.shippingCountry
+                ? fulfillmentDestinationLabel(order.shippingCountry)
+                : "未指定"}
             </p>
           </CardContent>
         </Card>
@@ -281,16 +287,11 @@ export default async function CustomerOrderDetailPage({
                           {line.unitPrice && (
                             <span>
                               单价:{" "}
-                              <strong>
-                                {formatCurrency(line.unitPrice, order.currency)}
-                              </strong>
+                              <strong>{formatCurrency(line.unitPrice, order.currency)}</strong>
                             </span>
                           )}
                           <span>
-                            金额:{" "}
-                            <strong>
-                              {formatCurrency(line.lineAmount, order.currency)}
-                            </strong>
+                            金额: <strong>{formatCurrency(line.lineAmount, order.currency)}</strong>
                           </span>
                         </div>
                       </div>
@@ -317,7 +318,7 @@ export default async function CustomerOrderDetailPage({
                                     orderCurrency: order.currency,
                                     inventoryLot: alloc.inventoryLot,
                                     itemUnit: alloc.itemUnit,
-                                  }),
+                                  })
                                 )}
                               </span>
                             </div>
@@ -339,7 +340,8 @@ export default async function CustomerOrderDetailPage({
                           skuId={line.skuId}
                           skuCode={line.sku.code}
                           requiredQty={(requiredQty - allocatedQty).toString()}
-                          storeId={STORE_ID}
+                          storeId={storeId}
+                          shippingCountry={order.shippingCountry}
                         />
                       </div>
                     )}
@@ -357,7 +359,7 @@ export default async function CustomerOrderDetailPage({
             <CardTitle>添加商品</CardTitle>
           </CardHeader>
           <CardContent>
-            <AddOrderLineForm orderId={order.id} currency={order.currency} storeId={STORE_ID} />
+            <AddOrderLineForm orderId={order.id} currency={order.currency} storeId={storeId} />
           </CardContent>
         </Card>
       )}
@@ -370,8 +372,8 @@ export default async function CustomerOrderDetailPage({
               <div className="space-y-1 text-sm">
                 <p className="font-medium">订单已确认，待发货</p>
                 <p className="text-muted-foreground">
-                  库存已预留，确认发货后将扣减库存。
-                  确认时间：{order.confirmedAt && new Date(order.confirmedAt).toLocaleDateString("zh-CN")}
+                  库存已预留，确认发货后将扣减库存。 确认时间：
+                  {order.confirmedAt && new Date(order.confirmedAt).toLocaleDateString("zh-CN")}
                 </p>
               </div>
             </div>
@@ -388,7 +390,8 @@ export default async function CustomerOrderDetailPage({
                 <p className="font-medium">已发货</p>
                 <p className="text-muted-foreground">
                   {order.trackingNo ? `物流单号：${order.trackingNo} · ` : ""}
-                  发货时间：{order.shippedAt && new Date(order.shippedAt).toLocaleDateString("zh-CN")}
+                  发货时间：
+                  {order.shippedAt && new Date(order.shippedAt).toLocaleDateString("zh-CN")}
                   {order.settledAt
                     ? ` · 已结算（${new Date(order.settledAt).toLocaleDateString("zh-CN")}）`
                     : " · 待结算手续费/邮费"}

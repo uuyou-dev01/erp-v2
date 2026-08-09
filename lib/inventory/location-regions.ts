@@ -11,6 +11,9 @@ export const LOCATION_REGIONS = [
   { value: "JP_NAGOYA", label: "日本 · 名古屋" },
   { value: "US_LOS_ANGELES", label: "美国 · 洛杉矶" },
   { value: "US_NEW_YORK", label: "美国 · 纽约" },
+  { value: "EU_GERMANY", label: "欧洲 · 德国" },
+  { value: "EU_FRANCE", label: "欧洲 · 法国" },
+  { value: "EU_OTHER", label: "欧洲 · 其他" },
   { value: "OTHER", label: "其他" },
 ] as const;
 

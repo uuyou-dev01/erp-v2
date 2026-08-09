@@ -8,6 +8,7 @@ export type BulkActionNotice = {
 type BulkActionCountResult = {
   success: number;
   failed: number;
+  errors?: string[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -15,11 +16,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isBulkActionCountResult(value: unknown): value is BulkActionCountResult {
-  return (
-    isRecord(value) &&
-    typeof value.success === "number" &&
-    typeof value.failed === "number"
+  return isRecord(value) && typeof value.success === "number" && typeof value.failed === "number";
+}
+
+function firstError(result: BulkActionCountResult) {
+  const detail = result.errors?.find(
+    (message): message is string => typeof message === "string" && message.trim().length > 0
   );
+  return detail?.trim();
 }
 
 export function describeBulkActionResult(result: unknown): BulkActionNotice | null {
@@ -47,17 +51,23 @@ export function describeBulkActionResult(result: unknown): BulkActionNotice | nu
   }
 
   if (success > 0) {
+    const detail = firstError(result);
     return {
       tone: "error",
-      message: `已处理 ${success} 项，${failed} 项失败。请检查未完成的记录后重试。`,
+      message: detail
+        ? `已处理 ${success} 项，${failed} 项失败：${detail}`
+        : `已处理 ${success} 项，${failed} 项失败。请检查未完成的记录后重试。`,
       shouldRefresh: true,
       shouldClearSelection: false,
     };
   }
 
+  const detail = firstError(result);
   return {
     tone: "error",
-    message: `${failed} 项未能处理，请检查状态或必填信息后重试。`,
+    message: detail
+      ? `${failed} 项未能处理：${detail}`
+      : `${failed} 项未能处理，请检查状态或必填信息后重试。`,
     shouldRefresh: false,
     shouldClearSelection: false,
   };

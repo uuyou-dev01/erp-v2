@@ -11,7 +11,7 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: {
-    command: "export FORCE_COLOR=0; npx prisma db push && npm run db:seed && next dev --turbopack -p 3100",
+    command: "export FORCE_COLOR=0; export ERP_DEV_USER_EMAIL=admin@example.com; npx prisma db push && npm run db:seed && next dev --turbopack -p 3100",
     url: "http://127.0.0.1:3100/workbench",
     reuseExistingServer: true,
     timeout: 120_000,

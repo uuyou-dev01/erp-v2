@@ -13,18 +13,25 @@ import {
   type WorkItemDetail,
 } from "@/lib/application/workflow-queries";
 import type { QueueCounts, WorkItem, WorkQueue } from "@/lib/application/next-actions";
-import { bulkConfirmInboundShipmentsDelivered } from "@/app/actions/logistics";
+import {
+  bulkConfirmInboundShipmentsDelivered,
+  dispatchPurchaseTransfer,
+} from "@/app/actions/logistics";
 import {
   markPurchaseAsShipped,
   markPurchaseOrderArrived,
   receivePurchaseOrder,
+  returnPurchaseOrder,
 } from "@/app/actions/purchase-orders";
 import {
   addPurchaseOrdersToConsolidation,
   createConsolidationForPurchaseOrders,
 } from "@/app/actions/consolidations";
 import { getListingPendingItems } from "@/lib/application/listing-pending";
-import { mergePendingListingWorkItems } from "@/lib/application/workbench-pending-listing";
+import {
+  applyPendingListingContext,
+  mergePendingListingWorkItems,
+} from "@/lib/application/workbench-pending-listing";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { INCOMPLETE_TASK_STATUSES } from "@/lib/application/tasks";
 
@@ -59,6 +66,9 @@ function workItemRef(item: WorkItem) {
   }
   if (item.entityType === "shipment") {
     return { refType: "INBOUND_SHIPMENT", refId: item.entityId };
+  }
+  if (item.entityType === "sku") {
+    return { refType: "SKU", refId: item.entityId };
   }
   if (item.entityType === "itemUnit") {
     return { refType: "ITEM_UNIT", refId: item.entityId };
@@ -193,8 +203,17 @@ export async function getWorkbenchWorkItemDetail(
   entityType: WorkItem["entityType"],
   entityId: string
 ): Promise<WorkItemDetail | null> {
-  await requireUserContext();
-  return getWorkItemDetail(entityType, entityId);
+  const context = await requireUserContext();
+  const detail = await getWorkItemDetail(entityType, entityId);
+  if (!detail || (entityType !== "sku" && entityType !== "itemUnit")) return detail;
+
+  const pendingItems = await getListingPendingItems(context.activeStoreId);
+  const pendingItem = pendingItems.find((item) =>
+    entityType === "itemUnit"
+      ? item.type === "ITEM_UNIT" && item.itemUnitId === entityId
+      : item.type === "SKU" && item.skuId === entityId,
+  );
+  return pendingItem ? applyPendingListingContext(detail, pendingItem) : detail;
 }
 
 export async function getWorkbenchProductTicket(
@@ -315,6 +334,11 @@ export async function bulkInboundPurchases(input: {
         failed += 1;
         continue;
       }
+      await receivePurchaseOrder({
+        purchaseOrderId: order.id,
+        locationId: input.locationId,
+        receivedAt: order.receivedAt ?? new Date(),
+      });
       if (order.lines.length > 0) {
         await prisma.inspectionEvent.createMany({
           data: order.lines.map((line) => ({
@@ -327,11 +351,6 @@ export async function bulkInboundPurchases(input: {
           })),
         });
       }
-      await receivePurchaseOrder({
-        purchaseOrderId: order.id,
-        locationId: input.locationId,
-        receivedAt: order.receivedAt ?? new Date(),
-      });
       success += 1;
     } catch {
       failed += 1;
@@ -391,40 +410,13 @@ export async function bulkTransferPurchases(input: {
   let failed = 0;
   for (const id of ids) {
     try {
-      const order = await prisma.purchaseOrder.findUnique({
-        where: { id },
-        include: { inboundShipments: { select: { legIndex: true } } },
-      });
-      if (!order || order.status !== "RECEIVED") {
-        failed += 1;
-        continue;
-      }
-      const location = await prisma.location.findFirst({
-        where: { id: input.toLocationId, storeId: order.storeId },
-        select: { id: true },
-      });
-      if (!location) {
-        failed += 1;
-        continue;
-      }
-      const maxLegIndex = order.inboundShipments.reduce(
-        (max, shipment) => Math.max(max, shipment.legIndex),
-        1
-      );
-      await prisma.inboundShipment.create({
-        data: {
-          storeId: order.storeId,
-          purchaseOrderId: order.id,
-          legIndex: maxLegIndex + 1,
-          fromLocationId: order.destinationLocationId,
-          toLocationId: location.id,
-          trackingNo: clean(input.trackingNo) ?? null,
-          carrier: clean(input.carrier) ?? null,
-          etaDate: optionalInputDate(input.etaDate),
-          shippedAt: new Date(),
-          status: "IN_TRANSIT",
-          shipmentNote: clean(input.note) ?? null,
-        },
+      await dispatchPurchaseTransfer({
+        purchaseOrderId: id,
+        toLocationId: input.toLocationId,
+        trackingNo: clean(input.trackingNo),
+        carrier: clean(input.carrier),
+        etaDate: optionalInputDate(input.etaDate),
+        note: clean(input.note),
       });
       success += 1;
     } catch {
@@ -450,14 +442,6 @@ export async function bulkReturnPurchases(input: {
   let failed = 0;
   for (const id of ids) {
     try {
-      const order = await prisma.purchaseOrder.findUnique({
-        where: { id },
-        select: { id: true, status: true, shipmentNote: true },
-      });
-      if (!order || order.status !== "RECEIVED") {
-        failed += 1;
-        continue;
-      }
       const returnNote = [
         input.reason ? `退货原因:${input.reason}` : "批量退货终止",
         input.trackingNo ? `退货单号:${input.trackingNo}` : null,
@@ -466,13 +450,9 @@ export async function bulkReturnPurchases(input: {
       ]
         .filter(Boolean)
         .join(" / ");
-
-      await prisma.purchaseOrder.update({
-        where: { id: order.id },
-        data: {
-          status: "RETURNED",
-          shipmentNote: [order.shipmentNote, returnNote].filter(Boolean).join("\n"),
-        },
+      await returnPurchaseOrder({
+        purchaseOrderId: id,
+        note: returnNote,
       });
       success += 1;
     } catch {

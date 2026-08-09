@@ -168,7 +168,7 @@ test.describe("listing platform eligibility", () => {
     await page.getByLabel(/Listing 价格/).fill("180");
     await page.getByRole("button", { name: "添加上架记录" }).click();
 
-    await expect(page.getByText("上架需要可售库存", { exact: false })).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "可售库存" })).toBeVisible();
     expect(dialogMessages).toEqual([]);
     await expect(page).toHaveURL(/\/listing\/new/);
 
@@ -221,7 +221,7 @@ test.describe("listing platform eligibility", () => {
 
     await batchDialog.getByRole("button", { name: /确认创建/ }).click();
 
-    await expect(batchDialog.getByRole("alert")).toContainText("上架需要可售库存");
+    await expect(batchDialog.getByRole("alert")).toContainText("可售库存");
     expect(dialogMessages).toEqual([]);
     await expect(batchDialog.getByRole("heading", { name: "批量添加上架记录" })).toBeVisible();
 

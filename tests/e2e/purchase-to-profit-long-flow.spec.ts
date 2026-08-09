@@ -10,6 +10,7 @@ test.describe("browser purchase to profit flow", () => {
   const skuCode = `SKU_${runId}`.toUpperCase();
   const externalOrderNo = `SO_${runId}`;
   const supplierName = `Supplier ${runId}`;
+  const productName = `E2E 长链商品 ${runId}`;
 
   let locationId = "";
   let createdLocationId = "";
@@ -20,7 +21,11 @@ test.describe("browser purchase to profit flow", () => {
 
   test.beforeAll(async () => {
     let location = await prisma.location.findFirst({
-      where: { storeId: STORE_ID, isSellableDefault: true },
+      where: {
+        storeId: STORE_ID,
+        isSellableDefault: true,
+        region: { startsWith: "CN" },
+      },
       orderBy: { createdAt: "asc" },
     });
 
@@ -165,8 +170,8 @@ test.describe("browser purchase to profit flow", () => {
 
     await expect(page.getByRole("heading", { name: "采购商品" })).toBeVisible();
     await page.getByRole("button", { name: /新建SKU/ }).click();
-    await page.getByLabel(/SKU代码/).fill(skuCode);
-    await page.getByLabel(/商品名称/).fill("E2E 长链商品");
+    await page.getByLabel("系统 SKU 编码").fill(skuCode);
+    await page.getByLabel(/商品名称/).fill(productName);
     await page.getByRole("button", { name: "创建并选中" }).click();
 
     await expect(page.getByText(`已选择：${skuCode}`)).toBeVisible();
@@ -198,17 +203,17 @@ test.describe("browser purchase to profit flow", () => {
 
   async function createListingFromSellableInventory(page: import("@playwright/test").Page) {
     await page.goto(
-      `/inventory/sellable?unlisted=1&q=${encodeURIComponent(skuCode)}`,
+      `/inventory/sellable?unlisted=1&q=${encodeURIComponent(productName)}`,
     );
     await expect(page.getByRole("heading", { name: "库存看板" })).toBeVisible();
 
-    const card = page.locator("article").filter({ hasText: skuCode });
+    const card = page.locator("article").filter({ hasText: productName });
     await expect(card).toBeVisible();
-    await card.getByRole("button", { name: "添加上架" }).click();
+    await card.getByRole("button", { name: "首上架" }).click();
 
     await expect(page.getByText("添加上架记录").last()).toBeVisible();
     await page.getByLabel("挂牌价").fill("180");
-    await page.getByLabel("币种").fill("CNY");
+    await page.getByLabel("币种").selectOption("CNY");
     await page.getByRole("button", { name: "确认添加" }).click();
 
     await expect
@@ -227,17 +232,14 @@ test.describe("browser purchase to profit flow", () => {
     });
     listingId = listing.id;
 
-    await page.goto(`/inventory/sellable?q=${encodeURIComponent(skuCode)}`);
-    const listedCard = page.locator("article").filter({ hasText: skuCode });
-    await expect(listedCard).toBeVisible();
-    await listedCard.getByRole("button", { name: "展开" }).click();
-    await expect(listedCard.getByText("已上架")).toBeVisible();
-    await expect(listedCard.getByRole("button", { name: "售出" })).toBeVisible();
+    await page.goto(`/listing?q=${encodeURIComponent(productName)}`);
+    const listedRow = page.getByRole("row").filter({ hasText: productName });
+    await expect(listedRow.getByText("在售中")).toBeVisible();
   }
 
   async function sellListingAndShipOrder(page: import("@playwright/test").Page) {
-    const card = page.locator("article").filter({ hasText: skuCode });
-    await card.getByRole("button", { name: "售出" }).click();
+    const listedRow = page.getByRole("row").filter({ hasText: productName });
+    await listedRow.getByRole("button", { name: "登记售出" }).click();
 
     await expect(page.getByRole("heading", { name: "登记售出" })).toBeVisible();
     await page.getByLabel("数量").fill("1");

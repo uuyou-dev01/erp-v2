@@ -14,6 +14,83 @@ export interface DateRange {
   dateTo?: Date;
 }
 
+export async function getOperationalChargeSummary(
+  organizationId: string,
+  range?: DateRange,
+) {
+  const occurredAt =
+    range?.dateFrom && range?.dateTo
+      ? { gte: range.dateFrom, lte: range.dateTo }
+      : undefined;
+  const events = await prisma.chargeEvent.findMany({
+    where: {
+      occurredAt,
+      OR: [
+        { organizationId },
+        { parties: { some: { organizationId } } },
+      ],
+      status: { not: "VOID" },
+    },
+    include: { category: true, parties: true },
+  });
+
+  const rows = new Map<string, {
+    currency: string;
+    estimatedPayable: Decimal;
+    estimatedReceivable: Decimal;
+    confirmedPayable: Decimal;
+    confirmedReceivable: Decimal;
+    settledPayable: Decimal;
+    settledReceivable: Decimal;
+  }>();
+  const byGroup = new Map<string, Decimal>();
+  for (const event of events) {
+    const row = rows.get(event.currency) ?? {
+      currency: event.currency,
+      estimatedPayable: new Decimal(0),
+      estimatedReceivable: new Decimal(0),
+      confirmedPayable: new Decimal(0),
+      confirmedReceivable: new Decimal(0),
+      settledPayable: new Decimal(0),
+      settledReceivable: new Decimal(0),
+    };
+    const isPayer = event.parties.some((party) => party.role === "PAYER" && party.organizationId === organizationId);
+    const isPayee = event.parties.some((party) => party.role === "PAYEE" && party.organizationId === organizationId);
+    if (event.amountKind === "ESTIMATE") {
+      if (isPayer) row.estimatedPayable = row.estimatedPayable.plus(event.amount);
+      if (isPayee) row.estimatedReceivable = row.estimatedReceivable.plus(event.amount);
+    } else if (["CONFIRMED", "PARTIALLY_SETTLED", "SETTLED"].includes(event.status)) {
+      if (isPayer) row.confirmedPayable = row.confirmedPayable.plus(event.amount);
+      if (isPayee) row.confirmedReceivable = row.confirmedReceivable.plus(event.amount);
+      if (event.status === "SETTLED") {
+        if (isPayer) row.settledPayable = row.settledPayable.plus(event.amount);
+        if (isPayee) row.settledReceivable = row.settledReceivable.plus(event.amount);
+      }
+      const key = `${event.currency}:${event.category.groupCode}`;
+      byGroup.set(key, (byGroup.get(key) ?? new Decimal(0)).plus(isPayer ? event.amount : event.amount.negated()));
+    }
+    rows.set(event.currency, row);
+  }
+
+  return {
+    eventCount: events.length,
+    currencies: [...rows.values()].map((row) => ({
+      currency: row.currency,
+      estimatedPayable: row.estimatedPayable.toFixed(2),
+      estimatedReceivable: row.estimatedReceivable.toFixed(2),
+      confirmedPayable: row.confirmedPayable.toFixed(2),
+      confirmedReceivable: row.confirmedReceivable.toFixed(2),
+      actualProfitContribution: row.confirmedReceivable.minus(row.confirmedPayable).toFixed(2),
+      settledPayable: row.settledPayable.toFixed(2),
+      settledReceivable: row.settledReceivable.toFixed(2),
+    })),
+    byGroup: [...byGroup].map(([key, amount]) => {
+      const [currency, groupCode] = key.split(":");
+      return { currency, groupCode, netExpense: amount.toFixed(2) };
+    }),
+  };
+}
+
 const VALID_SALES_STATUS_FILTER = [...VALID_SALES_STATUSES];
 
 export async function getBusinessOverview(storeId: string, range?: DateRange) {
@@ -861,6 +938,10 @@ export async function getSettlementSummary(storeId: string, range?: DateRange) {
         line.lineType,
         (lineBreakdown.get(line.lineType) ?? new Decimal(0)).plus(baseAmount),
       );
+
+      // Informational lines explain how the agreement was calculated, but they
+      // are not money that this settlement asks either party to pay or receive.
+      if (line.direction === "INFORMATIONAL") continue;
 
       if (settlement.status === "PAID") {
         if (line.direction === "RECEIVABLE") {

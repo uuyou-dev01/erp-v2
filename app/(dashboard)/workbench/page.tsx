@@ -48,6 +48,8 @@ export default async function WorkbenchPage() {
     rawProductName: entry.rawProductName,
     rawVariant: entry.rawVariant,
     conditionType: entry.conditionType,
+    conditionGrade: entry.conditionGrade,
+    functionStatus: entry.functionStatus,
     purchasePrice: entry.purchasePrice,
     purchaseCurrency: entry.purchaseCurrency,
     purchaseTrackingNo: entry.purchaseTrackingNo,
@@ -66,45 +68,75 @@ export default async function WorkbenchPage() {
     generatedItemUnitIds: entry.generatedItemUnitIds,
     generatedListingIds: entry.generatedListingIds,
     generatedCustomerOrderId: entry.generatedCustomerOrderId,
-    createdAt: entry.createdAt instanceof Date ? entry.createdAt.toISOString() : String(entry.createdAt),
+    createdAt:
+      entry.createdAt instanceof Date ? entry.createdAt.toISOString() : String(entry.createdAt),
   }));
 
   const brandSuggestions = Array.from(
-    new Set(
-      [
-        ...skus.map((s) => s.brand?.trim()).filter(Boolean),
-        ...entries.map((e) => e.rawBrand?.trim()).filter(Boolean),
-      ] as string[]
-    )
+    new Set([
+      ...skus.map((s) => s.brand?.trim()).filter(Boolean),
+      ...entries.map((e) => e.rawBrand?.trim()).filter(Boolean),
+    ] as string[])
   ).slice(0, 50);
 
-  const productSuggestions = Array.from(
-    new Set(
-      [
-        ...skus.map((s) => s.name?.trim()).filter(Boolean),
-        ...entries.map((e) => e.rawProductName?.trim()).filter(Boolean),
-      ] as string[]
+  const catalogProducts = skus
+    .filter((sku) => sku.catalogRole === "GROUP" || sku.catalogRole === "SIMPLE")
+    .map((sku) => ({
+      id: sku.id,
+      name: sku.name,
+      brand: sku.brand,
+      category: sku.category,
+      catalogRole: sku.catalogRole,
+    }));
+
+  const catalogVariants = skus
+    .filter(
+      (sku) =>
+        sku.catalogRole === "VARIANT" &&
+        Boolean(sku.parentSkuId) &&
+        Boolean(sku.variantLabel?.trim())
     )
+    .map((sku) => ({
+      parentSkuId: sku.parentSkuId!,
+      label: sku.variantLabel!,
+    }));
+
+  const productSuggestions = Array.from(
+    new Set([
+      ...catalogProducts.map((product) => product.name.trim()).filter(Boolean),
+      ...entries.map((e) => e.rawProductName?.trim()).filter(Boolean),
+    ] as string[])
   ).slice(0, 100);
 
   const variantSuggestions = Array.from(
-    new Set(entries.map((e) => e.rawVariant?.trim()).filter(Boolean) as string[])
+    new Set([
+      ...catalogVariants.map((variant) => variant.label),
+      ...(entries.map((entry) => entry.rawVariant?.trim()).filter(Boolean) as string[]),
+    ])
   ).slice(0, 50);
 
   const purchasePlatformSuggestions = Array.from(
-    new Set(entries.map((e) => e.purchasePlatformText?.trim()).filter(Boolean) as string[])
+    new Set([
+      "闲鱼",
+      "千岛",
+      "淘宝",
+      "京东",
+      "得物",
+      "SNKRDUNK",
+      ...(entries.map((entry) => entry.purchasePlatformText?.trim()).filter(Boolean) as string[]),
+    ])
   ).slice(0, 30);
 
   const locationSuggestions = Array.from(
     new Set([
-      ...locations.map((l) => l.name?.trim() || l.code?.trim()).filter(Boolean) as string[],
+      ...(locations.map((l) => l.name?.trim() || l.code?.trim()).filter(Boolean) as string[]),
       ...(entries.map((e) => e.currentLocationText?.trim()).filter(Boolean) as string[]),
     ])
   ).slice(0, 30);
 
   const listingPlatformSuggestions = Array.from(
     new Set([
-      ...platforms.map((p) => p.name?.trim()).filter(Boolean) as string[],
+      ...(platforms.map((p) => p.name?.trim()).filter(Boolean) as string[]),
       ...(entries.map((e) => e.listingPlatformsText?.trim()).filter(Boolean) as string[]),
     ])
   ).slice(0, 30);
@@ -174,6 +206,8 @@ export default async function WorkbenchPage() {
             location: locationSuggestions,
             listingPlatform: listingPlatformSuggestions,
             salePlatform: salePlatformSuggestions,
+            catalogProducts,
+            catalogVariants,
           }}
         />
       </Suspense>

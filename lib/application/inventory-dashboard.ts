@@ -95,3 +95,12 @@ export function buildProductStocktakeHref(
   if (locationId) params.set("locationId", locationId);
   return `/inventory/stocktake?${params.toString()}`;
 }
+
+export function buildProductInventoryEntryHref(
+  product: Pick<ListingCoverageProduct, "skuId">,
+  returnTo?: string
+) {
+  const params = new URLSearchParams({ skuId: product.skuId });
+  if (returnTo) params.set("returnTo", returnTo);
+  return `/inventory/lots/new?${params.toString()}`;
+}

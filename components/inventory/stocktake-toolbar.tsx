@@ -75,7 +75,7 @@ export function StocktakeToolbar({
           variant={onlyDiff ? "default" : "outline"}
           onClick={() => pushWith({ onlyDiff: onlyDiff ? undefined : "1" })}
         >
-          {onlyDiff ? "只看有差异：开" : "只看有差异：关"}
+          {onlyDiff ? "只看已修改：开" : "只看已修改：关"}
         </Button>
       </div>
     </div>

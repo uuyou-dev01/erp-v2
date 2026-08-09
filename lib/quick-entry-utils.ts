@@ -21,7 +21,11 @@ export function parsePlatformList(text?: string | null): string[] {
 export function matchPlatformCode(label: string): string | null {
   const normalized = label.trim().toLowerCase();
   for (const [code, aliases] of Object.entries(PLATFORM_ALIASES)) {
-    if (aliases.some((a) => normalized.includes(a.toLowerCase()) || a.toLowerCase().includes(normalized))) {
+    if (
+      aliases.some(
+        (a) => normalized.includes(a.toLowerCase()) || a.toLowerCase().includes(normalized)
+      )
+    ) {
       return code;
     }
   }
@@ -44,7 +48,7 @@ export function normalizeSkuCode(base: string, variant?: string | null) {
 
 export function isUsedCondition(conditionType?: string | null) {
   if (!conditionType) return false;
-  return /中古|二手|used/i.test(conditionType);
+  return /中古|二手|used|瑕疵|非统一|混合/i.test(conditionType);
 }
 
 export function parseQuantity(value?: string | number | Decimal | null) {
@@ -64,7 +68,35 @@ export type IncompleteReason =
   | "missing_location"
   | "missing_sale_price"
   | "unconfirmed_sku"
-  | "missing_fx";
+  | "missing_fx"
+  | "incomplete_item_condition";
+
+const INCOMPLETE_REASON_LABELS: Record<IncompleteReason, string> = {
+  missing_purchase_price: "购入单价",
+  missing_location: "仓库位置",
+  missing_sale_price: "售出单价",
+  unconfirmed_sku: "商品与规格信息确认",
+  missing_fx: "采购币种汇率",
+  incomplete_item_condition: "中古评级、功能检查和必要补图",
+};
+
+export function parseIncompleteReasons(message?: string | null): IncompleteReason[] {
+  if (!message) return [];
+  return (Object.keys(INCOMPLETE_REASON_LABELS) as IncompleteReason[]).filter((reason) =>
+    message.includes(reason)
+  );
+}
+
+export function formatIncompleteReasons(reasons: IncompleteReason[]) {
+  return reasons.map((reason) => INCOMPLETE_REASON_LABELS[reason]);
+}
+
+export function formatQuickEntryExceptionMessage(message?: string | null) {
+  if (!message) return "录入信息待补全";
+  const reasons = parseIncompleteReasons(message);
+  if (reasons.length === 0) return message;
+  return `还需填写：${formatIncompleteReasons(reasons).join("、")}`;
+}
 
 export function detectIncompleteFields(entry: {
   purchasePrice?: Decimal | null;
@@ -72,13 +104,23 @@ export function detectIncompleteFields(entry: {
   salePrice?: Decimal | null;
   isAutoCreatedSku?: boolean;
   purchaseCurrency?: string | null;
+  inspectionResult?: string | null;
 }) {
   const reasons: IncompleteReason[] = [];
   if (!entry.purchasePrice) reasons.push("missing_purchase_price");
-  if (!entry.currentLocationText?.trim()) reasons.push("missing_location");
+  if (entry.inspectionResult === "PASSED" && !entry.currentLocationText?.trim()) {
+    reasons.push("missing_location");
+  }
   if (entry.salePrice && !entry.salePrice.isZero() && !entry.purchasePrice) {
     reasons.push("missing_purchase_price");
   }
   if (entry.isAutoCreatedSku) reasons.push("unconfirmed_sku");
   return reasons;
+}
+
+export function shouldCreateQuickEntryInventory(entry: {
+  currentLocationText?: string | null;
+  inspectionResult?: string | null;
+}) {
+  return entry.inspectionResult === "PASSED" && Boolean(entry.currentLocationText?.trim());
 }

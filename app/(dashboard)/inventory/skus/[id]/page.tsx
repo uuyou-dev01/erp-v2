@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getSKUParentOptions } from "@/app/actions/skus";
 import {
   catalogStatusLabel,
@@ -14,11 +15,10 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
-import { formatCurrency } from "@/lib/decimal";
+import { formatCurrency, formatQuantity } from "@/lib/decimal";
+import Decimal from "decimal.js";
 
 export const dynamic = "force-dynamic";
-
-const STORE_ID = "store_1";
 
 function safeReturnPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
@@ -87,6 +87,14 @@ function variantDisplayName(parent: SkuCatalogDetail, child: SkuCatalogDetail) {
   return raw;
 }
 
+function inventoryIdentitySummary(sku: SkuCatalogDetail) {
+  const newStockQty = sku.inventorySections.newStockLots.reduce(
+    (sum, lot) => sum.plus(lot.quantity),
+    new Decimal(0)
+  );
+  return `全新 ${formatQuantity(newStockQty.toString())} · 单件 ${sku.inventorySections.itemUnitSummary.totalCount}`;
+}
+
 export default async function SKUDetailPage({
   params,
   searchParams,
@@ -94,6 +102,7 @@ export default async function SKUDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ returnTo?: string; edit?: string; variantId?: string }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const { id } = await params;
   const { returnTo, edit, variantId } = await searchParams;
   const sku = await getSkuCatalogDetail(id);
@@ -102,29 +111,30 @@ export default async function SKUDetailPage({
     notFound();
   }
 
-  const isProductGroup = sku.catalogRole === "GROUP" || (!sku.parentSkuId && sku.childSkus.length > 0);
+  const isProductGroup =
+    sku.catalogRole === "GROUP" || (!sku.parentSkuId && sku.childSkus.length > 0);
   const childDetails = isProductGroup
-    ? (
-        await Promise.all(sku.childSkus.map((child) => getSkuCatalogDetail(child.id)))
-      ).filter((child): child is SkuCatalogDetail => Boolean(child))
+    ? (await Promise.all(sku.childSkus.map((child) => getSkuCatalogDetail(child.id)))).filter(
+        (child): child is SkuCatalogDetail => Boolean(child)
+      )
     : [];
   const selectedVariant =
     childDetails.find((child) => child.id === variantId) ?? childDetails[0] ?? null;
   const displaySku = selectedVariant ?? sku;
   const isViewingChildFromParent = Boolean(selectedVariant);
 
-  const parentOptions = await getSKUParentOptions(STORE_ID, displaySku.id);
+  const parentOptions = await getSKUParentOptions(storeId, displaySku.id);
   const variantEntries = Object.entries(displaySku.variantAttributes);
   const images = displaySku.meta.images ?? [];
   const returnHref = safeReturnPath(returnTo, "/inventory/skus");
-  const actionReturnHref = isViewingChildFromParent
-    ? `/inventory/skus/${sku.id}`
-    : returnHref;
+  const actionReturnHref = isViewingChildFromParent ? `/inventory/skus/${sku.id}` : returnHref;
   const coverUrl =
-    images.find((i) => i.isCover)?.url ?? images[0]?.url ?? displaySku.imageUrl;
-  const selectedVariantName = isViewingChildFromParent
-    ? variantDisplayName(sku, displaySku)
-    : null;
+    images.find((i) => i.isCover)?.url ??
+    images[0]?.url ??
+    displaySku.imageUrl ??
+    displaySku.intelligence.recentMarketObservations.find((observation) => observation.imageUrl)
+      ?.imageUrl;
+  const selectedVariantName = isViewingChildFromParent ? variantDisplayName(sku, displaySku) : null;
   const variantHref = (childId: string) => {
     const query = new URLSearchParams({ variantId: childId });
     if (returnTo) query.set("returnTo", returnTo);
@@ -140,12 +150,7 @@ export default async function SKUDetailPage({
             label: variantDisplayName(sku, child),
             href: variantHref(child.id),
             selected: child.id === displaySku.id,
-            meta: child.business.averageSalePrice
-              ? formatCurrency(
-                  child.business.averageSalePrice,
-                  child.business.salesCurrency ?? child.currency ?? "CNY"
-                )
-              : `${child.business.salesCount}笔`,
+            meta: inventoryIdentitySummary(child),
           })),
           selectedAttributes: variantEntries.map(([label, value]) => ({
             label,
@@ -173,13 +178,9 @@ export default async function SKUDetailPage({
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge
                 variant="outline"
-                className={`text-[10px] ${
-                  selectedVariantName ? "" : "font-mono"
-                }`}
+                className={`text-[10px] ${selectedVariantName ? "" : "font-mono"}`}
               >
-                {selectedVariantName
-                  ? `变体：${selectedVariantName}`
-                  : displaySku.code}
+                {selectedVariantName ? `变体：${selectedVariantName}` : displaySku.code}
               </Badge>
               <Badge
                 variant={displaySku.catalogStatus === "active" ? "default" : "secondary"}
@@ -197,9 +198,7 @@ export default async function SKUDetailPage({
                   {displaySku.category}
                 </Badge>
               ) : null}
-              {displaySku.brand ? (
-                <Badge className="text-[10px]">{displaySku.brand}</Badge>
-              ) : null}
+              {displaySku.brand ? <Badge className="text-[10px]">{displaySku.brand}</Badge> : null}
             </div>
             <h1 className="mt-1 text-xl font-semibold leading-tight">
               {isViewingChildFromParent ? sku.name : displaySku.name}
@@ -213,9 +212,18 @@ export default async function SKUDetailPage({
           </div>
         </div>
         <SKUDetailActions
-          storeId={STORE_ID}
+          storeId={storeId}
           returnHref={actionReturnHref}
           initialEditOpen={edit === "1"}
+          structureSku={{
+            id: sku.id,
+            code: sku.code,
+            name: sku.name,
+            catalogRole: sku.catalogRole,
+            parentSkuId: sku.parentSkuId,
+            variantLabel: sku.variantLabel,
+            childSkus: sku.childSkus,
+          }}
           sku={{
             id: displaySku.id,
             code: displaySku.code,
@@ -227,6 +235,7 @@ export default async function SKUDetailPage({
             variantValues: displaySku.variantValues,
             nameSource: displaySku.nameSource,
             codeSource: displaySku.codeSource,
+            categoryId: displaySku.categoryId,
             category: displaySku.category,
             brand: displaySku.brand,
             attributes: {
@@ -261,34 +270,23 @@ export default async function SKUDetailPage({
               {images.length > 1 ? (
                 <div className="flex flex-wrap gap-2 border-b pb-3">
                   {images.map((img) => (
-                    <div
-                      key={img.url}
-                      className="relative overflow-hidden rounded-md border"
-                    >
+                    <div key={img.url} className="relative overflow-hidden rounded-md border">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={img.url} alt="" className="h-16 w-16 object-cover" />
                       {img.isCover ? (
-                        <Badge className="absolute left-1 top-1 px-1 text-[9px]">
-                          封面
-                        </Badge>
+                        <Badge className="absolute left-1 top-1 px-1 text-[9px]">封面</Badge>
                       ) : null}
                     </div>
                   ))}
                 </div>
               ) : null}
               <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <InfoCell
-                  label="系列"
-                  value={displaySku.series || displaySku.meta.series || "—"}
-                />
+                <InfoCell label="系列" value={displaySku.series || displaySku.meta.series || "—"} />
                 <InfoCell
                   label="参考售价"
                   value={
                     displaySku.referencePrice
-                      ? formatCurrency(
-                          displaySku.referencePrice,
-                          displaySku.currency ?? "CNY"
-                        )
+                      ? formatCurrency(displaySku.referencePrice, displaySku.currency ?? "CNY")
                       : "—"
                   }
                 />
@@ -296,18 +294,13 @@ export default async function SKUDetailPage({
                   label="参考成本"
                   value={
                     displaySku.meta.referenceCost
-                      ? formatCurrency(
-                          displaySku.meta.referenceCost,
-                          displaySku.currency ?? "CNY"
-                        )
+                      ? formatCurrency(displaySku.meta.referenceCost, displaySku.currency ?? "CNY")
                       : "—"
                   }
                 />
                 <InfoCell
                   label="标签"
-                  value={
-                    displaySku.meta.tags?.length ? displaySku.meta.tags.join("、") : "—"
-                  }
+                  value={displaySku.meta.tags?.length ? displaySku.meta.tags.join("、") : "—"}
                 />
               </dl>
               {displaySku.description ? (
@@ -318,7 +311,6 @@ export default async function SKUDetailPage({
               ) : null}
             </CardContent>
           </Card>
-
         </div>
 
         <div className="space-y-4">

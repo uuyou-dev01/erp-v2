@@ -176,4 +176,5 @@ export const COUNTRIES = [
   { value: "CN", label: "中国" },
   { value: "US", label: "美国" },
   { value: "EU", label: "欧洲" },
+  { value: "GLOBAL", label: "全球" },
 ] as const;

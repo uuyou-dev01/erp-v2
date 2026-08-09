@@ -1,10 +1,7 @@
 "use server";
 
 import { getListingCoverageProducts } from "@/lib/application/listing-coverage";
-import {
-  marketLabel,
-  type SellableMarketCode,
-} from "@/lib/application/sellable-market";
+import { marketLabel, type SellableMarketCode } from "@/lib/application/sellable-market";
 import { requireUserContext } from "@/lib/auth/user-context";
 
 export interface SellablePalletNavItem {
@@ -14,7 +11,7 @@ export interface SellablePalletNavItem {
   market?: SellableMarketCode;
 }
 
-const MARKET_ORDER: SellableMarketCode[] = ["CN", "JP", "US", "GLOBAL", "UNKNOWN"];
+const MARKET_ORDER: SellableMarketCode[] = ["CN", "JP", "US", "EU", "GLOBAL", "UNKNOWN"];
 
 function palletName(market: SellableMarketCode) {
   if (market === "UNKNOWN") return "未识别货盘";

@@ -18,5 +18,8 @@ describe("logistics interaction source hygiene", () => {
     expect(componentSource).not.toContain("updateConsolidationStatus(batch.id");
     expect(componentSource).toContain("statusError");
     expect(componentSource).toContain('role="alert"');
+    expect(actionSource).toContain("export async function updateConsolidationDestinationAction");
+    expect(componentSource).toContain("updateConsolidationDestinationAction");
+    expect(componentSource).toContain("补充目的仓库");
   });
 });

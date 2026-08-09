@@ -1,14 +1,28 @@
 # 项目状态总览
 
 ## 最后更新
-2026年5月24日 — 工作流升级（阶段化交易工作台）
+2026年8月9日 — ERP 业务闭环、商品情报采集、移动端与多组织业务整合版本
+
+> 本文件下方保留历史阶段记录。当前可执行基线、关键约束、部署顺序与后续会话交接要求，以 [2026-08-09 版本交接](docs/handoffs/2026-08-09-erp-business-intelligence-handoff.md) 为准。
+
+## 当前版本摘要（2026-08-09）
+
+- 已建立两级商品分类基础资料、树状选择与统一分类 API。
+- 已统一商品组与经营 SKU 边界，并把商品情报、采购、库存和上架串成业务闭环。
+- 已落地 Web 单/多链接采集、Mercari/Atmos 适配、来源证据、价格变化和截图 OCR 兜底。
+- 已提供 Apple/网页移动 PWA，覆盖采集、任务、通知、附件和设备能力。
+- 已增强采购、物流、质检、退货、调拨、期初库存、集运和库存并发约束。
+- 已建立多组织、共享库存、货盘代卖、履约、售后、费用、结算与钱包子账基础。
+- 商品情报详情已提供采购、商品主档、库存和上架的真实业务入口。
+
+后续开发不得绕过交接文档中的商品、库存、金额、权限、外部证据与幂等不变量。
 
 ## 项目信息
 
-**项目名称**：跨境贸易ERP系统  
-**技术栈**：Next.js 15 + TypeScript + Prisma + PostgreSQL  
-**UI库**：shadcn/ui + Tailwind CSS  
-**图表库**：Recharts  
+**项目名称**：跨境贸易ERP系统
+**技术栈**：Next.js 15 + TypeScript + Prisma + PostgreSQL
+**UI库**：shadcn/ui + Tailwind CSS
+**图表库**：Recharts
 
 ## 最近升级（2026-05-24）：阶段化交易工作台
 
@@ -112,7 +126,7 @@ ERP 已升级为贴近 Excel 实操的阶段化业务流：
 - 补货建议
 - 促销策略
 
-**文档**：`docs/modules/intelligence.md`  
+**文档**：`docs/modules/intelligence.md`
 **状态**：设计完成，待开发
 
 ### 📋 7. 货盘分销系统（Marketplace）
@@ -121,8 +135,8 @@ ERP 已升级为贴近 Excel 实操的阶段化业务流：
 - 联系方式展示
 - 感兴趣标记和咨询
 
-**文档**：`docs/modules/marketplace-distribution.md`  
-**差距分析**：`docs/MARKETPLACE_GAP_ANALYSIS.md`  
+**文档**：`docs/modules/marketplace-distribution.md`
+**差距分析**：`docs/MARKETPLACE_GAP_ANALYSIS.md`
 **状态**：设计完成，待开发
 
 ### 📋 8. 财务模块（Finance）
@@ -306,9 +320,9 @@ ERP 已升级为贴近 Excel 实操的阶段化业务流：
 
 ---
 
-**项目进度**：核心业务功能已完成 85%（6 模块 + 仪表盘 + 全局基建）  
-**代码质量**：良好（build 0 error，ESLint 通过）  
-**文档完整度**：优秀  
-**可用性**：可投入使用  
+**项目进度**：核心业务功能已完成 85%（6 模块 + 仪表盘 + 全局基建）
+**代码质量**：良好（build 0 error，ESLint 通过）
+**文档完整度**：优秀
+**可用性**：可投入使用
 
 *最后更新：2026-05-07 — Phase 0~2 全部完成（主 agent + 5 子 agent 编排）*

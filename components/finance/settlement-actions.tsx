@@ -40,7 +40,7 @@ export function SettlementStatusActions({ id, status }: { id: string; status: st
         )}
         {status === "CONFIRMED" && (
           <Button size="sm" disabled={loadingAction === "PAID"} onClick={() => changeStatus("PAID")}>
-            标记支付
+            标记线下已结清
           </Button>
         )}
         {status !== "PAID" && status !== "VOID" && (
@@ -80,7 +80,7 @@ export function CreateSettlementButton({ fulfillmentRequestId, disabled }: { ful
   return (
     <div className="space-y-2">
       <Button size="sm" disabled={disabled || loading} onClick={createSettlement}>
-        {loading ? "生成中..." : "生成结算单"}
+        {loading ? "生成中..." : "整理结算记录"}
       </Button>
       {error && <p className="text-sm text-red-600">{error}</p>}
     </div>

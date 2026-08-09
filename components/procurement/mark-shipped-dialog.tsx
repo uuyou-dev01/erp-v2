@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { markPurchaseAsShippedAction } from "@/app/actions/purchase-orders";
 import { Truck, X, AlertCircle } from "lucide-react";
@@ -44,6 +45,13 @@ export function MarkShippedDialog({
     carrier: defaultCarrier ?? "",
     etaDate: toDateInputValue(defaultEtaDate),
     shipmentNote: defaultShipmentNote ?? "",
+    transportMode: "COURIER" as "HAND_CARRY" | "CONSOLIDATOR" | "POSTAL" | "COURIER" | "FREIGHT" | "OTHER",
+    carriedBy: "",
+    grossWeightKg: "",
+    customsAmount: "",
+    customsCurrency: "",
+    taxAmount: "",
+    taxCurrency: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -66,7 +74,14 @@ export function MarkShippedDialog({
         carrier: form.carrier || undefined,
         etaDate: form.etaDate ? new Date(form.etaDate) : undefined,
         shipmentNote: form.shipmentNote || undefined,
-        shipmentMode: "purchase_only",
+        shipmentMode: "in_transit",
+        transportMode: form.transportMode,
+        carriedBy: form.carriedBy || undefined,
+        grossWeightKg: form.grossWeightKg || undefined,
+        customsAmount: form.customsAmount || undefined,
+        customsCurrency: form.customsCurrency || undefined,
+        taxAmount: form.taxAmount || undefined,
+        taxCurrency: form.taxCurrency || undefined,
       });
       if (!result.success) {
         setSubmitError(result.error);
@@ -121,6 +136,35 @@ export function MarkShippedDialog({
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
+                <Label htmlFor="transportMode">这一段怎么运输</Label>
+                <Select
+                  id="transportMode"
+                  value={form.transportMode}
+                  onChange={(event) => setForm({ ...form, transportMode: event.target.value as typeof form.transportMode })}
+                >
+                  <option value="HAND_CARRY">我或朋友随身带</option>
+                  <option value="CONSOLIDATOR">集运商 / 合箱</option>
+                  <option value="POSTAL">邮局直邮</option>
+                  <option value="COURIER">快递</option>
+                  <option value="FREIGHT">货运</option>
+                  <option value="OTHER">其他</option>
+                </Select>
+              </div>
+              {form.transportMode === "HAND_CARRY" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="carriedBy">由谁携带</Label>
+                  <Input id="carriedBy" value={form.carriedBy} onChange={(event) => setForm({ ...form, carriedBy: event.target.value })} placeholder="姓名或说明" />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="grossWeightKg">重量（kg，可选）</Label>
+                  <Input id="grossWeightKg" type="number" min="0" step="0.001" value={form.grossWeightKg} onChange={(event) => setForm({ ...form, grossWeightKg: event.target.value })} />
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
                 <Label htmlFor="shippedAt">发货日期 *</Label>
                 <Input
                   id="shippedAt"
@@ -157,6 +201,23 @@ export function MarkShippedDialog({
                     {errors.etaDate}
                   </p>
                 )}
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>申报金额与币种（可选）</Label>
+                <div className="grid grid-cols-[1fr_90px] gap-2">
+                  <Input type="number" min="0" step="0.01" value={form.customsAmount} onChange={(event) => setForm({ ...form, customsAmount: event.target.value })} placeholder="金额" />
+                  <Input value={form.customsCurrency} onChange={(event) => setForm({ ...form, customsCurrency: event.target.value.toUpperCase() })} placeholder="JPY" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>本段税费与币种（可选）</Label>
+                <div className="grid grid-cols-[1fr_90px] gap-2">
+                  <Input type="number" min="0" step="0.01" value={form.taxAmount} onChange={(event) => setForm({ ...form, taxAmount: event.target.value })} placeholder="金额" />
+                  <Input value={form.taxCurrency} onChange={(event) => setForm({ ...form, taxCurrency: event.target.value.toUpperCase() })} placeholder="CNY" />
+                </div>
               </div>
             </div>
 

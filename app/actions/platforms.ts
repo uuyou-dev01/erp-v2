@@ -7,6 +7,8 @@ import { requireUserContext } from "@/lib/auth/user-context";
 import { CORE_SELLING_PLATFORM_CODES, sortCoreSellingPlatforms } from "@/lib/core-platforms";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
+const SUPPORTED_PLATFORM_COUNTRIES = new Set(["CN", "JP", "US", "EU", "GLOBAL"]);
+
 export interface PlatformShippingRuleInput {
   name: string;
   carrier?: string;
@@ -17,10 +19,21 @@ export interface PlatformShippingRuleInput {
   notes?: string;
 }
 
+function normalizePlatformCountry(value?: string) {
+  const country = value?.trim().toUpperCase();
+  if (!country) {
+    throw new Error("请选择平台所属市场");
+  }
+  if (!SUPPORTED_PLATFORM_COUNTRIES.has(country)) {
+    throw new Error("平台所属市场无效，请重新选择");
+  }
+  return country;
+}
+
 function parseOptionalPlatformDecimal(
   value: string | undefined,
   fieldLabel: string,
-  options: { nonNegative?: boolean; max?: Decimal.Value } = {},
+  options: { nonNegative?: boolean; max?: Decimal.Value } = {}
 ) {
   if (value == null || value.trim() === "") return null;
 
@@ -44,10 +57,7 @@ function parseOptionalPlatformDecimal(
   return decimal;
 }
 
-function parsePlatformFeeDefaults(data: {
-  defaultFeeRate?: string;
-  defaultShippingFee?: string;
-}) {
+function parsePlatformFeeDefaults(data: { defaultFeeRate?: string; defaultShippingFee?: string }) {
   return {
     defaultFeeRate: parseOptionalPlatformDecimal(data.defaultFeeRate, "默认平台费率", {
       nonNegative: true,
@@ -123,12 +133,13 @@ export async function createPlatform(data: {
   const context = await requireUserContext({ storeId: data.storeId });
   try {
     const feeDefaults = parsePlatformFeeDefaults(data);
+    const country = normalizePlatformCountry(data.country);
     const platform = await prisma.platform.create({
       data: {
         storeId: context.activeStoreId,
         code: data.code,
         name: data.name,
-        country: data.country || null,
+        country,
         defaultFeeRate: feeDefaults.defaultFeeRate,
         defaultShippingFee: feeDefaults.defaultShippingFee,
         shippingRules: normalizeShippingRules(data.shippingRules),
@@ -138,6 +149,7 @@ export async function createPlatform(data: {
     });
 
     revalidatePath("/listing/platforms");
+    revalidatePath("/inventory/sellable");
     return { id: platform.id };
   } catch (error) {
     throw mapPlatformWriteError(error, data.code);
@@ -187,12 +199,13 @@ export async function updatePlatform(
 
   try {
     const feeDefaults = parsePlatformFeeDefaults(data);
+    const country = normalizePlatformCountry(data.country);
     const platform = await prisma.platform.update({
       where: { id },
       data: {
         code: data.code,
         name: data.name,
-        country: data.country || null,
+        country,
         defaultFeeRate: feeDefaults.defaultFeeRate,
         defaultShippingFee: feeDefaults.defaultShippingFee,
         shippingRules: normalizeShippingRules(data.shippingRules),
@@ -203,6 +216,7 @@ export async function updatePlatform(
 
     revalidatePath("/listing/platforms");
     revalidatePath(`/listing/platforms/${id}`);
+    revalidatePath("/inventory/sellable");
     return { id: platform.id };
   } catch (error) {
     throw mapPlatformWriteError(error, data.code);

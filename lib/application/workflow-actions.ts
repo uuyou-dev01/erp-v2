@@ -66,7 +66,7 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
   disposition: {
     action: "disposition",
     title: "分流处理",
-    description: "选择入库、加入集运或发往其他位置，决定收货后的下一步。",
+    description: "选择入库、加入待集运或立即发起转仓，决定收货后的下一步。",
     submitLabel: "提交分流",
     fromQueues: ["pendingDisposition"],
     subProcess: "LOGISTICS",
@@ -159,9 +159,9 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
   },
   approveReturnInspection: {
     action: "approveReturnInspection",
-    title: "退货检验放行",
-    description: "检验通过后单品回到可售库存，可重新上架。",
-    submitLabel: "检验放行",
+    title: "检查并放行",
+    description: "确认品级、功能和必要图片完整后，单件才会恢复为可售库存。",
+    submitLabel: "确认检查并放行",
     fromQueues: ["returnInspection"],
     subProcess: "INSPECTION",
     nextQueue: "pendingListing",
@@ -207,7 +207,7 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
   receivePurchase: {
     action: "receivePurchase",
     title: "确认收货",
-    description: "采购单到货后进入待分流，不在这一步直接创建库存。",
+    description: "确认实物已经到达所选位置。系统会创建库存；中古或资料不完整的单件进入待检查，转运仓到货进入待分流。",
     submitLabel: "确认收货",
     fromQueues: ["pendingArrival"],
     subProcess: "LOGISTICS",

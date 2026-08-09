@@ -24,6 +24,7 @@ type InitialPartner = {
   contactPhone: string | null;
   defaultCurrency: string | null;
   notes: string | null;
+  organization: { id: string; name: string; code: string } | null;
   tradingRelationships: Array<{
     relationshipType: string;
     visibilityScope: string;
@@ -56,6 +57,7 @@ export function PartnerForm({
     contactPhone: initialData?.contactPhone ?? "",
     defaultCurrency: initialData?.defaultCurrency ?? "JPY",
     notes: initialData?.notes ?? "",
+    organizationCode: initialData?.organization?.code ?? "",
     relationshipType: primaryRelationship?.relationshipType ?? "SUPPLY",
     visibilityScope: primaryRelationship?.visibilityScope ?? "PRIVATE",
     relationshipStatus: primaryRelationship?.status ?? "ACTIVE",
@@ -86,6 +88,7 @@ export function PartnerForm({
         contactPhone: formData.contactPhone || undefined,
         defaultCurrency: formData.defaultCurrency || undefined,
         notes: formData.notes || undefined,
+        organizationCode: formData.organizationCode || undefined,
       };
 
       const partnerResult = initialData
@@ -154,6 +157,18 @@ export function PartnerForm({
             placeholder="合作方名称"
             required
           />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="partner-organization-code">关联经营主体代码（可选）</Label>
+          <Input
+            id="partner-organization-code"
+            value={formData.organizationCode}
+            onChange={(event) =>
+              updateField({ organizationCode: event.target.value.toUpperCase() })
+            }
+            placeholder="由合作方提供，例如 FRIEND-B"
+          />
+          <p className="text-xs text-muted-foreground">关联后，定向货盘才能被对方账号看到；供应商无需登录时可留空。</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor="partner-type">类型</Label>

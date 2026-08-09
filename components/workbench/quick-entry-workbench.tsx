@@ -25,6 +25,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  itemFunctionStatusOptions,
+  itemRequiresIssueEvidence,
+  normalizeItemConditionType,
+  normalizeItemFunctionStatus,
+  normalizeUsedItemGrade,
+  usedItemGradeOptions,
+  validateItemCondition,
+} from "@/lib/inventory/item-condition";
 
 type DraftRow = QuickEntryRowInput & {
   localId: string;
@@ -38,6 +47,8 @@ interface RecentEntry {
   rawProductName: string;
   rawVariant: string | null;
   conditionType: string | null;
+  conditionGrade: string | null;
+  functionStatus: string | null;
   purchasePrice: string | null;
   purchaseCurrency: string | null;
   purchaseTrackingNo: string | null;
@@ -67,6 +78,17 @@ interface SuggestionLists {
   location: string[];
   listingPlatform: string[];
   salePlatform: string[];
+  catalogProducts: Array<{
+    id: string;
+    name: string;
+    brand: string | null;
+    category: string | null;
+    catalogRole: string;
+  }>;
+  catalogVariants: Array<{
+    parentSkuId: string;
+    label: string;
+  }>;
 }
 
 interface QuickEntryWorkbenchProps {
@@ -77,7 +99,10 @@ interface QuickEntryWorkbenchProps {
 
 const CURRENCY_OPTIONS = ["CNY", "JPY", "USD", "HKD", "EUR", "GBP"];
 
-const CONDITION_OPTIONS = ["新品", "中古", "瑕疵", "非统一"];
+const CONDITION_OPTIONS = [
+  { value: "NEW", label: "全新" },
+  { value: "USED", label: "中古 / 二手" },
+];
 
 const WORKFLOW_LABELS: Record<string, string> = {
   PURCHASE: "采购",
@@ -97,6 +122,13 @@ function createLocalId() {
   return `row-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+function isPositiveQuantity(value?: string | null) {
+  const text = value?.trim();
+  if (!text) return false;
+  const quantity = Number(text);
+  return Number.isFinite(quantity) && quantity > 0;
+}
+
 const blankRow = (storeId: string): DraftRow => ({
   localId: createLocalId(),
   storeId,
@@ -105,7 +137,9 @@ const blankRow = (storeId: string): DraftRow => ({
   rawProductName: "",
   rawVariant: "",
   rawCategory: "",
-  conditionType: "新品",
+  conditionType: "NEW",
+  conditionGrade: undefined,
+  functionStatus: "NORMAL",
   quantity: "1",
   purchasePrice: "",
   purchaseCurrency: "CNY",
@@ -157,7 +191,11 @@ function splitPastedRows(text: string, storeId: string): DraftRow[] {
         rawProductName: productName || brand || "",
         rawVariant: variant || "",
         rawCategory: category || "",
-        conditionType: conditionType || "新品",
+        conditionType: normalizeItemConditionType(conditionType),
+        conditionGrade:
+          normalizeItemConditionType(conditionType) === "USED" ? "UNASSESSED" : undefined,
+        functionStatus:
+          normalizeItemConditionType(conditionType) === "USED" ? "UNTESTED" : "NORMAL",
         purchasePrice: purchasePrice || "",
         purchaseCurrency: purchaseCurrency || "CNY",
         purchasePlatformText: purchasePlatform || "",
@@ -207,6 +245,8 @@ function rowToPayload(row: DraftRow): QuickEntryRowInput {
     rawVariant: row.rawVariant,
     rawCategory: row.rawCategory,
     conditionType: row.conditionType,
+    conditionGrade: row.conditionGrade,
+    functionStatus: row.functionStatus,
     quantity: row.quantity,
     purchasePrice: row.purchasePrice,
     purchaseCurrency: row.purchaseCurrency,
@@ -250,7 +290,12 @@ function PendingEntryPanel({
     salePlatformText: entry.salePlatformText ?? "",
     salePrice: entry.salePrice ?? "",
     batchNote: entry.batchNote ?? "",
-    conditionType: entry.conditionType ?? "新品",
+    conditionType: normalizeItemConditionType(entry.conditionType) as string,
+    conditionGrade: (normalizeUsedItemGrade(entry.conditionGrade) ?? "UNASSESSED") as string,
+    functionStatus: normalizeItemFunctionStatus(
+      entry.functionStatus,
+      normalizeItemConditionType(entry.conditionType)
+    ) as string,
   });
 
   const handleSave = () => {
@@ -259,6 +304,8 @@ function PendingEntryPanel({
         storeId,
         rawProductName: entry.rawProductName,
         conditionType: form.conditionType,
+        conditionGrade: form.conditionGrade,
+        functionStatus: form.functionStatus,
         purchaseTrackingNo: form.purchaseTrackingNo || undefined,
         transitTrackingNo: form.transitTrackingNo || undefined,
         currentLocationText: form.currentLocationText || undefined,
@@ -290,7 +337,7 @@ function PendingEntryPanel({
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {WORKFLOW_LABELS[entry.workflowStage] ?? entry.workflowStage} ·{" "}
-            {entry.rawVariant || "无变体"} · {entry.purchaseCurrency || "CNY"}{" "}
+            {entry.rawVariant || "独立 SKU"} · {entry.purchaseCurrency || "CNY"}{" "}
             {entry.purchasePrice || "-"}
           </p>
         </div>
@@ -300,22 +347,28 @@ function PendingEntryPanel({
         </div>
       </button>
 
-      {entry.errorMessage && (
-        <p className="mt-2 text-xs text-amber-700">{entry.errorMessage}</p>
-      )}
+      {entry.errorMessage && <p className="mt-2 text-xs text-amber-700">{entry.errorMessage}</p>}
 
       {expanded && (
         <div className="mt-3 space-y-3 border-t pt-3">
           <div className="grid gap-2 sm:grid-cols-2">
             <div>
-              <label className="text-xs text-muted-foreground">成色</label>
+              <label className="text-xs text-muted-foreground">商品状态</label>
               <Select
                 value={form.conditionType}
-                onChange={(e) => setForm({ ...form, conditionType: e.target.value })}
+                onChange={(e) => {
+                  const conditionType = e.target.value;
+                  setForm({
+                    ...form,
+                    conditionType,
+                    conditionGrade: conditionType === "USED" ? "UNASSESSED" : "",
+                    functionStatus: conditionType === "USED" ? "UNTESTED" : "NORMAL",
+                  });
+                }}
               >
-                {CONDITION_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
+                {CONDITION_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </Select>
@@ -363,9 +416,8 @@ function PendingEntryPanel({
                   className="flex-1"
                 />
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   value={form.salePrice}
                   onChange={(e) => setForm({ ...form, salePrice: e.target.value })}
                   placeholder="价格"
@@ -376,14 +428,40 @@ function PendingEntryPanel({
           </div>
 
           {isUsedCondition(form.conditionType) && (
-            <div>
-              <label className="text-xs text-muted-foreground">批次描述（中古必填）</label>
+            <div className="space-y-3 rounded-md border bg-background p-3">
+              <div>
+                <p className="text-xs font-medium">中古单件检查</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  选择品级和功能状态；待评级或未测试的单件会进入“待检查 / 补资料”。
+                </p>
+              </div>
+              <GradeButtons
+                value={form.conditionGrade}
+                onChange={(conditionGrade) => setForm({ ...form, conditionGrade })}
+              />
+              <div>
+                <label className="text-xs text-muted-foreground">功能状态</label>
+                <Select
+                  value={form.functionStatus}
+                  onChange={(e) => setForm({ ...form, functionStatus: e.target.value })}
+                >
+                  {itemFunctionStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <label className="text-xs text-muted-foreground">瑕疵、缺件或采购备注</label>
               <Textarea
                 value={form.batchNote}
                 onChange={(e) => setForm({ ...form, batchNote: e.target.value })}
-                placeholder="瑕疵说明、批次特征..."
+                placeholder="例如：鞋面划痕、无原盒、配件缺失"
                 className="min-h-16"
               />
+              <p className="text-xs text-muted-foreground">
+                C/D 级或功能异常必须填写说明，并在单件详情补充实物图片。
+              </p>
             </div>
           )}
 
@@ -406,6 +484,26 @@ function DatalistOptions({ id, options }: { id: string; options: string[] }) {
         <option key={opt} value={opt} />
       ))}
     </datalist>
+  );
+}
+
+function GradeButtons({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
+  return (
+    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
+      {usedItemGradeOptions.map((option) => (
+        <Button
+          key={option.value}
+          type="button"
+          size="sm"
+          variant={value === option.value ? "default" : "outline"}
+          className="h-9 px-2 text-xs"
+          title={option.description}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
   );
 }
 
@@ -432,10 +530,10 @@ export function QuickEntryWorkbench({
       recentEntries.filter((entry) => {
         const hasOperationalObject = Boolean(
           entry.generatedPurchaseOrderId ||
-            entry.generatedLotId ||
-            entry.generatedItemUnitIds ||
-            entry.generatedListingIds ||
-            entry.generatedCustomerOrderId
+          entry.generatedLotId ||
+          entry.generatedItemUnitIds ||
+          entry.generatedListingIds ||
+          entry.generatedCustomerOrderId
         );
         return (
           entry.processedStatus === "FAILED" ||
@@ -453,6 +551,56 @@ export function QuickEntryWorkbench({
     );
   };
 
+  const findCatalogProduct = (name: string) => {
+    const normalizedName = name.trim().toLocaleLowerCase();
+    if (!normalizedName) return null;
+    return (
+      suggestions.catalogProducts.find(
+        (product) => product.name.trim().toLocaleLowerCase() === normalizedName
+      ) ?? null
+    );
+  };
+
+  const updateProductName = (row: DraftRow, value: string) => {
+    const matched = findCatalogProduct(value);
+    updateRow(row.localId, {
+      rawProductName: value,
+      rawBrand: row.rawBrand?.trim() ? row.rawBrand : matched?.brand || "",
+      rawCategory: row.rawCategory?.trim() ? row.rawCategory : matched?.category || "",
+    });
+  };
+
+  const variantSuggestionsFor = (row: DraftRow) => {
+    const product = findCatalogProduct(row.rawProductName);
+    const scoped = product
+      ? suggestions.catalogVariants
+          .filter((variant) => variant.parentSkuId === product.id)
+          .map((variant) => variant.label)
+      : [];
+    return [...new Set([...scoped, ...suggestions.variant])];
+  };
+
+  const catalogOutcomeFor = (row: DraftRow) => {
+    const product = findCatalogProduct(row.rawProductName);
+    const hasVariant = Boolean(row.rawVariant?.trim());
+
+    if (hasVariant) {
+      if (product?.catalogRole === "GROUP") {
+        const existingVariant = suggestions.catalogVariants.some(
+          (variant) =>
+            variant.parentSkuId === product.id &&
+            variant.label.trim().toLocaleLowerCase() === row.rawVariant?.trim().toLocaleLowerCase()
+        );
+        return existingVariant ? "复用现有规格 SKU" : "在现有商品组下新增规格 SKU";
+      }
+      return "创建商品组 + 规格 SKU";
+    }
+
+    if (product?.catalogRole === "GROUP") return "该商品组需要填写具体规格";
+    if (product?.catalogRole === "SIMPLE") return "复用现有独立 SKU";
+    return "创建独立 SKU";
+  };
+
   const toggleRowSelection = (localId: string, checked: boolean) => {
     setSelectedRowIds((current) =>
       checked ? [...new Set([...current, localId])] : current.filter((id) => id !== localId)
@@ -460,6 +608,34 @@ export function QuickEntryWorkbench({
   };
 
   const selectedValidRows = validRows.filter((row) => selectedRowIds.includes(row.localId));
+  const allValidRowsSelected =
+    validRows.length > 0 && selectedValidRows.length === validRows.length;
+  const partlySelected = selectedValidRows.length > 0 && !allValidRowsSelected;
+
+  const validateProductRows = (candidateRows: DraftRow[]) => {
+    for (const row of candidateRows) {
+      if (!isPositiveQuantity(row.quantity)) {
+        return `「${row.rawProductName}」的数量必须是大于 0 的数字`;
+      }
+      const matchedProduct = findCatalogProduct(row.rawProductName);
+      if (matchedProduct?.catalogRole === "GROUP" && !row.rawVariant?.trim()) {
+        return `「${row.rawProductName}」按规格管理，请填写尺码、颜色或版本等具体规格`;
+      }
+      if (isUsedCondition(row.conditionType) && Number(row.quantity ?? "1") !== 1) {
+        return `「${row.rawProductName}」为中古单件，请将每件商品拆成独立一行录入`;
+      }
+      const conditionError = validateItemCondition({
+        conditionType: row.conditionType,
+        conditionGrade: row.conditionGrade,
+        functionStatus: row.functionStatus,
+        notes: [row.batchNote, row.note].filter(Boolean).join(" / "),
+      });
+      if (conditionError) {
+        return `「${row.rawProductName}」：${conditionError}`;
+      }
+    }
+    return null;
+  };
 
   const handlePasteImport = () => {
     const parsed = splitPastedRows(pasteText, storeId);
@@ -478,11 +654,10 @@ export function QuickEntryWorkbench({
       return;
     }
 
-    for (const row of validRows) {
-      if (isUsedCondition(row.conditionType) && !row.batchNote?.trim() && !row.note?.trim()) {
-        setMessage(`「${row.rawProductName}」为中古/瑕疵，请填写批次描述`);
-        return;
-      }
+    const validationError = validateProductRows(validRows);
+    if (validationError) {
+      setMessage(validationError);
+      return;
     }
 
     startTransition(async () => {
@@ -511,19 +686,25 @@ export function QuickEntryWorkbench({
       return;
     }
 
+    const validationError = validateProductRows(selectedValidRows);
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+
     for (const row of selectedValidRows) {
       if (!row.purchasePrice || Number(row.purchasePrice) <= 0) {
         setMessage(`「${row.rawProductName}」缺少购入价，不能合并采购单`);
-        return;
-      }
-      if (isUsedCondition(row.conditionType) && !row.batchNote?.trim() && !row.note?.trim()) {
-        setMessage(`「${row.rawProductName}」为中古/瑕疵，请填写批次描述`);
         return;
       }
     }
 
     const currency = selectedValidRows[0]?.purchaseCurrency?.trim() || "CNY";
     const supplier = selectedValidRows[0]?.purchasePlatformText?.trim() || "";
+    if (!supplier) {
+      setMessage("要合并成一张采购单，请先为所选行填写相同的采购渠道 / 卖家");
+      return;
+    }
     const mismatch = selectedValidRows.find(
       (row) =>
         (row.purchaseCurrency?.trim() || "CNY") !== currency ||
@@ -554,7 +735,9 @@ export function QuickEntryWorkbench({
 
       const success = groupedResult.success + (restResult?.success ?? 0);
       const failed = groupedResult.failed + (restResult?.failed ?? 0);
-      setMessage(`保存完成：合并 ${selectedValidRows.length} 行，成功 ${success} 行，失败 ${failed} 行`);
+      setMessage(
+        `保存完成：合并 ${selectedValidRows.length} 行，成功 ${success} 行，失败 ${failed} 行`
+      );
       setSelectedRowIds([]);
       setRows((current) =>
         current.map((row) => {
@@ -579,6 +762,13 @@ export function QuickEntryWorkbench({
       <DatalistOptions id="loc-list" options={suggestions.location} />
       <DatalistOptions id="listplat-list" options={suggestions.listingPlatform} />
       <DatalistOptions id="saleplat-list" options={suggestions.salePlatform} />
+      {rows.map((row) => (
+        <DatalistOptions
+          key={`variant-options-${row.localId}`}
+          id={`variant-list-${row.localId}`}
+          options={variantSuggestionsFor(row)}
+        />
+      ))}
       <section className="space-y-4">
         <div className="rounded-lg border bg-card p-4">
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -589,10 +779,7 @@ export function QuickEntryWorkbench({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setShowAdvancedFields((value) => !value)}
-              >
+              <Button variant="outline" onClick={() => setShowAdvancedFields((value) => !value)}>
                 {showAdvancedFields ? "隐藏高级字段" : "显示高级字段"}
               </Button>
               <Button variant="outline" onClick={() => setRows((c) => [...c, blankRow(storeId)])}>
@@ -604,7 +791,7 @@ export function QuickEntryWorkbench({
                 onClick={handleGroupedSubmit}
                 disabled={isPending || selectedValidRows.length < 2}
               >
-                合并为一张采购单
+                合并保存为 1 张采购单
               </Button>
               <Button onClick={handleSubmit} disabled={isPending}>
                 {isPending ? (
@@ -623,20 +810,44 @@ export function QuickEntryWorkbench({
             </div>
           )}
 
+          {selectedValidRows.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-l-2 border-primary bg-primary/5 px-3 py-2">
+              <p className="text-sm font-medium">已选择 {selectedValidRows.length} 行采购明细</p>
+              <p className="text-xs text-muted-foreground">
+                同一采购渠道 / 卖家、同一币种的明细可保存到 1 张采购单，后续只产生 1
+                个待补物流任务。
+              </p>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] border-separate border-spacing-y-2">
+            <table className="w-full min-w-[1320px] border-separate border-spacing-y-2">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-2">合并</th>
+                  <th className="px-2">
+                    <Checkbox
+                      ref={(node) => {
+                        if (node) node.indeterminate = partlySelected;
+                      }}
+                      checked={allValidRowsSelected}
+                      disabled={validRows.length === 0}
+                      onChange={(event) =>
+                        setSelectedRowIds(
+                          event.target.checked ? validRows.map((row) => row.localId) : []
+                        )
+                      }
+                      aria-label="选择全部有效录入行"
+                    />
+                  </th>
                   <th className="px-2">品牌</th>
-                  <th className="px-2">商品名</th>
-                  <th className="px-2">变体</th>
-                  <th className="px-2">成色</th>
+                  <th className="px-2">商品组 / 商品名</th>
+                  <th className="px-2">具体规格</th>
+                  <th className="px-2">商品状态 / 品级</th>
                   <th className="px-2">数量</th>
                   <th className="px-2">购入价</th>
                   <th className="px-2">币种</th>
-                  <th className="px-2">购入平台</th>
-                  <th className="px-2">批次描述</th>
+                  <th className="px-2">采购渠道 / 卖家</th>
+                  <th className="px-2">品相 / 采购备注</th>
                   {showAdvancedFields && (
                     <>
                       <th className="px-2">采购物流单号</th>
@@ -646,7 +857,7 @@ export function QuickEntryWorkbench({
                       <th className="px-2">售出价</th>
                     </>
                   )}
-                  <th className="px-2">状态</th>
+                  <th className="px-2">处理状态</th>
                 </tr>
               </thead>
               <tbody>
@@ -671,44 +882,83 @@ export function QuickEntryWorkbench({
                       <Input
                         list="product-list"
                         value={row.rawProductName}
-                        onChange={(e) => updateRow(row.localId, { rawProductName: e.target.value })}
-                        placeholder="火影忍者 晓组织"
+                        onChange={(e) => updateProductName(row, e.target.value)}
+                        placeholder="例如：Dunk SB Low 芝加哥"
                       />
                     </td>
                     <td className="p-2">
                       <Input
-                        list="variant-list"
+                        list={`variant-list-${row.localId}`}
                         value={row.rawVariant ?? ""}
                         onChange={(e) => updateRow(row.localId, { rawVariant: e.target.value })}
-                        placeholder="佩恩"
+                        placeholder="例如：43码、红色；无规格可留空"
                       />
+                      <p
+                        className={`mt-1 text-[11px] ${
+                          catalogOutcomeFor(row).includes("需要填写")
+                            ? "text-amber-700"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {catalogOutcomeFor(row)}
+                      </p>
                     </td>
                     <td className="p-2">
                       <Select
-                        value={row.conditionType ?? "新品"}
-                        onChange={(e) => updateRow(row.localId, { conditionType: e.target.value })}
+                        value={normalizeItemConditionType(row.conditionType)}
+                        onChange={(e) => {
+                          const conditionType = e.target.value;
+                          updateRow(row.localId, {
+                            conditionType,
+                            conditionGrade: conditionType === "USED" ? "UNASSESSED" : undefined,
+                            functionStatus: conditionType === "USED" ? "UNTESTED" : "NORMAL",
+                          });
+                        }}
                       >
-                        {CONDITION_OPTIONS.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
+                        {CONDITION_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </Select>
+                      {isUsedCondition(row.conditionType) ? (
+                        <div className="mt-2 w-48 space-y-2">
+                          <GradeButtons
+                            value={row.conditionGrade}
+                            onChange={(conditionGrade) =>
+                              updateRow(row.localId, { conditionGrade })
+                            }
+                          />
+                          <Select
+                            value={row.functionStatus ?? "UNTESTED"}
+                            onChange={(e) =>
+                              updateRow(row.localId, { functionStatus: e.target.value })
+                            }
+                            aria-label={`功能状态：${row.rawProductName || "录入行"}`}
+                          >
+                            {itemFunctionStatusOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                功能：{option.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                      ) : null}
                     </td>
                     <td className="p-2">
                       <Input
-                        type="number"
-                        min="0"
-                        step="0.0001"
+                        type="text"
+                        inputMode="decimal"
                         value={row.quantity ?? "1"}
                         onChange={(e) => updateRow(row.localId, { quantity: e.target.value })}
+                        placeholder="1"
+                        aria-label={`数量：${row.rawProductName || "录入行"}`}
                       />
                     </td>
                     <td className="p-2">
                       <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
                         value={row.purchasePrice ?? ""}
                         onChange={(e) => updateRow(row.localId, { purchasePrice: e.target.value })}
                         placeholder="53"
@@ -717,7 +967,9 @@ export function QuickEntryWorkbench({
                     <td className="p-2">
                       <Select
                         value={row.purchaseCurrency ?? "CNY"}
-                        onChange={(e) => updateRow(row.localId, { purchaseCurrency: e.target.value })}
+                        onChange={(e) =>
+                          updateRow(row.localId, { purchaseCurrency: e.target.value })
+                        }
                       >
                         {CURRENCY_OPTIONS.map((opt) => (
                           <option key={opt} value={opt}>
@@ -730,15 +982,21 @@ export function QuickEntryWorkbench({
                       <Input
                         list="pplat-list"
                         value={row.purchasePlatformText ?? ""}
-                        onChange={(e) => updateRow(row.localId, { purchasePlatformText: e.target.value })}
-                        placeholder="千岛"
+                        onChange={(e) =>
+                          updateRow(row.localId, { purchasePlatformText: e.target.value })
+                        }
+                        placeholder="例如：闲鱼、千岛、个人卖家"
                       />
                     </td>
                     <td className="p-2">
                       <Input
                         value={row.batchNote ?? ""}
                         onChange={(e) => updateRow(row.localId, { batchNote: e.target.value })}
-                        placeholder={isUsedCondition(row.conditionType) ? "中古必填" : "可选"}
+                        placeholder={
+                          itemRequiresIssueEvidence(row)
+                            ? "必填：瑕疵、异常、缺件等"
+                            : "可选：批次或采购备注"
+                        }
                       />
                     </td>
                     {showAdvancedFields && (
@@ -746,7 +1004,9 @@ export function QuickEntryWorkbench({
                         <td className="p-2">
                           <Input
                             value={row.purchaseTrackingNo ?? ""}
-                            onChange={(e) => updateRow(row.localId, { purchaseTrackingNo: e.target.value })}
+                            onChange={(e) =>
+                              updateRow(row.localId, { purchaseTrackingNo: e.target.value })
+                            }
                             placeholder="保存后建议在工作台补"
                           />
                         </td>
@@ -754,7 +1014,9 @@ export function QuickEntryWorkbench({
                           <Input
                             list="loc-list"
                             value={row.currentLocationText ?? ""}
-                            onChange={(e) => updateRow(row.localId, { currentLocationText: e.target.value })}
+                            onChange={(e) =>
+                              updateRow(row.localId, { currentLocationText: e.target.value })
+                            }
                             placeholder="所在地"
                           />
                         </td>
@@ -762,7 +1024,9 @@ export function QuickEntryWorkbench({
                           <Input
                             list="listplat-list"
                             value={row.listingPlatformsText ?? ""}
-                            onChange={(e) => updateRow(row.localId, { listingPlatformsText: e.target.value })}
+                            onChange={(e) =>
+                              updateRow(row.localId, { listingPlatformsText: e.target.value })
+                            }
                             placeholder="煤炉、雅虎"
                           />
                         </td>
@@ -770,15 +1034,16 @@ export function QuickEntryWorkbench({
                           <Input
                             list="saleplat-list"
                             value={row.salePlatformText ?? ""}
-                            onChange={(e) => updateRow(row.localId, { salePlatformText: e.target.value })}
+                            onChange={(e) =>
+                              updateRow(row.localId, { salePlatformText: e.target.value })
+                            }
                             placeholder="售出平台"
                           />
                         </td>
                         <td className="p-2">
                           <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
+                            type="text"
+                            inputMode="decimal"
                             value={row.salePrice ?? ""}
                             onChange={(e) => updateRow(row.localId, { salePrice: e.target.value })}
                             placeholder="售出价"

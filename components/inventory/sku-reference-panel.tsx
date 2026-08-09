@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { ExternalLink, PackageCheck, ShoppingCart, Tags, Truck } from "lucide-react";
+import { ExternalLink, PackageCheck, Radar, ShoppingCart, Tags, Truck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import type { SkuCatalogDetail } from "@/lib/application/sku-catalog";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
 
 interface SKUReferencePanelProps {
-  sku: Pick<SkuCatalogDetail, "id" | "code" | "reference">;
+  sku: Pick<SkuCatalogDetail, "id" | "code" | "reference" | "intelligence">;
   compact?: boolean;
 }
 
@@ -51,6 +51,55 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
           </Link>
         </div>
 
+        {sku.intelligence.recentMarketObservations.length > 0 ? (
+          <div className="border-t pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="inline-flex items-center gap-1.5 text-xs font-medium">
+                <Radar className="h-3.5 w-3.5 text-blue-600" />
+                来源情报
+              </p>
+              <Link
+                href={`/product-intelligence/${sku.intelligence.recentMarketObservations[0].itemId}`}
+                className="text-[10px] text-blue-600 hover:underline"
+              >
+                共 {sku.intelligence.marketObservationCount} 条
+              </Link>
+            </div>
+            <ul className="space-y-1.5">
+              {sku.intelligence.recentMarketObservations.slice(0, compact ? 2 : 5).map((item) => (
+                <li
+                  key={item.id}
+                  className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 rounded-md bg-muted/40 px-2.5 py-2 text-xs"
+                >
+                  <Link
+                    href={`/product-intelligence/${item.itemId}`}
+                    className="truncate font-medium hover:text-blue-600"
+                  >
+                    {item.platformName || "市场来源"}
+                    {item.pageStatus === "SOLD_OUT" ? " · 已售罄" : ""}
+                  </Link>
+                  <span className="font-semibold tabular-nums">
+                    {formatCurrency(item.amount, item.currency)}
+                  </span>
+                  <span className="truncate text-[10px] text-muted-foreground">
+                    {item.conditionGrade || "成色未标注"} · {new Date(item.observedAt).toLocaleDateString("zh-CN")}
+                  </span>
+                  {item.sourceUrl ? (
+                    <a
+                      href={item.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-0.5 text-[10px] text-blue-600 hover:underline"
+                    >
+                      原链接 <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {reference.recentPurchaseLines.length > 0 ? (
           <div>
             <p className="mb-1 text-xs font-medium">最近采购</p>
@@ -92,7 +141,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
         ) : null}
 
         <p className="text-[10px] text-muted-foreground">
-          采购记录 {reference.purchaseLineCount} · 销售记录 {reference.salesLineCount}
+          情报 {sku.intelligence.marketObservationCount} · 采购 {reference.purchaseLineCount} · 销售 {reference.salesLineCount}
           <Link
             href="/procurement"
             className="ml-1.5 inline-flex items-center gap-0.5 text-primary hover:underline"

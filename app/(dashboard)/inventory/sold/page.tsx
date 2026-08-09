@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import Link from "next/link";
 import { PackageCheck, ShoppingCart } from "lucide-react";
 import { ProductImage } from "@/components/ui/product-image";
@@ -8,7 +9,6 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 
 function firstPhoto(value: unknown) {
   if (Array.isArray(value) && typeof value[0] === "string") {
@@ -22,9 +22,10 @@ function formatDate(value: Date) {
 }
 
 export default async function SoldInventoryPage() {
+  const { activeStoreId: storeId } = await requireUserContext();
   const [soldUnits, soldOutListings] = await Promise.all([
     prisma.itemUnit.findMany({
-      where: { storeId: STORE_ID, status: "CONSUMED" },
+      where: { storeId: storeId, status: "CONSUMED" },
       include: {
         sku: true,
         location: true,
@@ -32,7 +33,7 @@ export default async function SoldInventoryPage() {
       orderBy: { updatedAt: "desc" },
     }),
     prisma.listing.findMany({
-      where: { storeId: STORE_ID, status: "SOLD_OUT" },
+      where: { storeId: storeId, status: "SOLD_OUT" },
       include: {
         platform: true,
         sku: true,

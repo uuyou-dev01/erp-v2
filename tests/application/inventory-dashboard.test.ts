@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCatalogReadiness,
   buildInventoryDashboardSummary,
+  buildProductInventoryEntryHref,
   buildProductStocktakeHref,
 } from "@/lib/application/inventory-dashboard";
 import type { ListingCoverageProduct } from "@/lib/application/listing-coverage";
@@ -260,5 +261,20 @@ describe("inventory dashboard helpers", () => {
         "loc_cn_a"
       )
     ).toBe("/inventory/stocktake?q=SKU+SPACE%2F001&locationId=loc_cn_a");
+  });
+
+  it("builds an inventory entry link that presets the SKU and return context", () => {
+    expect(
+      buildProductInventoryEntryHref(
+        product({
+          key: "SKU:entry",
+          skuId: "sku entry/001",
+          skuCode: "SKU-ENTRY-001",
+        }),
+        "/inventory/sellable?market=JP"
+      )
+    ).toBe(
+      "/inventory/lots/new?skuId=sku+entry%2F001&returnTo=%2Finventory%2Fsellable%3Fmarket%3DJP"
+    );
   });
 });

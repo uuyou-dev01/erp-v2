@@ -14,7 +14,7 @@ import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity
 import { assertOperationalSku } from "@/lib/application/sku-operability";
 
 /**
- * 获取 store 内每个 SKU 的可售/转运库存细分（plain object 版，可跨 server action 边界传输）
+ * 获取 store 内每个 SKU 的可售/转运/暂存库存细分（plain object 版，可跨 server action 边界传输）
  */
 export async function getSkuStockBreakdownMap(
   storeId: string
@@ -50,7 +50,12 @@ export async function getInventoryLots(storeId: string) {
           parentSku: { select: { code: true, name: true } },
         },
       },
-      location: true,
+      location: {
+        include: {
+          capabilities: { where: { enabled: true } },
+          shippingLanesFrom: { where: { active: true, laneType: "CUSTOMER_DELIVERY" } },
+        },
+      },
     },
     orderBy: { receivedAt: "desc" },
   });
@@ -71,10 +76,7 @@ export async function getInventoryLots(storeId: string) {
         })
       : [];
   const qtyByLotId = new Map(
-    ledgerTotals.map((row) => [
-      row.entityId,
-      new Decimal(row._sum.deltaQty?.toString() ?? "0"),
-    ])
+    ledgerTotals.map((row) => [row.entityId, new Decimal(row._sum.deltaQty?.toString() ?? "0")])
   );
   const converter = await createStoreMoneyConverter(storeId);
 
@@ -321,9 +323,7 @@ export async function deleteInventoryLot(id: string) {
   });
 
   if (ledgerCount > 1) {
-    throw new Error(
-      "Cannot delete lot with transaction history. Set status to CONSUMED instead."
-    );
+    throw new Error("Cannot delete lot with transaction history. Set status to CONSUMED instead.");
   }
 
   // Delete in transaction (lot and its initial ledger entry)

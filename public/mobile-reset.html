@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>正在恢复 ERP 随身助手</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(86vw, 360px); padding: 28px; border: 1px solid #e2e8f0; border-radius: 20px; background: white; text-align: center; box-shadow: 0 20px 50px rgba(15, 23, 42, .08); }
+      span { display: inline-block; width: 24px; height: 24px; border: 3px solid #dbeafe; border-top-color: #2563eb; border-radius: 999px; animation: spin .8s linear infinite; }
+      h1 { margin: 18px 0 8px; font-size: 20px; }
+      p { margin: 0; color: #64748b; font-size: 13px; line-height: 1.7; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span aria-hidden="true"></span>
+      <h1>正在恢复随身助手</h1>
+      <p id="status">清理旧版离线缓存后会自动重新打开。</p>
+    </main>
+    <script>
+      (async () => {
+        if (location.protocol === "file:") {
+          document.getElementById("status").innerHTML =
+            '当前是本地文件，无法清理 ERP 站点。请打开 <strong>http://192.168.0.46:3000/mobile-reset.html</strong>。';
+          return;
+        }
+        try {
+          if ("serviceWorker" in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.filter((item) => item.active?.scriptURL.endsWith("/sw.js")).map((item) => item.unregister()));
+          }
+          if ("caches" in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.filter((key) => key.startsWith("erp-companion-")).map((key) => caches.delete(key)));
+          }
+          sessionStorage.clear();
+          localStorage.removeItem("erp-mobile-installation-id");
+          document.getElementById("status").textContent = "清理完成，正在进入登录页……";
+          location.replace(`/login?next=%2Fm&cache-reset=${Date.now()}`);
+        } catch (error) {
+          document.getElementById("status").textContent = "部分缓存无法自动清理，正在进入登录页……";
+          location.replace(`/login?next=%2Fm&cache-reset=${Date.now()}`);
+        }
+      })();
+    </script>
+  </body>
+</html>

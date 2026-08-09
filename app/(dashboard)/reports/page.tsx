@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import {
   getBusinessOverview,
   getInventoryReport,
@@ -6,6 +7,7 @@ import {
   getPlatformBreakdown,
   getFeeDetails,
   getSettlementSummary,
+  getOperationalChargeSummary,
 } from "@/app/actions/reports";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -32,7 +34,6 @@ import { buttonVariants } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 
 function computeDateRange(
   range?: string,
@@ -67,6 +68,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<{ range?: string; from?: string; to?: string }>;
 }) {
+  const { activeStoreId: storeId, organizationId } = await requireUserContext();
   const params = await searchParams;
   const { dateFrom, dateTo } = computeDateRange(
     params.range,
@@ -83,14 +85,16 @@ export default async function ReportsPage({
     platformBreakdown,
     feeDetails,
     settlementSummary,
+    chargeSummary,
   ] = await Promise.all([
-    getBusinessOverview(STORE_ID, dateRange),
-    getInventoryReport(STORE_ID, dateRange),
-    getSalesReport(STORE_ID, dateRange),
-    getMonthlyPnL(STORE_ID),
-    getPlatformBreakdown(STORE_ID, dateRange),
-    getFeeDetails(STORE_ID, dateRange),
-    getSettlementSummary(STORE_ID, dateRange),
+    getBusinessOverview(storeId, dateRange),
+    getInventoryReport(storeId, dateRange),
+    getSalesReport(storeId, dateRange),
+    getMonthlyPnL(storeId),
+    getPlatformBreakdown(storeId, dateRange),
+    getFeeDetails(storeId, dateRange),
+    getSettlementSummary(storeId, dateRange),
+    getOperationalChargeSummary(organizationId, dateRange),
   ]);
 
   return (
@@ -254,6 +258,17 @@ export default async function ReportsPage({
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      {/* 月度收支 */}
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <div><h2 className="text-xl font-semibold">经营费用子账</h2><p className="text-sm text-muted-foreground">预估只用于参考；实际利润仅纳入已确认的实际费用。</p></div>
+          <Link href="/finance/charges" className={buttonVariants({ variant: "outline", size: "sm" })}>费用明细</Link>
+        </div>
+        {chargeSummary.currencies.length === 0 ? <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">当前期间暂无费用事件。</CardContent></Card> : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {chargeSummary.currencies.map((row) => <Card key={row.currency}><CardHeader className="pb-2"><CardTitle className="text-base">{row.currency} 费用</CardTitle></CardHeader><CardContent className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">预估应付 / 应收</span><span>{row.estimatedPayable} / {row.estimatedReceivable}</span></div><div className="flex justify-between"><span className="text-muted-foreground">确认应付 / 应收</span><span>{row.confirmedPayable} / {row.confirmedReceivable}</span></div><div className="flex justify-between border-t pt-2 font-medium"><span>实际利润影响</span><span>{row.actualProfitContribution}</span></div><div className="flex justify-between text-muted-foreground"><span>已结算付 / 收</span><span>{row.settledPayable} / {row.settledReceivable}</span></div></CardContent></Card>)}
+        </div>}
       </div>
 
       {/* 月度收支 */}

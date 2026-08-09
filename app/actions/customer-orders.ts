@@ -25,13 +25,16 @@ import {
   RESERVING_ALLOCATION_STATUSES,
 } from "@/lib/application/order-allocation";
 import { requireUserContext } from "@/lib/auth/user-context";
-import {
-  completeTasksForRef,
-  createTaskIfMissing,
-  TASK_TYPE,
-} from "@/lib/application/tasks";
+import { completeTasksForRef, createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
+import { getEffectiveSellableQuantity } from "@/lib/application/inventory";
+import { isFulfillmentDestinationCode } from "@/lib/inventory/location-fulfillment";
+import {
+  inferMarketFromPlatform,
+  locationMatchesMarket,
+  type SellableMarketCode,
+} from "@/lib/application/sellable-market";
 
 export type OrderStatus =
   | "DRAFT"
@@ -52,6 +55,7 @@ export interface CreateCustomerOrderInput {
   customerEmail?: string;
   customerPhone?: string;
   shippingAddress?: string;
+  shippingCountry?: string;
   orderDate: Date;
   currency: string;
   countryFlow?: string;
@@ -136,12 +140,18 @@ export async function updateOrderNetRevenue(orderId: string, netRevenue: string)
 
 export async function createCustomerOrder(data: CreateCustomerOrderInput) {
   const context = await requireUserContext({ storeId: data.storeId });
+  let platformCountry: string | null = null;
   if (data.platformId) {
     const platform = await prisma.platform.findFirst({
       where: { id: data.platformId, storeId: context.activeStoreId },
-      select: { id: true },
+      select: { id: true, country: true },
     });
     if (!platform) throw new Error("平台不存在或无权操作");
+    platformCountry = platform.country;
+  }
+  const shippingCountry = data.shippingCountry?.trim().toUpperCase() || platformCountry;
+  if (shippingCountry && !isFulfillmentDestinationCode(shippingCountry)) {
+    throw new Error("订单收货国家/地区无效");
   }
 
   const order = await prisma.customerOrder.create({
@@ -154,6 +164,7 @@ export async function createCustomerOrder(data: CreateCustomerOrderInput) {
       customerEmail: data.customerEmail,
       customerPhone: data.customerPhone,
       shippingAddress: data.shippingAddress,
+      shippingCountry,
       orderDate: data.orderDate,
       currency: data.currency,
       countryFlow: data.countryFlow,
@@ -225,7 +236,15 @@ export async function allocateInventory(data: AllocateInventoryInput) {
   const quantity = new Decimal(data.quantity);
   const orderLine = await prisma.orderLine.findUnique({
     where: { id: data.orderLineId },
-    include: { order: { select: { storeId: true } } },
+    include: {
+      order: {
+        select: {
+          storeId: true,
+          shippingCountry: true,
+          platform: { select: { code: true, country: true } },
+        },
+      },
+    },
   });
   if (!orderLine) {
     throw new Error("订单行不存在或无权分配");
@@ -235,13 +254,35 @@ export async function allocateInventory(data: AllocateInventoryInput) {
   const allocation = await prisma.$transaction(async (tx) => {
     const lot = await tx.inventoryLot.findUnique({
       where: { id: data.lotId },
+      include: {
+        location: {
+          include: {
+            capabilities: { where: { enabled: true } },
+            shippingLanesFrom: {
+              where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+            },
+          },
+        },
+      },
     });
 
     if (!lot) {
       throw new Error("库存批次不存在");
     }
+    if (lot.status !== "ACTIVE") {
+      throw new Error("库存批次当前不可分配");
+    }
+    if (lot.costStatus !== "CONFIRMED") {
+      throw new Error("该批库存成本仍待分摊，不能确认销售利润或分配订单");
+    }
     if (lot.storeId !== orderLine.order.storeId) {
       throw new Error("库存批次不属于该订单店铺");
+    }
+    const destination =
+      (orderLine.order.shippingCountry as SellableMarketCode | null) ??
+      (orderLine.order.platform ? inferMarketFromPlatform(orderLine.order.platform) : null);
+    if (destination && !locationMatchesMarket(lot.location, destination)) {
+      throw new Error("所选库存节点没有到订单收货地的有效客户配送线路");
     }
 
     const ledgers = await tx.stockLedger.findMany({
@@ -282,6 +323,9 @@ export async function allocateInventory(data: AllocateInventoryInput) {
         quantity: quantity.toFixed(4),
         unitCost: unitCost.toFixed(4),
         costAmount: costAmount.toFixed(4),
+        costCurrency: lot.costCurrency,
+        costSourceType: lot.sourceType,
+        costSourceId: lot.sourceId,
         status: ORDER_ALLOCATION_STATUS.ALLOCATED,
       },
     });
@@ -523,6 +567,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
       fulfillmentRequests: {
         include: {
           reservation: true,
+          inventoryAllocations: true,
         },
       },
     },
@@ -533,7 +578,9 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
   if (!cancellable.includes(order.orderStatus)) {
     throw new Error("当前状态不可取消，已发货订单请走退货流程");
   }
-  if (order.fulfillmentRequests.some((request) => ["SHIPPED", "DELIVERED"].includes(request.status))) {
+  if (
+    order.fulfillmentRequests.some((request) => ["SHIPPED", "DELIVERED"].includes(request.status))
+  ) {
     throw new Error("关联代发已发货，不能直接取消订单");
   }
 
@@ -543,6 +590,8 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
   }
 
   await prisma.$transaction(async (tx) => {
+    const releasedItemUnitIds = new Set<string>();
+
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
         if (CLOSED_ALLOCATION_STATUSES.has(allocation.status)) {
@@ -550,6 +599,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
         }
 
         if (allocation.itemUnitId) {
+          releasedItemUnitIds.add(allocation.itemUnitId);
           const item = await tx.itemUnit.findUnique({
             where: { id: allocation.itemUnitId },
           });
@@ -598,6 +648,35 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
       });
     }
 
+    if (releasedItemUnitIds.size > 0) {
+      await tx.listing.updateMany({
+        where: {
+          storeId: order.storeId,
+          platformId: order.platformId ?? undefined,
+          itemUnitId: { in: [...releasedItemUnitIds] },
+          listingType: "ITEM_UNIT",
+          status: "SOLD_OUT",
+        },
+        data: { status: "ACTIVE", delistedAt: null },
+      });
+    }
+
+    for (const skuId of new Set(order.lines.map((line) => line.skuId))) {
+      const sellableQuantity = await getEffectiveSellableQuantity(tx, order.storeId, skuId);
+      if (sellableQuantity.gt(0)) {
+        await tx.listing.updateMany({
+          where: {
+            storeId: order.storeId,
+            platformId: order.platformId ?? undefined,
+            skuId,
+            listingType: "SKU",
+            status: "SOLD_OUT",
+          },
+          data: { status: "ACTIVE", delistedAt: null },
+        });
+      }
+    }
+
     for (const request of order.fulfillmentRequests) {
       if (["CANCELLED", "REJECTED", "DELIVERED"].includes(request.status)) continue;
 
@@ -610,10 +689,43 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
           where: { id: request.supplyOfferId },
           data: { reservedQty: { decrement: request.quantity } },
         });
+        if (request.reservation.supplyOfferItemId) {
+          await tx.supplyOfferItem.update({
+            where: { id: request.reservation.supplyOfferItemId },
+            data: { quantityReserved: { decrement: request.quantity } },
+          });
+        }
+        if (request.reservation.supplyOfferChannelId) {
+          const channel = await tx.supplyOfferChannel.findUnique({
+            where: { id: request.reservation.supplyOfferChannelId },
+          });
+          if (channel?.inventoryMode === "GUARANTEED") {
+            await tx.supplyOfferChannel.update({
+              where: { id: channel.id },
+              data: { quotaReservedQty: { decrement: request.quantity } },
+            });
+          }
+        }
         if (request.resaleListingId) {
           await tx.resaleListing.update({
             where: { id: request.resaleListingId },
-            data: { quantitySold: { decrement: request.quantity } },
+            data: {
+              quantitySold: { decrement: request.quantity },
+              ...(request.status !== "SHIPPED" ? { status: "ACTIVE", pausedAt: null } : {}),
+            },
+          });
+        }
+        const fulfillmentItemUnitIds = request.inventoryAllocations
+          .filter((allocation) => allocation.status === "ALLOCATED" && allocation.itemUnitId)
+          .map((allocation) => allocation.itemUnitId as string);
+        await tx.fulfillmentInventoryAllocation.updateMany({
+          where: { fulfillmentRequestId: request.id, status: "ALLOCATED" },
+          data: { status: "RELEASED" },
+        });
+        if (fulfillmentItemUnitIds.length > 0) {
+          await tx.itemUnit.updateMany({
+            where: { id: { in: fulfillmentItemUnitIds }, status: "ALLOCATED" },
+            data: { status: "AVAILABLE" },
           });
         }
       }
@@ -632,10 +744,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
       mergeShippingProof(order.shippingProof, {
         cancelReason,
         cancelledAt: new Date().toISOString(),
-        proofNote: [
-          parseShippingProof(order.shippingProof).proofNote,
-          `订单取消：${cancelReason}`,
-        ]
+        proofNote: [parseShippingProof(order.shippingProof).proofNote, `订单取消：${cancelReason}`]
           .filter(Boolean)
           .join("\n"),
       })
@@ -656,6 +765,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
   revalidatePath("/inventory/sellable");
+  revalidatePath("/listing");
   revalidatePath("/fulfillment/requests");
   revalidatePath("/resale");
   revalidatePath("/marketplace");
@@ -838,6 +948,25 @@ export async function markOrderShipped(
   if (order.orderStatus !== "CONFIRMED") {
     throw new Error("只有已确认订单可以标记发货");
   }
+  if (order.lines.length === 0) {
+    throw new Error("订单没有商品，无法发货");
+  }
+  for (const line of order.lines) {
+    const reservedQuantity = line.allocations
+      .filter((allocation) =>
+        RESERVING_ALLOCATION_STATUSES.includes(
+          allocation.status as (typeof RESERVING_ALLOCATION_STATUSES)[number]
+        )
+      )
+      .reduce(
+        (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
+        new Decimal(0)
+      );
+    const orderedQuantity = new Decimal(line.quantity.toString());
+    if (!reservedQuantity.eq(orderedQuantity)) {
+      throw new Error(`订单商品 ${line.id} 库存预留不完整，请先完成库存分配`);
+    }
+  }
   const context = await requireUserContext({ storeId: order.storeId });
 
   await prisma.$transaction(async (tx) => {
@@ -846,7 +975,8 @@ export async function markOrderShipped(
         if (
           allocation.status === ORDER_ALLOCATION_STATUS.SHIPPED ||
           allocation.status === ORDER_ALLOCATION_STATUS.DELIVERED
-        ) continue;
+        )
+          continue;
 
         if (allocation.itemUnitId) {
           const item = await tx.itemUnit.findUnique({
@@ -932,9 +1062,7 @@ export async function markOrderShipped(
         shippedAt: new Date(),
         trackingNo: options?.trackingNo?.trim() || undefined,
         shippingProof:
-          Object.keys(mergedProof).length > 0
-            ? (mergedProof as Prisma.InputJsonValue)
-            : undefined,
+          Object.keys(mergedProof).length > 0 ? (mergedProof as Prisma.InputJsonValue) : undefined,
       },
     });
   });
@@ -1070,9 +1198,7 @@ export async function settleCustomerOrder(
           lineAmount: new Decimal(line.lineAmount.toString()),
         })),
       });
-      const amountByLineId = new Map(
-        lineAllocations.map((row) => [row.id, row.amount])
-      );
+      const amountByLineId = new Map(lineAllocations.map((row) => [row.id, row.amount]));
 
       for (const line of order.lines) {
         const lineAmount = amountByLineId.get(line.id);

@@ -14,7 +14,13 @@ import { getSKUs } from "@/app/actions/skus";
 import { getItemUnits } from "@/app/actions/item-units";
 import { getSkuStockBreakdownMap } from "@/app/actions/inventory-lots";
 import type { SkuStockBreakdown } from "@/lib/application/inventory";
-import { Calculator, CheckCircle, Truck, AlertTriangle } from "lucide-react";
+import {
+  isPlatformTargetForMarket,
+  marketLabel,
+  type SellableMarketCode,
+} from "@/lib/application/sellable-market";
+import { Calculator, CheckCircle, Truck, AlertTriangle, Package } from "lucide-react";
+import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
 
 interface ListingFormProps {
   storeId: string;
@@ -23,6 +29,7 @@ interface ListingFormProps {
   initialPlatformId?: string;
   initialListingType?: "SKU" | "ITEM_UNIT";
   returnHref?: string;
+  targetMarket?: SellableMarketCode;
 }
 
 interface PlatformData {
@@ -60,6 +67,7 @@ export function ListingForm({
   initialPlatformId = "",
   initialListingType,
   returnHref = "/inventory/sellable",
+  targetMarket,
 }: ListingFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -68,8 +76,7 @@ export function ListingForm({
   const [skus, setSkus] = useState<SKU[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [stockMap, setStockMap] = useState<Record<string, SkuStockBreakdown>>({});
-  const resolvedListingType =
-    initialListingType ?? (initialItemUnitId ? "ITEM_UNIT" : "SKU");
+  const resolvedListingType = initialListingType ?? (initialItemUnitId ? "ITEM_UNIT" : "SKU");
   const [formData, setFormData] = useState({
     platformId: initialPlatformId,
     listingType: resolvedListingType,
@@ -89,25 +96,37 @@ export function ListingForm({
         getItemUnits(storeId),
         getSkuStockBreakdownMap(storeId),
       ]);
-      setPlatforms(platformsData as unknown as PlatformData[]);
+      const loadedPlatforms = platformsData as unknown as PlatformData[];
+      const eligiblePlatforms = targetMarket
+        ? loadedPlatforms.filter((platform) => isPlatformTargetForMarket(platform, targetMarket))
+        : loadedPlatforms;
+      setPlatforms(loadedPlatforms);
       setSkus(skusData);
       setItemUnits(itemUnitsData.filter((item) => item.status === "AVAILABLE"));
       setStockMap(stockData);
 
       if (initialPlatformId) {
-        const selected = (platformsData as unknown as PlatformData[]).find(
-          (platform) => platform.id === initialPlatformId
-        );
+        const selected = eligiblePlatforms.find((platform) => platform.id === initialPlatformId);
         if (selected?.defaultCurrency) {
           setFormData((prev) => ({
             ...prev,
             currency: selected.defaultCurrency || prev.currency,
           }));
+        } else if (!selected) {
+          setFormData((prev) => ({ ...prev, platformId: "" }));
         }
       }
     };
     loadData();
-  }, [storeId, initialPlatformId]);
+  }, [storeId, initialPlatformId, targetMarket]);
+
+  const visiblePlatforms = useMemo(
+    () =>
+      targetMarket
+        ? platforms.filter((platform) => isPlatformTargetForMarket(platform, targetMarket))
+        : platforms,
+    [platforms, targetMarket]
+  );
 
   const selectedPlatform = useMemo(
     () => platforms.find((p) => p.id === formData.platformId),
@@ -130,7 +149,12 @@ export function ListingForm({
 
     const net = price * (1 - feeRate) - shippingAmount;
     return isNaN(net) ? null : net;
-  }, [formData.listedPrice, formData.feeRateOverride, formData.shippingFeeOverride, selectedPlatform]);
+  }, [
+    formData.listedPrice,
+    formData.feeRateOverride,
+    formData.shippingFeeOverride,
+    selectedPlatform,
+  ]);
 
   const handlePlatformChange = (platformId: string) => {
     const platform = platforms.find((p) => p.id === platformId);
@@ -153,8 +177,7 @@ export function ListingForm({
         platformId: formData.platformId,
         listingType: formData.listingType,
         skuId: formData.listingType === "SKU" ? formData.skuId : undefined,
-        itemUnitId:
-          formData.listingType === "ITEM_UNIT" ? formData.itemUnitId : undefined,
+        itemUnitId: formData.listingType === "ITEM_UNIT" ? formData.itemUnitId : undefined,
         listedPrice: formData.listedPrice || undefined,
         currency: formData.currency || undefined,
         feeRateOverride: formData.feeRateOverride || undefined,
@@ -168,9 +191,7 @@ export function ListingForm({
 
       router.push(returnHref);
     } catch (error) {
-      setSubmitError(
-        error instanceof Error ? error.message : "添加上架记录失败，请重试",
-      );
+      setSubmitError(error instanceof Error ? error.message : "添加上架记录失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -205,21 +226,31 @@ export function ListingForm({
           required
         >
           <option value="">选择平台</option>
-          {platforms.map((platform) => (
+          {visiblePlatforms.map((platform) => (
             <option key={platform.id} value={platform.id}>
               {platform.name}
-              {platform.defaultFeeRate ? ` (${(Number(platform.defaultFeeRate) * 100).toFixed(1)}%)` : ""}
+              {platform.defaultFeeRate
+                ? ` (${(Number(platform.defaultFeeRate) * 100).toFixed(1)}%)`
+                : ""}
             </option>
           ))}
         </Select>
-        {platforms.length === 0 && (
+        {visiblePlatforms.length === 0 && (
           <p className="text-xs text-muted-foreground">
-            请先在「库存设置 → 销售平台配置」中添加销售平台
+            {targetMarket
+              ? `${marketLabel(targetMarket)}尚未配置可用平台，请先在「销售平台配置」中设置平台所属市场`
+              : "请先在「库存设置 → 销售平台配置」中添加销售平台"}
           </p>
         )}
-        <p className="text-xs text-muted-foreground">
-          上架负责人字段将在后续版本支持；当前仅记录平台、价格与上架时间。
-        </p>
+        {targetMarket ? (
+          <p className="text-xs text-muted-foreground">
+            当前库存节点可履约{marketLabel(targetMarket)}，这里只显示该目的地或全球平台。
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            上架负责人字段将在后续版本支持；当前仅记录平台、价格与上架时间。
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -255,23 +286,23 @@ export function ListingForm({
           >
             <option value="">选择SKU</option>
             {skus
-              .filter((sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length))
+              .filter(
+                (sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length)
+              )
               .map((sku) => {
-              const breakdown = stockMap[sku.id];
-              const stockLabel = breakdown
-                ? ` · 可发 ${breakdown.sellableQty}${
-                    breakdown.inTransitQty > 0
-                      ? ` / 转运 ${breakdown.inTransitQty}`
-                      : ""
-                  }`
-                : "";
-              return (
-                <option key={sku.id} value={sku.id}>
-                  {sku.code} - {sku.name}
-                  {stockLabel}
-                </option>
-              );
-            })}
+                const breakdown = stockMap[sku.id];
+                const stockLabel = breakdown
+                  ? ` · 可发 ${breakdown.sellableQty}${
+                      breakdown.inTransitQty > 0 ? ` / 转运 ${breakdown.inTransitQty}` : ""
+                    }${breakdown.heldQty > 0 ? ` / 暂存 ${breakdown.heldQty}` : ""}`
+                  : "";
+                return (
+                  <option key={sku.id} value={sku.id}>
+                    {sku.code} - {sku.name}
+                    {stockLabel}
+                  </option>
+                );
+              })}
           </Select>
           {formData.skuId ? <SkuStockHint breakdown={stockMap[formData.skuId]} /> : null}
         </div>
@@ -290,7 +321,7 @@ export function ListingForm({
             <option value="">选择单品</option>
             {itemUnits.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.sku.code} - {item.conditionGrade || "未知成色"}
+                {item.sku.code} - {formatItemUnitCondition(item.conditionGrade)}
               </option>
             ))}
           </Select>
@@ -306,9 +337,7 @@ export function ListingForm({
             step="0.01"
             placeholder="留空自动使用 SKU 参考价"
             value={formData.listedPrice}
-            onChange={(e) =>
-              setFormData({ ...formData, listedPrice: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, listedPrice: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
             不填写时将自动使用该 SKU 的参考价，最终成交价在登记售出时再填写。
@@ -320,9 +349,7 @@ export function ListingForm({
           <Select
             id="currency"
             value={formData.currency}
-            onChange={(e) =>
-              setFormData({ ...formData, currency: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
           >
             <option value="CNY">人民币 (CNY)</option>
             <option value="USD">美元 (USD)</option>
@@ -347,13 +374,9 @@ export function ListingForm({
                 : "例如：0.12 (12%)"
             }
             value={formData.feeRateOverride}
-            onChange={(e) =>
-              setFormData({ ...formData, feeRateOverride: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, feeRateOverride: e.target.value })}
           />
-          <p className="text-xs text-muted-foreground">
-            留空则使用平台默认费率
-          </p>
+          <p className="text-xs text-muted-foreground">留空则使用平台默认费率</p>
         </div>
 
         <div className="space-y-2">
@@ -365,9 +388,7 @@ export function ListingForm({
             min="0"
             placeholder="按实际配送方式填写金额"
             value={formData.shippingFeeOverride}
-            onChange={(e) =>
-              setFormData({ ...formData, shippingFeeOverride: e.target.value })
-            }
+            onChange={(e) => setFormData({ ...formData, shippingFeeOverride: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
             运费通常按尺寸、重量和配送方式变化，留空则暂不扣除运费
@@ -479,8 +500,9 @@ export function ListingForm({
 function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
   const sellable = breakdown?.sellableQty ?? 0;
   const inTransit = breakdown?.inTransitQty ?? 0;
+  const held = breakdown?.heldQty ?? 0;
 
-  if (sellable === 0 && inTransit === 0) {
+  if (sellable === 0 && inTransit === 0 && held === 0) {
     return (
       <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
@@ -491,18 +513,29 @@ function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
     );
   }
 
+  if (sellable === 0 && inTransit === 0 && held > 0) {
+    return (
+      <div className="flex gap-2 rounded-md border border-slate-400/40 bg-slate-500/5 px-3 py-2 text-xs">
+        <Package className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-600" />
+        <div className="space-y-1">
+          <p className="font-medium text-slate-700">已到仓暂存 {held} 件，当前不可发货</p>
+          <p className="text-muted-foreground">
+            {breakdown!.heldLocations.map((loc) => `${loc.code} ${loc.qty}`).join(" · ")}
+            。请先完成仓库处理，或为该节点配置直接履约能力和配送线路。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (sellable === 0 && inTransit > 0) {
     return (
       <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
         <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
         <div className="space-y-1">
-          <p className="text-amber-700 font-medium">
-            暂无可发货库存，仅有 {inTransit} 件在转运中
-          </p>
+          <p className="text-amber-700 font-medium">暂无可发货库存，仅有 {inTransit} 件在转运中</p>
           <p className="text-muted-foreground">
-            {breakdown!.inTransitLocations
-              .map((loc) => `${loc.code} ${loc.qty}`)
-              .join(" · ")}
+            {breakdown!.inTransitLocations.map((loc) => `${loc.code} ${loc.qty}`).join(" · ")}
             。建议先调拨到本土仓 / 代发仓后再上架。
           </p>
         </div>
@@ -512,28 +545,25 @@ function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
 
   return (
     <div className="flex flex-wrap items-center gap-1 text-xs">
-      <Badge
-        variant="default"
-        className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30"
-      >
+      <Badge variant="default" className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30">
         <CheckCircle className="mr-1 h-3 w-3" />
         可发 {sellable}
       </Badge>
       {inTransit > 0 ? (
-        <Badge
-          variant="outline"
-          className="border-amber-500/40 bg-amber-500/10 text-amber-700"
-        >
+        <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700">
           <Truck className="mr-1 h-3 w-3" />
           转运 {inTransit}
         </Badge>
       ) : null}
+      {held > 0 ? (
+        <Badge variant="outline" className="border-slate-400/40 bg-slate-500/10 text-slate-700">
+          <Package className="mr-1 h-3 w-3" />
+          暂存 {held}
+        </Badge>
+      ) : null}
       {breakdown && breakdown.sellableLocations.length > 0 ? (
         <span className="text-muted-foreground">
-          ·{" "}
-          {breakdown.sellableLocations
-            .map((loc) => `${loc.code} ${loc.qty}`)
-            .join(" · ")}
+          · {breakdown.sellableLocations.map((loc) => `${loc.code} ${loc.qty}`).join(" · ")}
         </span>
       ) : null}
     </div>

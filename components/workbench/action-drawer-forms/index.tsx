@@ -38,6 +38,9 @@ import {
   findWorkbenchLocationId,
   type WorkbenchLocationOption,
 } from "@/components/workbench/location-select";
+import { updateQuickEntry } from "@/app/actions/quick-entries";
+import { formatQuickEntryExceptionMessage, parseIncompleteReasons } from "@/lib/quick-entry-utils";
+import { itemFunctionStatusOptions, usedItemGradeOptions } from "@/lib/inventory/item-condition";
 
 export type WorkbenchPlatformOption = {
   id: string;
@@ -54,7 +57,10 @@ interface ActionFormProps {
   locations?: WorkbenchLocationOption[];
   consolidationBatches?: ConsolidationBatchOption[];
   pending: boolean;
-  run: (fn: () => Promise<unknown>, options?: { keepOpen?: boolean; successMessage?: string }) => void;
+  run: (
+    fn: () => Promise<unknown>,
+    options?: { keepOpen?: boolean; successMessage?: string }
+  ) => void;
 }
 
 interface ConsolidationBatchOption {
@@ -93,7 +99,8 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
       locations,
       detail.actionContext.currentLocationText ?? detail.actionContext.location
     ),
-    purchaseTrackingNo: detail.actionContext.purchaseTrackingNo ?? detail.actionContext.trackingNo ?? "",
+    purchaseTrackingNo:
+      detail.actionContext.purchaseTrackingNo ?? detail.actionContext.trackingNo ?? "",
     note: "",
   });
 
@@ -109,42 +116,44 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
         登记卖家已发货：填写采购物流单号并选择预计到货位置，保存后进入待确认收货。
       </p>
       <div className="space-y-2">
-        <Label>采购物流单号</Label>
+        <Label htmlFor="purchase-tracking-no">采购物流单号 *</Label>
         <Input
+          id="purchase-tracking-no"
           value={form.purchaseTrackingNo}
-          onChange={(event) => setForm((value) => ({ ...value, purchaseTrackingNo: event.target.value }))}
+          onChange={(event) =>
+            setForm((value) => ({ ...value, purchaseTrackingNo: event.target.value }))
+          }
           placeholder="购买地发出的物流单号"
+          required
         />
       </div>
       <div className="space-y-2">
-        <Label>预计到货位置 *</Label>
+        <Label htmlFor="destination-location-id">预计到货位置 *</Label>
         <WorkbenchLocationSelect
-          id="destinationLocationId"
+          id="destination-location-id"
           value={form.destinationLocationId}
           locations={locations}
-          onChange={(destinationLocationId) => setForm((value) => ({ ...value, destinationLocationId }))}
+          onChange={(destinationLocationId) =>
+            setForm((value) => ({ ...value, destinationLocationId }))
+          }
           placeholder="请选择到货仓库或集运仓"
           required
         />
-        <p className="text-xs text-muted-foreground">
-          选择这批采购预计送达的仓库/集运仓（含地区）
-        </p>
+        <p className="text-xs text-muted-foreground">选择这批采购预计送达的仓库/集运仓（含地区）</p>
       </div>
       <div className="space-y-2">
         <Label>备注</Label>
-        <Textarea value={form.note} onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))} />
+        <Textarea
+          value={form.note}
+          onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))}
+        />
       </div>
       <SubmitButton pending={pending}>保存并进入待确认收货</SubmitButton>
     </form>
   );
 }
 
-export function ConfirmArrivalForm({
-  detail,
-  locations,
-  pending,
-  run,
-}: ActionFormProps) {
+export function ConfirmArrivalForm({ detail, locations, pending, run }: ActionFormProps) {
   const [form, setForm] = useState({
     arrivedAt: todayDateValue(),
     arrivalLocationId: findWorkbenchLocationId(
@@ -166,7 +175,11 @@ export function ConfirmArrivalForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>到货时间</Label>
-          <Input type="date" value={form.arrivedAt} onChange={(event) => setForm((value) => ({ ...value, arrivedAt: event.target.value }))} />
+          <Input
+            type="date"
+            value={form.arrivedAt}
+            onChange={(event) => setForm((value) => ({ ...value, arrivedAt: event.target.value }))}
+          />
         </div>
         <div className="space-y-2">
           <Label>到货位置</Label>
@@ -180,20 +193,34 @@ export function ConfirmArrivalForm({
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        <Checkbox checked={form.isComplete} onChange={(event) => setForm((value) => ({ ...value, isComplete: event.target.checked }))} label="完整到货" />
+        <Checkbox
+          checked={form.isComplete}
+          onChange={(event) => setForm((value) => ({ ...value, isComplete: event.target.checked }))}
+          label="完整到货"
+        />
       </div>
       <div className="space-y-2">
         <Label>备注</Label>
-        <Textarea value={form.note} onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))} />
+        <Textarea
+          value={form.note}
+          onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))}
+        />
       </div>
       <SubmitButton pending={pending}>
-        {detail.primaryAction === "receivePurchase" ? "确认收货并进入待分流" : "确认到货并进入待分流"}
+        {detail.primaryAction === "receivePurchase"
+          ? "确认收货并创建库存"
+          : "确认到货并处理库存"}
       </SubmitButton>
     </form>
   );
 }
 
-export function ShipmentArrivalProcessingForm({ detail, locations, pending, run }: ActionFormProps) {
+export function ShipmentArrivalProcessingForm({
+  detail,
+  locations,
+  pending,
+  run,
+}: ActionFormProps) {
   const defaultLocationId = findWorkbenchLocationId(
     locations,
     detail.actionContext.currentLocationText ?? detail.actionContext.location
@@ -210,7 +237,8 @@ export function ShipmentArrivalProcessingForm({ detail, locations, pending, run 
     isNewSealed: !hasUsedLine,
     packageComplete: true,
     missingParts: "",
-    conditionGrade: "",
+    conditionGrade: hasUsedLine ? "UNASSESSED" : "",
+    functionStatus: hasUsedLine ? "UNTESTED" : "NORMAL",
     scratchNote: "",
     serialNo: "",
     returnReason: "",
@@ -262,7 +290,9 @@ export function ShipmentArrivalProcessingForm({ detail, locations, pending, run 
         />
         <Checkbox
           checked={form.result === "PASSED"}
-          onChange={(event) => setForm((value) => ({ ...value, result: event.target.checked ? "PASSED" : "FAILED" }))}
+          onChange={(event) =>
+            setForm((value) => ({ ...value, result: event.target.checked ? "PASSED" : "FAILED" }))
+          }
           label="检查通过"
         />
       </div>
@@ -279,43 +309,97 @@ export function ShipmentArrivalProcessingForm({ detail, locations, pending, run 
             <Label>商品类型</Label>
             <Select
               value={form.conditionType}
-              onChange={(event) => setForm((value) => ({ ...value, conditionType: event.target.value }))}
+              onChange={(event) => {
+                const conditionType = event.target.value;
+                setForm((value) => ({
+                  ...value,
+                  conditionType,
+                  conditionGrade: conditionType === "USED" ? "UNASSESSED" : "",
+                  functionStatus: conditionType === "USED" ? "UNTESTED" : "NORMAL",
+                }));
+              }}
             >
               <option value="NEW">新品</option>
               <option value="USED">中古 / 二手</option>
-              <option value="RISK">瑕疵 / 高风险</option>
             </Select>
           </div>
           <div className="space-y-2">
             <Label>编号</Label>
-            <Input value={form.serialNo} onChange={(event) => setForm((value) => ({ ...value, serialNo: event.target.value }))} />
+            <Input
+              value={form.serialNo}
+              onChange={(event) => setForm((value) => ({ ...value, serialNo: event.target.value }))}
+            />
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Checkbox
             checked={form.isNewSealed}
-            onChange={(event) => setForm((value) => ({ ...value, isNewSealed: event.target.checked }))}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, isNewSealed: event.target.checked }))
+            }
             label="全新未拆 / 外箱正常"
           />
           <Checkbox
             checked={form.packageComplete}
-            onChange={(event) => setForm((value) => ({ ...value, packageComplete: event.target.checked }))}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, packageComplete: event.target.checked }))
+            }
             label="包装和配件完整"
           />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-2">
             <Label>缺件 / 少件说明</Label>
-            <Input value={form.missingParts} onChange={(event) => setForm((value) => ({ ...value, missingParts: event.target.value }))} />
+            <Input
+              value={form.missingParts}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, missingParts: event.target.value }))
+              }
+            />
           </div>
-          <div className="space-y-2">
-            <Label>成色</Label>
-            <Input value={form.conditionGrade} onChange={(event) => setForm((value) => ({ ...value, conditionGrade: event.target.value }))} placeholder="A、B、C 或文字描述" />
-          </div>
+          {form.conditionType === "USED" ? (
+            <>
+              <div className="space-y-2">
+                <Label>中古品级</Label>
+                <Select
+                  value={form.conditionGrade}
+                  onChange={(event) =>
+                    setForm((value) => ({ ...value, conditionGrade: event.target.value }))
+                  }
+                >
+                  {usedItemGradeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label} · {option.description}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>功能状态</Label>
+                <Select
+                  value={form.functionStatus}
+                  onChange={(event) =>
+                    setForm((value) => ({ ...value, functionStatus: event.target.value }))
+                  }
+                >
+                  {itemFunctionStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </>
+          ) : null}
         </div>
         <div className="space-y-2">
           <Label>划痕 / 黄化 / 盒况 / 异常描述</Label>
-          <Textarea value={form.scratchNote} onChange={(event) => setForm((value) => ({ ...value, scratchNote: event.target.value }))} />
+          <Textarea
+            value={form.scratchNote}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, scratchNote: event.target.value }))
+            }
+          />
         </div>
       </div>
 
@@ -323,24 +407,43 @@ export function ShipmentArrivalProcessingForm({ detail, locations, pending, run 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-2 sm:col-span-2">
             <Label>异常 / 退货原因</Label>
-            <Input value={form.returnReason} onChange={(event) => setForm((value) => ({ ...value, returnReason: event.target.value }))} />
+            <Input
+              value={form.returnReason}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, returnReason: event.target.value }))
+              }
+            />
           </div>
           <div className="space-y-2">
             <Label>退货单号</Label>
-            <Input value={form.trackingNo} onChange={(event) => setForm((value) => ({ ...value, trackingNo: event.target.value }))} />
+            <Input
+              value={form.trackingNo}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, trackingNo: event.target.value }))
+              }
+            />
           </div>
           <div className="space-y-2">
             <Label>承运商</Label>
-            <Input value={form.carrier} onChange={(event) => setForm((value) => ({ ...value, carrier: event.target.value }))} />
+            <Input
+              value={form.carrier}
+              onChange={(event) => setForm((value) => ({ ...value, carrier: event.target.value }))}
+            />
           </div>
         </div>
       )}
 
       <div className="space-y-2">
         <Label>备注</Label>
-        <Textarea value={form.note} onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))} />
+        <Textarea
+          value={form.note}
+          onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))}
+        />
       </div>
-      <SubmitButton pending={pending} variant={form.result === "FAILED" ? "destructive" : "default"}>
+      <SubmitButton
+        pending={pending}
+        variant={form.result === "FAILED" ? "destructive" : "default"}
+      >
         {form.result === "PASSED" ? "确认到达并入库" : "标记异常并终止"}
       </SubmitButton>
     </form>
@@ -376,7 +479,10 @@ export function InboundForm({ detail, locations, pending, run }: ActionFormProps
       </div>
       <div className="space-y-2">
         <Label>备注</Label>
-        <Textarea value={form.note} onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))} />
+        <Textarea
+          value={form.note}
+          onChange={(event) => setForm((value) => ({ ...value, note: event.target.value }))}
+        />
       </div>
       <SubmitButton pending={pending}>确认入库</SubmitButton>
     </form>
@@ -428,7 +534,9 @@ export function DispositionForm({
       return run(() => submitInbound(detail.entityType, detail.entityId, inboundForm));
     }
     if (mode === "consolidate") {
-      return run(() => submitConsolidatePurchase(detail.entityType, detail.entityId, consolidationForm));
+      return run(() =>
+        submitConsolidatePurchase(detail.entityType, detail.entityId, consolidationForm)
+      );
     }
     if (mode === "return") {
       return run(() => submitReturnPurchase(detail.entityType, detail.entityId, returnForm));
@@ -451,8 +559,8 @@ export function DispositionForm({
       >
         {[
           ["inbound", "确认入库"],
-          ["consolidate", "加入集运"],
-          ["transfer", "发往其他位置"],
+          ["consolidate", "加入待集运"],
+          ["transfer", "立即发起转仓"],
           ["return", "退货终止"],
         ].map(([value, label]) => (
           <Button
@@ -489,7 +597,9 @@ export function DispositionForm({
             <Label>备注</Label>
             <Textarea
               value={inboundForm.note}
-              onChange={(event) => setInboundForm((value) => ({ ...value, note: event.target.value }))}
+              onChange={(event) =>
+                setInboundForm((value) => ({ ...value, note: event.target.value }))
+              }
             />
           </div>
           <SubmitButton pending={pending}>确认入库</SubmitButton>
@@ -498,6 +608,9 @@ export function DispositionForm({
 
       {mode === "consolidate" && (
         <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            只加入待集运批次，不会立即发货；准备好后再在集运物流中统一发车。
+          </p>
           <div className="space-y-2">
             <Label>集运方式</Label>
             <Select
@@ -570,12 +683,15 @@ export function DispositionForm({
               }
             />
           </div>
-          <SubmitButton pending={pending}>加入集运</SubmitButton>
+          <SubmitButton pending={pending}>加入待集运</SubmitButton>
         </div>
       )}
 
       {mode === "transfer" && (
         <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            提交后会立即锁定当前库存并创建转仓在途记录，不是仅保存下一个位置。
+          </p>
           <div className="space-y-2">
             <Label>目标位置</Label>
             <WorkbenchLocationSelect
@@ -591,14 +707,18 @@ export function DispositionForm({
               <Label>物流单号</Label>
               <Input
                 value={transferForm.trackingNo}
-                onChange={(event) => setTransferForm((value) => ({ ...value, trackingNo: event.target.value }))}
+                onChange={(event) =>
+                  setTransferForm((value) => ({ ...value, trackingNo: event.target.value }))
+                }
               />
             </div>
             <div className="space-y-2">
               <Label>承运商</Label>
               <Input
                 value={transferForm.carrier}
-                onChange={(event) => setTransferForm((value) => ({ ...value, carrier: event.target.value }))}
+                onChange={(event) =>
+                  setTransferForm((value) => ({ ...value, carrier: event.target.value }))
+                }
               />
             </div>
             <div className="space-y-2">
@@ -606,7 +726,9 @@ export function DispositionForm({
               <Input
                 type="date"
                 value={transferForm.etaDate}
-                onChange={(event) => setTransferForm((value) => ({ ...value, etaDate: event.target.value }))}
+                onChange={(event) =>
+                  setTransferForm((value) => ({ ...value, etaDate: event.target.value }))
+                }
               />
             </div>
           </div>
@@ -614,10 +736,12 @@ export function DispositionForm({
             <Label>备注</Label>
             <Textarea
               value={transferForm.note}
-              onChange={(event) => setTransferForm((value) => ({ ...value, note: event.target.value }))}
+              onChange={(event) =>
+                setTransferForm((value) => ({ ...value, note: event.target.value }))
+              }
             />
           </div>
-          <SubmitButton pending={pending}>发往其他位置</SubmitButton>
+          <SubmitButton pending={pending}>确认并立即发起转仓</SubmitButton>
         </div>
       )}
 
@@ -627,7 +751,9 @@ export function DispositionForm({
             <Label>退货原因</Label>
             <Input
               value={returnForm.reason}
-              onChange={(event) => setReturnForm((value) => ({ ...value, reason: event.target.value }))}
+              onChange={(event) =>
+                setReturnForm((value) => ({ ...value, reason: event.target.value }))
+              }
               placeholder="卖家协商退货、商品不符、取消转卖..."
             />
           </div>
@@ -636,14 +762,18 @@ export function DispositionForm({
               <Label>退货物流单号</Label>
               <Input
                 value={returnForm.trackingNo}
-                onChange={(event) => setReturnForm((value) => ({ ...value, trackingNo: event.target.value }))}
+                onChange={(event) =>
+                  setReturnForm((value) => ({ ...value, trackingNo: event.target.value }))
+                }
               />
             </div>
             <div className="space-y-2">
               <Label>承运商</Label>
               <Input
                 value={returnForm.carrier}
-                onChange={(event) => setReturnForm((value) => ({ ...value, carrier: event.target.value }))}
+                onChange={(event) =>
+                  setReturnForm((value) => ({ ...value, carrier: event.target.value }))
+                }
               />
             </div>
           </div>
@@ -651,7 +781,9 @@ export function DispositionForm({
             <Label>备注</Label>
             <Textarea
               value={returnForm.note}
-              onChange={(event) => setReturnForm((value) => ({ ...value, note: event.target.value }))}
+              onChange={(event) =>
+                setReturnForm((value) => ({ ...value, note: event.target.value }))
+              }
             />
           </div>
           <Button type="submit" disabled={pending} variant="destructive" className="w-full">
@@ -671,6 +803,12 @@ export function CreateListingForm({
   run,
 }: ActionFormProps & { platforms: WorkbenchPlatformOption[] }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const availablePlatformIds = detail.actionContext.availablePlatformIds
+    ?.split(",")
+    .filter(Boolean);
+  const selectablePlatforms = availablePlatformIds?.length
+    ? platforms.filter((platform) => availablePlatformIds.includes(platform.id))
+    : platforms;
 
   const togglePlatform = (platformId: string, checked: boolean) => {
     setSelectedIds((ids) =>
@@ -692,13 +830,18 @@ export function CreateListingForm({
     >
       <div className="space-y-2">
         <Label>平台（可多选）</Label>
-        {platforms.length === 0 ? (
+        {detail.actionContext.activeListingPlatformsText ? (
+          <p className="text-xs text-muted-foreground">
+            已上架：{detail.actionContext.activeListingPlatformsText}。下方仅显示仍待补充的平台。
+          </p>
+        ) : null}
+        {selectablePlatforms.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             暂无平台，请先在「库存设置 → 销售平台配置」中添加销售平台。
           </p>
         ) : (
           <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-2">
-            {platforms.map((platform) => (
+            {selectablePlatforms.map((platform) => (
               <label
                 key={platform.id}
                 className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50"
@@ -707,14 +850,19 @@ export function CreateListingForm({
                   checked={selectedIds.includes(platform.id)}
                   onChange={(event) => togglePlatform(platform.id, event.target.checked)}
                 />
-                <span className="min-w-0 flex-1 text-sm font-medium leading-tight">{platform.name}</span>
+                <span className="min-w-0 flex-1 text-sm font-medium leading-tight">
+                  {platform.name}
+                </span>
               </label>
             ))}
           </div>
         )}
       </div>
 
-      <SubmitButton pending={pending} disabled={selectedIds.length === 0 || platforms.length === 0}>
+      <SubmitButton
+        pending={pending}
+        disabled={selectedIds.length === 0 || selectablePlatforms.length === 0}
+      >
         添加上架记录{selectedIds.length > 1 ? `（${selectedIds.length} 个平台）` : ""}
       </SubmitButton>
     </form>
@@ -736,9 +884,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [confirmStep, setConfirmStep] = useState(false);
-  const [draftHint, setDraftHint] = useState(
-    initialProof.updatedAt ? "已加载暂存内容" : ""
-  );
+  const [draftHint, setDraftHint] = useState(initialProof.updatedAt ? "已加载暂存内容" : "");
   const [checks, setChecks] = useState({
     proofChecked: false,
     shipperChecked: false,
@@ -820,8 +966,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
         keepOpen: true,
         successMessage: options?.silent
           ? undefined
-          : options?.successMessage ??
-            "已暂存。代发方可查看凭证，发出后再点「确认已发货」。",
+          : (options?.successMessage ?? "已暂存。代发方可查看凭证，发出后再点「确认已发货」。"),
       }
     );
   };
@@ -835,8 +980,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
     persistDraft(next, { silent: true });
   };
 
-  const allChecksPassed =
-    checks.proofChecked && checks.shipperChecked && checks.shippedConfirmed;
+  const allChecksPassed = checks.proofChecked && checks.shipperChecked && checks.shippedConfirmed;
 
   const openConfirmStep = () => {
     setChecks({ proofChecked: false, shipperChecked: false, shippedConfirmed: false });
@@ -995,9 +1139,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
           disabled={pending || uploading}
           onChange={handleImageUpload}
         />
-        {uploading ? (
-          <p className="text-xs text-muted-foreground">图片上传中...</p>
-        ) : null}
+        {uploading ? <p className="text-xs text-muted-foreground">图片上传中...</p> : null}
         {uploadError ? (
           <p role="alert" className="text-xs text-destructive">
             {uploadError}
@@ -1401,7 +1543,9 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
             min="0.01"
             step="0.01"
             value={form.actualSalePrice}
-            onChange={(event) => setForm((value) => ({ ...value, actualSalePrice: event.target.value }))}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, actualSalePrice: event.target.value }))
+            }
           />
         </div>
         <div className="space-y-2">
@@ -1411,7 +1555,9 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
             min="0"
             step="0.01"
             value={form.platformFee}
-            onChange={(event) => setForm((value) => ({ ...value, platformFee: event.target.value }))}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, platformFee: event.target.value }))
+            }
           />
         </div>
         <div className="space-y-2">
@@ -1421,7 +1567,9 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
             min="0"
             step="0.01"
             value={form.shippingFee}
-            onChange={(event) => setForm((value) => ({ ...value, shippingFee: event.target.value }))}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, shippingFee: event.target.value }))
+            }
           />
         </div>
       </div>
@@ -1434,19 +1582,271 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
 
 export function ConfirmOrderButton({ detail, pending, run }: ActionFormProps) {
   return (
-    <Button disabled={pending} className="w-full" onClick={() => run(() => submitConfirmOrder(detail.entityId))}>
+    <Button
+      disabled={pending}
+      className="w-full"
+      onClick={() => run(() => submitConfirmOrder(detail.entityId))}
+    >
       {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
       确认订单并进入待发货
     </Button>
   );
 }
 
-export function ResolveExceptionButton({ detail, pending, run }: ActionFormProps) {
+export function ResolveQuickEntryExceptionForm({
+  detail,
+  locations = [],
+  pending,
+  run,
+}: ActionFormProps) {
+  const storedReasonCodes = detail.metadata?.incompleteReasonCodes;
+  const reasonSource =
+    detail.actionContext.errorMessage ??
+    (typeof storedReasonCodes === "string" ? storedReasonCodes : null) ??
+    detail.exceptionMessage;
+  const reasons = parseIncompleteReasons(reasonSource);
+  const needsPurchasePrice = reasons.includes("missing_purchase_price");
+  const needsLocation = reasons.includes("missing_location");
+  const needsSalePrice = reasons.includes("missing_sale_price");
+  const needsSkuConfirmation = reasons.includes("unconfirmed_sku");
+  const [form, setForm] = useState({
+    purchasePrice: detail.actionContext.purchasePrice ?? "",
+    purchaseCurrency: detail.actionContext.purchaseCurrency ?? "CNY",
+    salePrice: detail.actionContext.salePrice ?? "",
+    saleCurrency: detail.actionContext.saleCurrency ?? "CNY",
+    locationId: findWorkbenchLocationId(locations, detail.actionContext.currentLocationText),
+    skuConfirmed: false,
+  });
+  const [formError, setFormError] = useState<string | null>(null);
+  const hasGuidedFields =
+    needsPurchasePrice || needsLocation || needsSalePrice || needsSkuConfirmation;
+
+  const positiveAmount = (value: string) => {
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount > 0;
+  };
+
   return (
-    <Button disabled={pending} className="w-full" onClick={() => run(() => submitResolveException(detail.entityType, detail.entityId))}>
-      {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-      重新处理
-    </Button>
+    <form
+      className="space-y-4"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        setFormError(null);
+
+        if (needsPurchasePrice && !positiveAmount(form.purchasePrice)) {
+          setFormError("请输入大于 0 的购入单价。");
+          return;
+        }
+        if (needsLocation && !form.locationId) {
+          setFormError("请选择商品当前所在的仓库位置。");
+          return;
+        }
+        if (needsSalePrice && !positiveAmount(form.salePrice)) {
+          setFormError("请输入大于 0 的售出单价。");
+          return;
+        }
+        if (needsSkuConfirmation && !form.skuConfirmed) {
+          setFormError("请先确认商品名称与规格信息正确。");
+          return;
+        }
+
+        const location = locations.find((item) => item.id === form.locationId);
+        run(async () => {
+          const result = hasGuidedFields
+            ? await updateQuickEntry(detail.entityId, {
+                ...(needsPurchasePrice
+                  ? {
+                      purchasePrice: form.purchasePrice,
+                      purchaseCurrency: form.purchaseCurrency,
+                    }
+                  : {}),
+                ...(needsLocation
+                  ? {
+                      currentLocationText: location?.name ?? location?.code ?? form.locationId,
+                    }
+                  : {}),
+                ...(needsSalePrice
+                  ? {
+                      salePrice: form.salePrice,
+                      saleCurrency: form.saleCurrency,
+                    }
+                  : {}),
+              })
+            : await submitResolveException(detail.entityType, detail.entityId);
+
+          if (
+            result &&
+            typeof result === "object" &&
+            "success" in result &&
+            result.success === true &&
+            "status" in result &&
+            result.status === "PARTIAL"
+          ) {
+            return {
+              success: false as const,
+              error: "仍有信息没有补齐，请检查表单后再处理。",
+            };
+          }
+          return result;
+        });
+      }}
+    >
+      {hasGuidedFields ? (
+        <div className="space-y-3">
+          {needsPurchasePrice ? (
+            <div className="grid gap-3 sm:grid-cols-[1fr_132px]">
+              <div className="space-y-2">
+                <Label htmlFor="exception-purchase-price">购入单价 *</Label>
+                <Input
+                  id="exception-purchase-price"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={form.purchasePrice}
+                  onChange={(event) =>
+                    setForm((value) => ({
+                      ...value,
+                      purchasePrice: event.target.value,
+                    }))
+                  }
+                  placeholder="例如：980"
+                  aria-describedby="exception-purchase-price-help"
+                />
+                <p id="exception-purchase-price-help" className="text-xs text-muted-foreground">
+                  用于生成采购明细和库存成本。
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="exception-purchase-currency">币种</Label>
+                <Select
+                  id="exception-purchase-currency"
+                  value={form.purchaseCurrency}
+                  onChange={(event) =>
+                    setForm((value) => ({
+                      ...value,
+                      purchaseCurrency: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="CNY">CNY 人民币</option>
+                  <option value="JPY">JPY 日元</option>
+                  <option value="USD">USD 美元</option>
+                  <option value="HKD">HKD 港币</option>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+
+          {needsLocation ? (
+            <div className="space-y-2">
+              <Label htmlFor="exception-location">预计到货位置 *</Label>
+              <WorkbenchLocationSelect
+                id="exception-location"
+                value={form.locationId}
+                locations={locations}
+                onChange={(locationId) => setForm((value) => ({ ...value, locationId }))}
+                placeholder="请选择这次采购预计送达的位置"
+                required
+              />
+              {locations.length === 0 ? (
+                <p className="text-xs text-destructive">
+                  暂无可选位置，请先到“仓库位置”创建一个仓库。
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  这里只记录物流目的地；选择位置不会再被视为已经到货。
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          {needsSalePrice ? (
+            <div className="grid gap-3 sm:grid-cols-[1fr_132px]">
+              <div className="space-y-2">
+                <Label htmlFor="exception-sale-price">售出单价 *</Label>
+                <Input
+                  id="exception-sale-price"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={form.salePrice}
+                  onChange={(event) =>
+                    setForm((value) => ({
+                      ...value,
+                      salePrice: event.target.value,
+                    }))
+                  }
+                  placeholder="例如：1280"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="exception-sale-currency">币种</Label>
+                <Select
+                  id="exception-sale-currency"
+                  value={form.saleCurrency}
+                  onChange={(event) =>
+                    setForm((value) => ({
+                      ...value,
+                      saleCurrency: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="CNY">CNY 人民币</option>
+                  <option value="JPY">JPY 日元</option>
+                  <option value="USD">USD 美元</option>
+                  <option value="HKD">HKD 港币</option>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+
+          {needsSkuConfirmation ? (
+            <label className="flex items-start gap-3 rounded-md border bg-muted/30 p-3">
+              <Checkbox
+                checked={form.skuConfirmed}
+                onChange={(event) =>
+                  setForm((value) => ({
+                    ...value,
+                    skuConfirmed: event.target.checked,
+                  }))
+                }
+                aria-label="确认商品与规格信息"
+              />
+              <span className="text-sm">
+                <span className="font-medium">商品与规格信息正确</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  确认当前名称与规格可以作为库存识别依据。
+                </span>
+              </span>
+            </label>
+          ) : null}
+        </div>
+      ) : (
+        <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+          {formatQuickEntryExceptionMessage(reasonSource)}
+        </p>
+      )}
+
+      {formError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {formError}
+        </p>
+      ) : null}
+
+      {needsLocation && locations.length === 0 ? (
+        <Button asChild variant="outline" className="w-full">
+          <Link href="/inventory/locations">
+            <ExternalLink className="mr-2 h-4 w-4" />
+            前往创建仓库位置
+          </Link>
+        </Button>
+      ) : (
+        <SubmitButton pending={pending}>
+          {hasGuidedFields ? "保存并继续处理" : "重新处理"}
+        </SubmitButton>
+      )}
+    </form>
   );
 }
 

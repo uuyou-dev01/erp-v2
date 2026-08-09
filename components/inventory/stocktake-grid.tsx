@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import {
   submitSkuLocationStocktakeAdjustmentsAction,
   type SkuLocationStocktakeRow,
+  type TransferableInventoryRow,
 } from "@/app/actions/stocktake";
 import {
   isStocktakeDraftChanged,
@@ -17,6 +18,7 @@ import { formatCurrency } from "@/lib/decimal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { StockMaintenanceActions } from "@/components/inventory/stock-maintenance-actions";
 import {
   Table,
   TableBody,
@@ -29,7 +31,13 @@ import {
 interface StocktakeGridProps {
   storeId: string;
   rows: SkuLocationStocktakeRow[];
+  transferRows: TransferableInventoryRow[];
+  locations: Array<{ id: string; code: string; name: string }>;
+  skus: Array<{ id: string; code: string; name: string }>;
+  existingStockLocations: Array<{ skuId: string; locationId: string }>;
+  defaultCurrency: string;
   onlyDiff?: boolean;
+  defaultMaintenanceMode?: "TRANSFER";
 }
 
 interface DraftRow {
@@ -47,7 +55,17 @@ function formatIntegerDiff(diff: number) {
   return diff > 0 ? `+${diff}` : String(diff);
 }
 
-export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
+export function StocktakeGrid({
+  storeId,
+  rows,
+  transferRows,
+  locations,
+  skus,
+  existingStockLocations,
+  defaultCurrency,
+  onlyDiff,
+  defaultMaintenanceMode,
+}: StocktakeGridProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -133,7 +151,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
     setError(null);
     setMessage(null);
     if (qtyChangedRows.length === 0) {
-      setError("没有需要提交的数量差异");
+      setError("没有需要保存的库存调整");
       return;
     }
     const invalidUnitCostRow = qtyChangedRows.find((row) => {
@@ -142,7 +160,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
       return !parseStocktakeUnitCostInput(draft.countedUnitCost, row.bookUnitCost).valid;
     });
     if (invalidUnitCostRow) {
-      setError(`${invalidUnitCostRow.skuCode} 的盘点单价格式无效`);
+      setError(`${invalidUnitCostRow.skuCode} 的调整单价格式无效`);
       return;
     }
     setConfirmOpen(true);
@@ -164,7 +182,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
         return;
       }
       setConfirmOpen(false);
-      setMessage(`提交成功，已写入 ${result.adjustments.length} 条调整流水`);
+      setMessage(`保存成功，已写入 ${result.adjustments.length} 条调整流水`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败，请稍后重试");
@@ -173,23 +191,32 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
     }
   };
 
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-xl border bg-card p-10 text-center text-sm text-muted-foreground">
-        当前筛选条件下没有可盘点的 SKU。
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4 rounded-xl border bg-card p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          共 {rows.length} 个 SKU，待提交数量差异 {qtyChangedRows.length} 条
+          共 {rows.length} 个 SKU，待保存调整 {qtyChangedRows.length} 条
         </p>
-        <Button disabled={loading} onClick={openConfirm}>
-          提交盘点差异
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <StockMaintenanceActions
+            storeId={storeId}
+            rows={rows}
+            transferRows={transferRows}
+            locations={locations}
+            skus={skus}
+            existingStockLocations={existingStockLocations}
+            defaultCurrency={defaultCurrency}
+            defaultMode={defaultMaintenanceMode}
+            onCompleted={(nextMessage) => {
+              setError(null);
+              setMessage(nextMessage);
+              router.refresh();
+            }}
+          />
+          <Button disabled={loading || rows.length === 0} onClick={openConfirm}>
+            保存库存调整
+          </Button>
+        </div>
       </div>
 
       {message ? <p className="text-sm text-green-600">{message}</p> : null}
@@ -197,7 +224,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
 
       {confirmOpen ? (
         <div className="rounded-lg border bg-muted/40 p-4">
-          <p className="mb-3 text-sm font-medium">确认提交以下数量调整？</p>
+          <p className="mb-3 text-sm font-medium">确认保存以下库存调整？</p>
           <ul className="mb-4 space-y-2 text-sm">
             {qtyChangedRows.map((row) => {
               const draft = drafts[rowKey(row)];
@@ -225,7 +252,7 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
                   提交中...
                 </>
               ) : (
-                "确认提交"
+                "确认保存"
               )}
             </Button>
             <Button variant="outline" disabled={loading} onClick={() => setConfirmOpen(false)}>
@@ -235,82 +262,90 @@ export function StocktakeGrid({ storeId, rows, onlyDiff }: StocktakeGridProps) {
         </div>
       ) : null}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>SKU</TableHead>
-            <TableHead>仓位</TableHead>
-            <TableHead>账面数量</TableHead>
-            <TableHead>实盘数量</TableHead>
-            <TableHead>差异</TableHead>
-            <TableHead>账面单价</TableHead>
-            <TableHead>盘点单价</TableHead>
-            <TableHead>备注</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {visibleRows.map((row) => {
-            const key = rowKey(row);
-            const draft = drafts[key];
-            if (!draft) return null;
-            const countedQty = parseStocktakeIntegerInput(draft.countedQty, row.bookQty);
-            const diff = countedQty - row.bookQty;
-            return (
-              <TableRow key={key}>
-                <TableCell>
-                  <p className="font-mono text-sm">{row.skuCode}</p>
-                  <p className="text-xs text-muted-foreground">{row.skuName}</p>
-                  {row.lotIds.length > 1 ? (
-                    <p className="text-xs text-muted-foreground">含 {row.lotIds.length} 个批次</p>
-                  ) : null}
-                </TableCell>
-                <TableCell>
-                  <p className="text-sm font-medium">{row.locationCode}</p>
-                  <p className="text-xs text-muted-foreground">{row.locationName}</p>
-                </TableCell>
-                <TableCell>{row.bookQty}</TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={1}
-                    inputMode="numeric"
-                    value={draft.countedQty}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value.includes(".")) return;
-                      setDraft(key, { countedQty: value });
-                    }}
-                  />
-                </TableCell>
-                <TableCell
-                  className={diff === 0 ? "" : diff > 0 ? "text-green-600" : "text-red-600"}
-                >
-                  {formatIntegerDiff(diff)}
-                </TableCell>
-                <TableCell>{formatCurrency(row.bookUnitCost, row.currency)}</TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={draft.countedUnitCost}
-                    onChange={(event) => setDraft(key, { countedUnitCost: event.target.value })}
-                  />
-                </TableCell>
-                <TableCell className="min-w-48">
-                  <Textarea
-                    value={draft.notes}
-                    onChange={(event) => setDraft(key, { notes: event.target.value })}
-                    rows={2}
-                    placeholder="漏录、报损、盘盈等"
-                  />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+      {visibleRows.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+          {rows.length === 0
+            ? "当前筛选条件下没有现有批次库存，仍可使用上方“录入其他仓库库存”。"
+            : "当前没有尚未保存的库存差异。"}
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>SKU</TableHead>
+              <TableHead>仓位</TableHead>
+              <TableHead>账面数量</TableHead>
+              <TableHead>调整后数量</TableHead>
+              <TableHead>差异</TableHead>
+              <TableHead>账面单价</TableHead>
+              <TableHead>调整单价</TableHead>
+              <TableHead>备注</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visibleRows.map((row) => {
+              const key = rowKey(row);
+              const draft = drafts[key];
+              if (!draft) return null;
+              const countedQty = parseStocktakeIntegerInput(draft.countedQty, row.bookQty);
+              const diff = countedQty - row.bookQty;
+              return (
+                <TableRow key={key}>
+                  <TableCell>
+                    <p className="font-mono text-sm">{row.skuCode}</p>
+                    <p className="text-xs text-muted-foreground">{row.skuName}</p>
+                    {row.lotIds.length > 1 ? (
+                      <p className="text-xs text-muted-foreground">含 {row.lotIds.length} 个批次</p>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <p className="text-sm font-medium">{row.locationCode}</p>
+                    <p className="text-xs text-muted-foreground">{row.locationName}</p>
+                  </TableCell>
+                  <TableCell>{row.bookQty}</TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      value={draft.countedQty}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value.includes(".")) return;
+                        setDraft(key, { countedQty: value });
+                      }}
+                    />
+                  </TableCell>
+                  <TableCell
+                    className={diff === 0 ? "" : diff > 0 ? "text-green-600" : "text-red-600"}
+                  >
+                    {formatIntegerDiff(diff)}
+                  </TableCell>
+                  <TableCell>{formatCurrency(row.bookUnitCost, row.currency)}</TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={draft.countedUnitCost}
+                      onChange={(event) => setDraft(key, { countedUnitCost: event.target.value })}
+                    />
+                  </TableCell>
+                  <TableCell className="min-w-48">
+                    <Textarea
+                      value={draft.notes}
+                      onChange={(event) => setDraft(key, { notes: event.target.value })}
+                      rows={2}
+                      placeholder="漏录、报损、盘盈等"
+                    />
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
     </div>
   );
 }

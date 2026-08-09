@@ -8,18 +8,23 @@ import {
 } from "@/components/marketplace/supply-offer-status";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  formatMoney,
+  formatSupplyOfferPrice,
+  formatSupplyOfferShipping,
+} from "@/lib/supply-offer-display";
 
 export const dynamic = "force-dynamic";
 
-function formatMoney(currency: string | null, amount: string | null) {
-  if (!amount) return "-";
-  return `${currency ?? ""} ${amount}`.trim();
-}
-
-export default async function SupplyOfferDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function SupplyOfferDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = await params;
   const offer = await getSupplyOfferById(id);
   if (!offer) notFound();
+  const orderableQty = Math.max(Number(offer.availableQty) - Number(offer.reservedQty), 0);
 
   return (
     <div className="space-y-6">
@@ -30,7 +35,15 @@ export default async function SupplyOfferDetailPage({ params }: { params: Promis
             <SupplyOfferStatusBadge status={offer.status} />
             <SupplyOfferVisibilityBadge visibility={offer.visibility} />
           </div>
-          <p className="text-muted-foreground">供给方：{offer.ownerPartner?.name ?? "本店自有"} · 履约方式：{offer.fulfillmentMode}</p>
+          <p className="text-muted-foreground">
+            经营主体：{offer.organization?.name ?? offer.ownerPartner?.name ?? "供给方"} ·
+            多账号共享库存 · 发货：
+            {formatSupplyOfferShipping(
+              offer.fulfillmentMode,
+              offer.providerOrganization?.name,
+              offer.organization?.name
+            )}
+          </p>
         </div>
         <div className="flex gap-2">
           <Link href="/marketplace">
@@ -45,9 +58,9 @@ export default async function SupplyOfferDetailPage({ params }: { params: Promis
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">可供数量</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">货盘总余量</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">{offer.availableQty}</CardContent>
+          <CardContent className="text-2xl font-bold">{orderableQty}</CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
@@ -59,26 +72,40 @@ export default async function SupplyOfferDetailPage({ params }: { params: Promis
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">供货价</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">{formatMoney(offer.currency, offer.unitPrice)}</CardContent>
+          <CardContent className="text-2xl font-bold">
+            {formatSupplyOfferPrice(offer.currency, offer.unitPrice, offer.items)}
+          </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">佣金比例</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">合作约定版本</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">
-            {offer.commissionRate ? `${(Number(offer.commissionRate) * 100).toFixed(1)}%` : "-"}
+            v{offer.agreementVersion} · {offer.agreementStatus === "CONFIRMED" ? "已确认" : "草稿"}
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>货盘说明</CardTitle>
+          <CardTitle>双方合作约定</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="whitespace-pre-wrap text-sm text-muted-foreground">{offer.description || "暂无说明"}</p>
+          <p className="whitespace-pre-wrap text-sm">
+            {offer.agreementTerms || "尚未写明合作约定"}
+          </p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            系统模板仅用于试算；订单会保存双方接受的约定版本，后续修改不会改写历史订单。
+          </p>
         </CardContent>
       </Card>
+
+      {offer.description ? (
+        <Card>
+          <CardHeader><CardTitle>补充说明</CardTitle></CardHeader>
+          <CardContent><p className="whitespace-pre-wrap text-sm text-muted-foreground">{offer.description}</p></CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -95,7 +122,11 @@ export default async function SupplyOfferDetailPage({ params }: { params: Promis
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {offer.visibility === "PUBLIC" ? "公开货盘。" : offer.visibility === "PARTNER_ONLY" ? "定向授权货盘。" : "私有货盘。"}
+              {offer.visibility === "PUBLIC"
+                ? "公开货盘。"
+                : offer.visibility === "PARTNER_ONLY"
+                  ? "定向授权货盘。"
+                  : "私有货盘。"}
             </p>
           )}
         </CardContent>
@@ -108,14 +139,22 @@ export default async function SupplyOfferDetailPage({ params }: { params: Promis
         <CardContent>
           <div className="divide-y divide-border">
             {offer.items.map((item: SerializedSupplyOfferItem) => (
-              <div key={item.id} className="grid gap-3 py-4 md:grid-cols-[1fr_auto_auto] md:items-center">
+              <div
+                key={item.id}
+                className="grid gap-3 py-4 md:grid-cols-[1fr_auto_auto] md:items-center"
+              >
                 <div>
                   <div className="font-medium">{item.title}</div>
-                  <div className="text-sm text-muted-foreground">{item.variantCode || "无规格"} · {item.notes || "无备注"}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {item.variantCode || "无规格"} · {item.notes || "无备注"}
+                  </div>
                 </div>
                 <div className="text-sm">
-                  <span className="text-muted-foreground">数量 </span>
-                  <span className="font-medium">{item.quantityAvailable}</span>
+                  <span className="text-muted-foreground">明细总余量 </span>
+                  <span className="font-medium">
+                    {Math.max(Number(item.quantityAvailable) - Number(item.quantityReserved), 0)}
+                  </span>
+                  <span className="text-muted-foreground"> · 已预留 {item.quantityReserved}</span>
                 </div>
                 <div className="text-sm">
                   <span className="text-muted-foreground">单价 </span>

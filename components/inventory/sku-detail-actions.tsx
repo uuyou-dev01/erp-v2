@@ -2,18 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createPortal } from "react-dom";
-import { Pencil, Trash2, X } from "lucide-react";
+import { ClipboardCheck, Layers3, PackagePlus, Pencil, Trash2, Workflow, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SKUForm, type ParentOption } from "@/components/inventory/sku-form";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { deleteSKUAction } from "@/app/actions/skus";
+import { buildProductStocktakeHref } from "@/lib/application/inventory-dashboard";
+import {
+  SkuStructureDialog,
+  type SkuStructureTarget,
+} from "@/components/inventory/sku-structure-dialog";
 
 interface SKUDetailActionsProps {
   storeId: string;
   parentOptions: ParentOption[];
   returnHref?: string;
   initialEditOpen?: boolean;
+  structureSku?: SkuStructureTarget;
   sku: {
     id: string;
     code: string;
@@ -26,6 +33,7 @@ interface SKUDetailActionsProps {
     nameSource?: string | null;
     codeSource?: string | null;
     parentSkuId?: string | null;
+    categoryId?: string | null;
     category?: string | null;
     brand?: string | null;
     attributes?: Record<string, unknown> | null;
@@ -40,10 +48,12 @@ export function SKUDetailActions({
   sku,
   returnHref = "/inventory/skus",
   initialEditOpen = false,
+  structureSku,
 }: SKUDetailActionsProps) {
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(initialEditOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [structureOpen, setStructureOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -79,10 +89,39 @@ export function SKUDetailActions({
   return (
     <>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        {sku.catalogRole === "GROUP" ? (
+          <Link href={`/inventory/skus/new?mode=variant&parentSkuId=${sku.id}`}>
+            <Button size="sm">
+              <Layers3 className="mr-1 h-3.5 w-3.5" />
+              添加规格
+            </Button>
+          </Link>
+        ) : (
+          <>
+            <Link href={buildProductStocktakeHref({ skuCode: sku.code })}>
+              <Button size="sm">
+                <ClipboardCheck className="mr-1 h-3.5 w-3.5" />
+                调整库存
+              </Button>
+            </Link>
+            <Link href={`/inventory/opening-stock/new?skuIds=${sku.id}`}>
+              <Button variant="outline" size="sm">
+                <PackagePlus className="mr-1 h-3.5 w-3.5" />
+                录入期初库存
+              </Button>
+            </Link>
+          </>
+        )}
         <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
           <Pencil className="mr-1 h-3.5 w-3.5" />
           编辑
         </Button>
+        {(structureSku?.catalogRole || sku.catalogRole) !== "VARIANT" ? (
+          <Button variant="outline" size="sm" onClick={() => setStructureOpen(true)}>
+            <Workflow className="mr-1 h-3.5 w-3.5" />
+            调整结构
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           size="sm"
@@ -126,6 +165,11 @@ export function SKUDetailActions({
           </div>,
           document.body
         )}
+      <SkuStructureDialog
+        open={structureOpen}
+        target={structureSku || { ...sku, childSkus: [] }}
+        onClose={() => setStructureOpen(false)}
+      />
 
       <ConfirmDialog
         open={deleteOpen}

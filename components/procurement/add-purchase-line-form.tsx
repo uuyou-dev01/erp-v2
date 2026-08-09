@@ -37,6 +37,7 @@ export function AddPurchaseLineForm({
   >([]);
   const [formData, setFormData] = useState({
     skuId: "",
+    trackingMode: "LOT" as "LOT" | "ITEM_UNIT",
     quantity: "",
     unitPrice: "",
   });
@@ -55,6 +56,8 @@ export function AddPurchaseLineForm({
       newErrors.quantity = "数量为必填项";
     } else if (!isValidDecimal(formData.quantity) || parseFloat(formData.quantity) <= 0) {
       newErrors.quantity = "数量格式无效";
+    } else if (formData.trackingMode === "ITEM_UNIT" && !Number.isInteger(Number(formData.quantity))) {
+      newErrors.quantity = "一物一单商品的数量必须是整数";
     }
     if (!formData.unitPrice) {
       newErrors.unitPrice = "单价为必填项";
@@ -76,6 +79,7 @@ export function AddPurchaseLineForm({
       const result = await addPurchaseLineAction({
         purchaseOrderId,
         skuId: formData.skuId,
+        trackingMode: formData.trackingMode,
         quantity: formData.quantity,
         unitPrice: formData.unitPrice,
       });
@@ -84,7 +88,7 @@ export function AddPurchaseLineForm({
         return;
       }
 
-      setFormData({ skuId: "", quantity: "", unitPrice: "" });
+      setFormData({ skuId: "", trackingMode: "LOT", quantity: "", unitPrice: "" });
       router.refresh();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "添加商品失败，请重试");
@@ -95,7 +99,7 @@ export function AddPurchaseLineForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="skuId">SKU *</Label>
           <Select
@@ -142,6 +146,21 @@ export function AddPurchaseLineForm({
               {errors.skuId}
             </p>
           )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="trackingMode">库存管理方式 *</Label>
+          <Select
+            id="trackingMode"
+            value={formData.trackingMode}
+            onChange={(e) => setFormData({
+              ...formData,
+              trackingMode: e.target.value as "LOT" | "ITEM_UNIT",
+            })}
+          >
+            <option value="LOT">按数量管理</option>
+            <option value="ITEM_UNIT">一物一单（逐件建档）</option>
+          </Select>
         </div>
 
         <div className="space-y-2">

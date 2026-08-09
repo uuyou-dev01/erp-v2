@@ -5,30 +5,10 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { switchCurrentUserAction } from "@/app/actions/session";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
-interface LoginUser {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-}
-
-interface LoginUserFormProps {
-  users: LoginUser[];
-}
-
-const ROLE_LABELS: Record<string, string> = {
-  OWNER: "主体负责人",
-  ADMIN: "管理员",
-  MANAGER: "运营负责人",
-  LISTING: "上架人员",
-  FULFILLMENT: "打包/发货",
-  FINANCE: "财务结算",
-  VIEWER: "只读",
-};
-
-export function LoginUserForm({ users }: LoginUserFormProps) {
+export function LoginUserForm({ nextPath = "/workbench" }: { nextPath?: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -46,7 +26,10 @@ export function LoginUserForm({ users }: LoginUserFormProps) {
           return;
         }
 
-        router.push("/workbench");
+        const safeNextPath = nextPath.startsWith("/") && !nextPath.startsWith("//")
+          ? nextPath
+          : "/workbench";
+        router.push(safeNextPath);
         router.refresh();
       })();
     });
@@ -55,14 +38,29 @@ export function LoginUserForm({ users }: LoginUserFormProps) {
   return (
     <>
       <form onSubmit={submitLogin} className="space-y-4">
-        <Select name="email" required disabled={pending || users.length === 0}>
-          <option value="">请选择成员</option>
-          {users.map((user) => (
-            <option key={user.id} value={user.email}>
-              {user.name} · {ROLE_LABELS[user.role] ?? user.role}
-            </option>
-          ))}
-        </Select>
+        <div className="space-y-1.5">
+          <Label htmlFor="login-email">邮箱</Label>
+          <Input
+            id="login-email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            required
+            disabled={pending}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="login-password">密码</Label>
+          <Input
+            id="login-password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            minLength={8}
+            disabled={pending}
+          />
+        </div>
 
         {loginError ? (
           <div
@@ -74,16 +72,10 @@ export function LoginUserForm({ users }: LoginUserFormProps) {
           </div>
         ) : null}
 
-        <Button type="submit" className="w-full" disabled={pending || users.length === 0}>
-          {pending ? "进入中..." : "进入工作台"}
+        <Button type="submit" className="w-full" disabled={pending}>
+          {pending ? "登录中..." : "登录"}
         </Button>
       </form>
-
-      {users.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">
-          暂无可用成员，请先运行种子数据或创建团队成员。
-        </p>
-      ) : null}
     </>
   );
 }

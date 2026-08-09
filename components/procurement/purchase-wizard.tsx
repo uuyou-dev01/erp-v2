@@ -17,10 +17,13 @@ import {
 } from "@/components/ui/table";
 import { Stepper } from "@/components/shared/stepper";
 import { CSVImportDialog } from "@/components/shared/csv-import-dialog";
+import { ProductCategoryPicker } from "@/components/inventory/product-category-picker";
 import {
   addPurchaseLineAction,
+  allocatePurchaseOrderCostsAction,
   createPurchaseOrderAction,
 } from "@/app/actions/purchase-orders";
+import { getActivePartners } from "@/app/actions/partners";
 import { createSKUAction, getSKUs } from "@/app/actions/skus";
 import { getLocations } from "@/app/actions/locations";
 import { isValidDecimal, formatCurrency } from "@/lib/decimal";
@@ -30,6 +33,7 @@ import Decimal from "decimal.js";
 
 interface PurchaseWizardProps {
   storeId: string;
+  initialSkuId?: string;
 }
 
 interface LineItem {
@@ -37,6 +41,7 @@ interface LineItem {
   skuId: string;
   skuCode: string;
   skuName: string;
+  trackingMode: "LOT" | "ITEM_UNIT";
   quantity: string;
   unitPrice: string;
 }
@@ -47,6 +52,7 @@ interface SKUOption {
   name: string;
   catalogRole?: string | null;
   variantLabel?: string | null;
+  categoryId?: string | null;
   category?: string | null;
   brand?: string | null;
   parentSkuId?: string | null;
@@ -96,7 +102,7 @@ function compactSkuLabel(sku: SKUOption) {
   return sku.variantLabel || sku.name;
 }
 
-export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
+export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -104,21 +110,30 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
 
   const [skus, setSKUs] = useState<SKUOption[]>([]);
   const [locations, setLocations] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [suppliers, setSuppliers] = useState<Array<{ id: string; name: string; type: string }>>([]);
 
   // Step 1 — basic info
   const [basicInfo, setBasicInfo] = useState({
     orderNo: generateOrderNo(),
+    supplierId: "",
     supplierName: "",
     currency: "CNY",
     fxRate: "",
     orderedAt: new Date().toISOString().split("T")[0],
     destinationLocationId: "",
+    costMode: "ITEM_PRICES" as "ITEM_PRICES" | "BATCH_BY_QUANTITY" | "BATCH_LATER",
+    declaredTotalAmount: "",
   });
   const [basicErrors, setBasicErrors] = useState<Record<string, string>>({});
 
   // Step 2 — line items
   const [lines, setLines] = useState<LineItem[]>([]);
-  const [newLine, setNewLine] = useState({ skuId: "", quantity: "", unitPrice: "" });
+  const [newLine, setNewLine] = useState({
+    skuId: initialSkuId?.trim() || "",
+    trackingMode: "LOT" as "LOT" | "ITEM_UNIT",
+    quantity: "",
+    unitPrice: "",
+  });
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
   const [csvOpen, setCsvOpen] = useState(false);
   const [skuSearch, setSkuSearch] = useState("");
@@ -128,6 +143,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     code: "",
     name: "",
     variantLabel: "",
+    categoryId: "",
     category: "",
     brand: "",
     parentSkuId: "",
@@ -137,6 +153,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
   useEffect(() => {
     getSKUs(storeId).then(setSKUs);
     getLocations(storeId).then(setLocations);
+    getActivePartners(storeId).then((rows) => setSuppliers(rows));
   }, [storeId]);
 
   const selectedSku = useMemo(
@@ -148,9 +165,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     const query = skuSearch.trim().toLowerCase();
     const matched = query
       ? skus.filter((sku) =>
-          [sku.code, sku.name, sku.variantLabel ?? ""].some((v) =>
-            v.toLowerCase().includes(query)
-          )
+          [sku.code, sku.name, sku.variantLabel ?? ""].some((v) => v.toLowerCase().includes(query))
         )
       : skus;
 
@@ -192,6 +207,14 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     if (!basicInfo.orderNo.trim()) errs.orderNo = "采购单号为必填项";
     if (basicInfo.fxRate && !isValidDecimal(basicInfo.fxRate)) errs.fxRate = "汇率格式无效";
     if (!basicInfo.orderedAt) errs.orderedAt = "采购日期为必填项";
+    if (
+      basicInfo.costMode !== "ITEM_PRICES" &&
+      (!basicInfo.declaredTotalAmount ||
+        !isValidDecimal(basicInfo.declaredTotalAmount) ||
+        Number(basicInfo.declaredTotalAmount) <= 0)
+    ) {
+      errs.declaredTotalAmount = "请输入有效的整批采购总价";
+    }
     setBasicErrors(errs);
     return Object.keys(errs).length === 0;
   }, [basicInfo]);
@@ -202,10 +225,11 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
     if (!newLine.skuId) errs.skuId = "请选择SKU";
     if (!newLine.quantity || !isValidDecimal(newLine.quantity) || parseFloat(newLine.quantity) <= 0)
       errs.quantity = "请输入有效数量";
+    if (newLine.trackingMode === "ITEM_UNIT" && !Number.isInteger(Number(newLine.quantity)))
+      errs.quantity = "一物一单商品的数量必须是整数";
     if (
-      !newLine.unitPrice ||
-      !isValidDecimal(newLine.unitPrice) ||
-      parseFloat(newLine.unitPrice) < 0
+      basicInfo.costMode === "ITEM_PRICES" &&
+      (!newLine.unitPrice || !isValidDecimal(newLine.unitPrice) || parseFloat(newLine.unitPrice) < 0)
     )
       errs.unitPrice = "请输入有效单价";
     setLineErrors(errs);
@@ -221,11 +245,12 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         skuId: sku.id,
         skuCode: sku.code,
         skuName: sku.name,
+        trackingMode: newLine.trackingMode,
         quantity: newLine.quantity,
         unitPrice: newLine.unitPrice,
       },
     ]);
-    setNewLine({ skuId: "", quantity: "", unitPrice: "" });
+    setNewLine({ skuId: "", trackingMode: "LOT", quantity: "", unitPrice: "" });
     setSkuSearch("");
     setLineErrors({});
   };
@@ -251,6 +276,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         name: quickSku.parentSkuId ? undefined : quickSku.name.trim(),
         variantLabel: quickSku.parentSkuId ? quickSku.variantLabel.trim() : undefined,
         parentSkuId: quickSku.parentSkuId || undefined,
+        categoryId: quickSku.categoryId || null,
         category: quickSku.category.trim() || undefined,
         brand: quickSku.brand.trim() || undefined,
       });
@@ -262,7 +288,15 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
       setSKUs(refreshed);
       setNewLine((prev) => ({ ...prev, skuId: result.id }));
       setSkuSearch(`${result.code} ${result.name}`);
-      setQuickSku({ code: "", name: "", variantLabel: "", category: "", brand: "", parentSkuId: "" });
+      setQuickSku({
+        code: "",
+        name: "",
+        variantLabel: "",
+        categoryId: "",
+        category: "",
+        brand: "",
+        parentSkuId: "",
+      });
       setQuickSkuError(null);
       setSkuCreateOpen(false);
       setLineErrors((prev) => {
@@ -279,7 +313,8 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
 
   const removeLine = (id: string) => setLines((prev) => prev.filter((l) => l.id !== id));
 
-  const lineTotal = (l: LineItem) => new Decimal(l.quantity).times(new Decimal(l.unitPrice));
+  const lineTotal = (l: LineItem) =>
+    new Decimal(l.quantity || 0).times(new Decimal(l.unitPrice || 0));
   const grandTotal = lines.reduce((s, l) => s.plus(lineTotal(l)), new Decimal(0));
 
   // CSV import handler
@@ -293,10 +328,13 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
       const skuCode = row.sku_code?.trim();
       const qty = row.quantity?.trim();
       const price = row.unit_price?.trim();
+      const trackingMode = row.tracking_mode?.trim().toUpperCase() === "ITEM_UNIT"
+        ? "ITEM_UNIT"
+        : "LOT";
 
-      if (!skuCode || !qty || !price) {
+      if (!skuCode || !qty || (basicInfo.costMode === "ITEM_PRICES" && !price)) {
         failed++;
-        errors.push({ row: i + 1, message: "SKU代码、数量、单价为必填项" });
+        errors.push({ row: i + 1, message: "SKU代码、数量为必填项；逐项定价时单价也必填" });
         continue;
       }
       if (!isValidDecimal(qty) || parseFloat(qty) <= 0) {
@@ -304,7 +342,12 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         errors.push({ row: i + 1, message: "数量格式无效" });
         continue;
       }
-      if (!isValidDecimal(price) || parseFloat(price) < 0) {
+      if (trackingMode === "ITEM_UNIT" && !Number.isInteger(Number(qty))) {
+        failed++;
+        errors.push({ row: i + 1, message: "一物一单商品的数量必须是整数" });
+        continue;
+      }
+      if (price && (!isValidDecimal(price) || parseFloat(price) < 0)) {
         failed++;
         errors.push({ row: i + 1, message: "单价格式无效" });
         continue;
@@ -324,8 +367,9 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
           skuId: sku.id,
           skuCode: sku.code,
           skuName: sku.name,
+          trackingMode,
           quantity: qty,
-          unitPrice: price,
+          unitPrice: price || "",
         },
       ]);
       success++;
@@ -357,11 +401,14 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
       const order = await createPurchaseOrderAction({
         storeId,
         orderNo: basicInfo.orderNo,
+        supplierId: basicInfo.supplierId || undefined,
         supplierName: basicInfo.supplierName || undefined,
         currency: basicInfo.currency,
         fxRate: basicInfo.fxRate || undefined,
         orderedAt: new Date(basicInfo.orderedAt),
         destinationLocationId: basicInfo.destinationLocationId || undefined,
+        declaredTotalAmount: basicInfo.declaredTotalAmount || undefined,
+        costAllocationStatus: basicInfo.costMode === "ITEM_PRICES" ? "ALLOCATED" : "PENDING",
       });
       if (!order.success) {
         setSubmitError(order.error);
@@ -372,11 +419,24 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         const result = await addPurchaseLineAction({
           purchaseOrderId: order.id,
           skuId: line.skuId,
+          trackingMode: line.trackingMode,
           quantity: line.quantity,
-          unitPrice: line.unitPrice,
+          unitPrice: line.unitPrice || undefined,
         });
         if (!result.success) {
           setSubmitError(`${line.skuCode}: ${result.error}`);
+          return;
+        }
+      }
+
+      if (basicInfo.costMode === "BATCH_BY_QUANTITY") {
+        const allocated = await allocatePurchaseOrderCostsAction({
+          purchaseOrderId: order.id,
+          totalProductCost: basicInfo.declaredTotalAmount,
+          method: "BY_QUANTITY",
+        });
+        if (!allocated.success) {
+          setSubmitError(allocated.error);
           return;
         }
       }
@@ -422,14 +482,64 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="supplierName">{t("purchase.supplier")}</Label>
-                <Input
-                  id="supplierName"
-                  value={basicInfo.supplierName}
-                  onChange={(e) => setBasicInfo({ ...basicInfo, supplierName: e.target.value })}
-                  placeholder={t("purchase.supplier_placeholder")}
-                />
+                <Label htmlFor="supplierId">供应商（合作方）</Label>
+                <Select
+                  id="supplierId"
+                  value={basicInfo.supplierId}
+                  onChange={(e) => {
+                    const supplier = suppliers.find((row) => row.id === e.target.value);
+                    setBasicInfo({
+                      ...basicInfo,
+                      supplierId: e.target.value,
+                      supplierName: supplier?.name ?? "",
+                    });
+                  }}
+                >
+                  <option value="">暂不关联供应商</option>
+                  {suppliers
+                    .filter((supplier) => ["SUPPLIER", "OTHER"].includes(supplier.type))
+                    .map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+                    ))}
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  供应商 A/B/C 应分别建立为合作方，后续退货和对账才有稳定对象。
+                </p>
               </div>
+            </div>
+
+            <div className="rounded-lg border p-4 space-y-3">
+              <div>
+                <p className="font-medium">现在知道商品明细成本吗？</p>
+                <p className="text-sm text-muted-foreground">
+                  系统建议按真实情况登记；整批总价可以先保存，不会把未知成本当成 0 元。
+                </p>
+              </div>
+              <Select
+                value={basicInfo.costMode}
+                onChange={(e) => setBasicInfo({
+                  ...basicInfo,
+                  costMode: e.target.value as typeof basicInfo.costMode,
+                })}
+              >
+                <option value="ITEM_PRICES">知道每个商品的单价</option>
+                <option value="BATCH_BY_QUANTITY">只知道整批总价，先按数量分摊</option>
+                <option value="BATCH_LATER">只知道整批总价，稍后再决定怎么分摊</option>
+              </Select>
+              {basicInfo.costMode !== "ITEM_PRICES" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="declaredTotalAmount">整批商品总价（{basicInfo.currency}）</Label>
+                  <Input
+                    id="declaredTotalAmount"
+                    value={basicInfo.declaredTotalAmount}
+                    onChange={(e) => setBasicInfo({ ...basicInfo, declaredTotalAmount: e.target.value })}
+                    placeholder="例如：40000"
+                  />
+                  {basicErrors.declaredTotalAmount ? (
+                    <p className="text-xs text-destructive">{basicErrors.declaredTotalAmount}</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -522,7 +632,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Add line row */}
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1.5fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_auto] items-start">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.6fr)_minmax(0,0.7fr)_auto] items-start">
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <Label>SKU *</Label>
@@ -607,7 +717,8 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                                   {group.parent.code}
                                   {isParentGroup && (
                                     <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                      ({group.parent.childSkus?.length ?? group.children.length} 个规格，请选规格 SKU)
+                                      ({group.parent.childSkus?.length ?? group.children.length}{" "}
+                                      个规格，请选规格 SKU)
                                     </span>
                                   )}
                                 </span>
@@ -662,6 +773,26 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="trackingMode">库存管理方式 *</Label>
+                <Select
+                  id="trackingMode"
+                  value={newLine.trackingMode}
+                  onChange={(e) =>
+                    setNewLine({
+                      ...newLine,
+                      trackingMode: e.target.value as "LOT" | "ITEM_UNIT",
+                    })
+                  }
+                >
+                  <option value="LOT">按数量管理</option>
+                  <option value="ITEM_UNIT">一物一单（逐件建档）</option>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  有独立编号、成色或成本的单件商品请选择一物一单。
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label>{t("common.quantity")} *</Label>
                 <Input
                   value={newLine.quantity}
@@ -678,12 +809,13 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
 
               <div className="space-y-2">
                 <Label>
-                  {t("purchase.unit_price")} ({basicInfo.currency}) *
+                  {t("purchase.unit_price")} ({basicInfo.currency})
+                  {basicInfo.costMode === "ITEM_PRICES" ? " *" : "（可留空）"}
                 </Label>
                 <Input
                   value={newLine.unitPrice}
                   onChange={(e) => setNewLine({ ...newLine, unitPrice: e.target.value })}
-                  placeholder="99.99"
+                  placeholder={basicInfo.costMode === "ITEM_PRICES" ? "99.99" : "成本待分摊"}
                 />
                 {lineErrors.unitPrice && (
                   <p className="flex items-center gap-1 text-xs text-destructive">
@@ -713,6 +845,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                   <TableHeader>
                     <TableRow>
                       <TableHead>SKU</TableHead>
+                      <TableHead>库存管理</TableHead>
                       <TableHead className="text-right">数量</TableHead>
                       <TableHead className="text-right">单价</TableHead>
                       <TableHead className="text-right">小计</TableHead>
@@ -726,9 +859,14 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                           <p className="font-medium">{l.skuCode}</p>
                           <p className="text-xs text-muted-foreground">{l.skuName}</p>
                         </TableCell>
+                        <TableCell>
+                          {l.trackingMode === "ITEM_UNIT" ? "一物一单" : "按数量"}
+                        </TableCell>
                         <TableCell className="text-right">{l.quantity}</TableCell>
                         <TableCell className="text-right">
-                          {formatCurrency(l.unitPrice, basicInfo.currency)}
+                          {l.unitPrice
+                            ? formatCurrency(l.unitPrice, basicInfo.currency)
+                            : "待分摊"}
                         </TableCell>
                         <TableCell className="text-right">
                           {formatCurrency(lineTotal(l).toFixed(2), basicInfo.currency)}
@@ -748,7 +886,12 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <div className="flex items-center justify-end gap-2 border-t px-4 py-3 bg-muted/30">
                   <span className="text-sm font-medium">合计</span>
                   <span className="text-lg font-bold">
-                    {formatCurrency(grandTotal.toFixed(2), basicInfo.currency)}
+                    {formatCurrency(
+                      basicInfo.costMode === "ITEM_PRICES"
+                        ? grandTotal.toFixed(2)
+                        : basicInfo.declaredTotalAmount || "0",
+                      basicInfo.currency,
+                    )}
                   </span>
                 </div>
               </div>
@@ -778,7 +921,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">供应商</p>
-                  <p className="font-medium">{basicInfo.supplierName || "—"}</p>
+                  <p className="font-medium">{basicInfo.supplierName || "暂未关联"}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">币种</p>
@@ -814,6 +957,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>SKU</TableHead>
+                    <TableHead>库存管理</TableHead>
                     <TableHead className="text-right">数量</TableHead>
                     <TableHead className="text-right">单价</TableHead>
                     <TableHead className="text-right">小计</TableHead>
@@ -826,9 +970,12 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                         <p className="font-medium">{l.skuCode}</p>
                         <p className="text-xs text-muted-foreground">{l.skuName}</p>
                       </TableCell>
+                      <TableCell>
+                        {l.trackingMode === "ITEM_UNIT" ? "一物一单" : "按数量"}
+                      </TableCell>
                       <TableCell className="text-right">{l.quantity}</TableCell>
                       <TableCell className="text-right">
-                        {formatCurrency(l.unitPrice, basicInfo.currency)}
+                        {l.unitPrice ? formatCurrency(l.unitPrice, basicInfo.currency) : "待分摊"}
                       </TableCell>
                       <TableCell className="text-right">
                         {formatCurrency(lineTotal(l).toFixed(2), basicInfo.currency)}
@@ -840,7 +987,12 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
               <div className="flex items-center justify-end gap-2 border-t px-4 py-3 mt-2">
                 <span className="text-sm font-medium">总金额</span>
                 <span className="text-xl font-bold text-brand-blue">
-                  {formatCurrency(grandTotal.toFixed(2), basicInfo.currency)}
+                  {formatCurrency(
+                    basicInfo.costMode === "ITEM_PRICES"
+                      ? grandTotal.toFixed(2)
+                      : basicInfo.declaredTotalAmount || "0",
+                    basicInfo.currency,
+                  )}
                 </span>
               </div>
             </CardContent>
@@ -903,7 +1055,8 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
         targetFields={[
           { key: "sku_code", label: "SKU代码", required: true },
           { key: "quantity", label: "数量", required: true },
-          { key: "unit_price", label: "单价", required: true },
+          { key: "unit_price", label: "单价", required: basicInfo.costMode === "ITEM_PRICES" },
+          { key: "tracking_mode", label: "库存管理方式（LOT 或 ITEM_UNIT）", required: false },
         ]}
         onImport={handleCSVImport}
       />
@@ -944,6 +1097,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                           ...quickSku,
                           parentSkuId: pid,
                           name: "",
+                          categoryId: quickSku.categoryId || parent.categoryId || "",
                           category: quickSku.category || parent.category || "",
                           brand: quickSku.brand || parent.brand || "",
                         });
@@ -975,9 +1129,7 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                         setQuickSkuError(null);
                         setQuickSku({ ...quickSku, code: e.target.value.toUpperCase() });
                       }}
-                      placeholder={
-                        quickSku.parentSkuId ? "留空自动生成" : "留空自动生成"
-                      }
+                      placeholder={quickSku.parentSkuId ? "留空自动生成" : "留空自动生成"}
                     />
                   </div>
                   <div className="space-y-2">
@@ -1002,15 +1154,26 @@ export function PurchaseWizard({ storeId }: PurchaseWizardProps) {
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="quickSkuCategory">分类</Label>
-                    <Input
-                      id="quickSkuCategory"
-                      value={quickSku.category}
-                      onChange={(e) => {
+                    <Label>商品品类</Label>
+                    <ProductCategoryPicker
+                      value={quickSku.categoryId}
+                      legacyValue={quickSku.category}
+                      onChange={(categoryId, category) => {
                         setQuickSkuError(null);
-                        setQuickSku({ ...quickSku, category: e.target.value });
+                        setQuickSku({
+                          ...quickSku,
+                          categoryId: categoryId ?? "",
+                          category,
+                        });
                       }}
-                      placeholder="例如：手机配件"
+                      placeholder="搜索或选择品类"
+                      inheritedHint={
+                        quickSku.parentSkuId &&
+                        quickSku.categoryId ===
+                          skus.find((sku) => sku.id === quickSku.parentSkuId)?.categoryId
+                          ? "已从商品组继承"
+                          : undefined
+                      }
                     />
                   </div>
                   <div className="space-y-2">

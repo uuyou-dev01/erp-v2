@@ -8,6 +8,7 @@ import {
 const runId = `order_detail_profit_${Date.now()}`;
 const organizationCode = `org_${runId}`;
 const storeId = `store_${runId}`;
+let fxRateId: string | null = null;
 
 describe("order detail profit", () => {
   beforeAll(async () => {
@@ -28,7 +29,7 @@ describe("order detail profit", () => {
       },
     });
 
-    await prisma.fxRate.create({
+    const fxRate = await prisma.fxRate.create({
       data: {
         fromCurrency: "XCN",
         toCurrency: "JPY",
@@ -36,9 +37,11 @@ describe("order detail profit", () => {
         effectiveDate: new Date("2026-06-01T00:00:00.000Z"),
       },
     });
+    fxRateId = fxRate.id;
   });
 
   afterAll(async () => {
+    if (fxRateId) await prisma.fxRate.deleteMany({ where: { id: fxRateId } });
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
   });

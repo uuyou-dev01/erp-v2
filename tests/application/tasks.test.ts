@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { prisma } from "@/lib/prisma";
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -17,7 +18,27 @@ import {
   TASK_TYPE,
 } from "@/lib/application/tasks";
 
+const runId = `tasks_action_${Date.now()}`;
+const email = `${runId}@example.com`;
+let organizationId = "";
+let storeId = "";
+
 describe("task constants", () => {
+  beforeAll(async () => {
+    process.env.ERP_DEV_USER_EMAIL = email;
+    const organization = await prisma.organization.create({ data: { code: runId, name: runId } });
+    organizationId = organization.id;
+    const store = await prisma.store.create({ data: { organizationId, code: runId, name: runId, currency: "CNY" } });
+    storeId = store.id;
+    const user = await prisma.user.create({ data: { email, password: "test", role: "OWNER", storeId } });
+    await prisma.membership.create({ data: { organizationId, userId: user.id, role: "OWNER", status: "ACTIVE" } });
+    await prisma.storeAccess.create({ data: { storeId, userId: user.id, role: "OWNER" } });
+  });
+  afterAll(async () => {
+    delete process.env.ERP_DEV_USER_EMAIL;
+    await prisma.store.deleteMany({ where: { id: storeId } });
+    await prisma.organization.deleteMany({ where: { id: organizationId } });
+  });
   it("uses ASSIGNED for delegated tasks", () => {
     expect(TASK_STATUS.ASSIGNED).toBe("ASSIGNED");
   });

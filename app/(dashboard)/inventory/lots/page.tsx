@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getInventoryLots } from "@/app/actions/inventory-lots";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,12 +11,12 @@ import { buildInventoryLotDisplayGroups } from "@/lib/application/catalog-displa
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 
 type LotRow = Awaited<ReturnType<typeof getInventoryLots>>[number];
 
 export default async function LotsPage() {
-  const lots = await getInventoryLots(STORE_ID);
+  const { activeStoreId: storeId } = await requireUserContext();
+  const lots = await getInventoryLots(storeId);
   const lotGroups = buildInventoryLotDisplayGroups(lots);
 
   const activeLots = lots.filter((l) => Number(l.onHandQuantity) > 0);
@@ -33,7 +34,7 @@ export default async function LotsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <LotImportButton />
+          <LotImportButton storeId={storeId} />
           <Link href="/inventory/lots/new">
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -188,7 +189,11 @@ export default async function LotsPage() {
                         </div>
                         <div className="flex items-center justify-between gap-2 md:justify-end">
                           <Badge variant={lot.status === "ACTIVE" ? "default" : "secondary"}>
-                            {lot.status === "ACTIVE" ? "活跃" : "已消耗"}
+                            {lot.status === "ACTIVE"
+                              ? "活跃"
+                              : lot.status === "CONSOLIDATING"
+                                ? "转运锁定"
+                                : "已消耗"}
                           </Badge>
                           <Link href={`/inventory/lots/${lot.id}`}>
                             <Button variant="ghost" size="sm">

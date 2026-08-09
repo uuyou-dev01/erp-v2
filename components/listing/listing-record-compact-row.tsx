@@ -24,7 +24,9 @@ export function ListingRecordCompactRow({ product, record }: ListingRecordCompac
   const searchParams = useSearchParams();
   const [delisting, setDelisting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const productLabel = `${product.skuCode} · ${product.skuName}`;
+  const recordSkuCode = record.skuCode || product.skuCode;
+  const recordSkuName = record.skuName || product.skuName;
+  const productLabel = `${recordSkuCode} · ${recordSkuName}`;
   const days = formatListedDaysShort(record.listedAt);
   const isActive = record.state === "active";
   const isItemUnitListing = record.listingScope === "ITEM_UNIT" && record.itemUnitId;
@@ -89,11 +91,10 @@ export function ListingRecordCompactRow({ product, record }: ListingRecordCompac
               listedPrice={record.listedPrice}
               currency={record.currency}
               platformName={record.platformName}
+              platformCountry={record.platformCountry}
               platformFeeRate={record.platformFeeRate}
               defaultShippingFee={record.defaultShippingFee}
-              sellableLocations={
-                record.listingScope === "SKU" ? product.sellableLocations : []
-              }
+              sellableLocations={record.sellableLocations}
               compact
             />
             <Link

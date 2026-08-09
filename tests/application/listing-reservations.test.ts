@@ -27,6 +27,8 @@ import {
   markOrderReturned,
   markOrderShipped,
 } from "@/app/actions/customer-orders";
+import { getSkuStockBreakdown } from "@/lib/application/inventory";
+import { collectWorkItems } from "@/lib/application/workflow-queries";
 
 const runId = `reservation_${Date.now()}`;
 const organizationCode = `org_${runId}`;
@@ -130,8 +132,8 @@ describe("listing quick sell reservations", () => {
     delete process.env.ERP_DEV_USER_EMAIL;
   });
 
-  it("prevents a second quick sale from using stock already reserved by an unshipped order", async () => {
-    const { listing, lotId } = await createSellableListing("double_sell");
+  it("removes reserved stock from sellable quantity and sells out an exhausted SKU listing", async () => {
+    const { listing, lotId, sku } = await createSellableListing("double_sell");
 
     const firstSale = await quickSellListing({
       listingId: listing.id,
@@ -143,6 +145,15 @@ describe("listing quick sell reservations", () => {
 
     expect(firstSale.success).toBe(true);
     await expectLotQuantity(lotId, "1");
+    expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(0);
+    expect(
+      (
+        await prisma.listing.findUniqueOrThrow({
+          where: { id: listing.id },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe("SOLD_OUT");
 
     const secondSale = await quickSellListing({
       listingId: listing.id,
@@ -154,13 +165,53 @@ describe("listing quick sell reservations", () => {
 
     expect(secondSale.success).toBe(false);
     if (!secondSale.success) {
-      expect(secondSale.error).toContain("库存不足");
+      expect(secondSale.error).toContain("只有在售");
     }
 
     const allocations = await prisma.orderAllocation.findMany({
       where: { lotId },
     });
     expect(allocations).toHaveLength(1);
+  });
+
+  it("keeps a multi-quantity SKU listing active until its last unit is reserved", async () => {
+    const { listing, sku } = await createSellableListing("multi_quantity_sellout", "2");
+
+    const firstSale = await quickSellListing({
+      listingId: listing.id,
+      quantity: "1",
+      unitPrice: "180",
+      shipFromLocationId: locationId,
+      externalOrderNo: `SO_${runId}_multi_1`,
+    });
+    expect(firstSale.success).toBe(true);
+    expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(1);
+    expect(
+      (
+        await prisma.listing.findUniqueOrThrow({
+          where: { id: listing.id },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe("ACTIVE");
+
+    const secondSale = await quickSellListing({
+      listingId: listing.id,
+      quantity: "1",
+      unitPrice: "180",
+      shipFromLocationId: locationId,
+      externalOrderNo: `SO_${runId}_multi_2`,
+    });
+    expect(secondSale.success).toBe(true);
+    expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(0);
+    expect(
+      (
+        await prisma.listing.findUniqueOrThrow({
+          where: { id: listing.id },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe("SOLD_OUT");
   });
 
   it("rejects a negative quick-sale unit price without reserving stock", async () => {
@@ -530,7 +581,7 @@ describe("listing quick sell reservations", () => {
   });
 
   it("releases reserved stock when an unshipped order is cancelled", async () => {
-    const { listing, lotId } = await createSellableListing("cancel_release");
+    const { listing, lotId, sku } = await createSellableListing("cancel_release");
 
     const sale = await quickSellListing({
       listingId: listing.id,
@@ -544,6 +595,15 @@ describe("listing quick sell reservations", () => {
 
     await cancelCustomerOrder(sale.orderId, "buyer cancelled");
     await expectLotQuantity(lotId, "1");
+    expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(1);
+    expect(
+      (
+        await prisma.listing.findUniqueOrThrow({
+          where: { id: listing.id },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe("ACTIVE");
 
     const releasedSale = await quickSellListing({
       listingId: listing.id,
@@ -563,6 +623,53 @@ describe("listing quick sell reservations", () => {
       "CANCELLED",
       "PENDING",
     ]);
+  });
+
+  it("does not expose or ship a confirmed order without complete inventory reservations", async () => {
+    const sku = await createSku("unallocated_confirmed_order");
+    const order = await prisma.customerOrder.create({
+      data: {
+        storeId,
+        platformId,
+        orderNumber: `SO_${runId}_unallocated`,
+        customerName: "Unallocated Buyer",
+        orderDate: new Date(),
+        currency: "CNY",
+        subtotal: "180",
+        totalPaid: "180",
+        orderStatus: "CONFIRMED",
+        confirmedAt: new Date(),
+        lines: {
+          create: {
+            skuId: sku.id,
+            quantity: "1",
+            unitPrice: "180",
+            lineAmount: "180",
+            supplyStatus: "READY_TO_SHIP",
+          },
+        },
+      },
+    });
+
+    const workItems = await collectWorkItems(storeId);
+    expect(
+      workItems.some(
+        (item) =>
+          item.entityType === "customerOrder" &&
+          item.entityId === order.id &&
+          item.queue === "pendingShipment",
+      ),
+    ).toBe(false);
+
+    await expect(markOrderShipped(order.id)).rejects.toThrow("库存预留不完整");
+    expect(
+      (
+        await prisma.customerOrder.findUniqueOrThrow({
+          where: { id: order.id },
+          select: { orderStatus: true },
+        })
+      ).orderStatus,
+    ).toBe("CONFIRMED");
   });
 
   it("restores lot quantity when a shipped order is returned", async () => {
@@ -609,7 +716,7 @@ async function createSku(suffix: string) {
   });
 }
 
-async function createSellableListing(suffix: string) {
+async function createSellableListing(suffix: string, quantity = "1") {
   const sku = await createSku(suffix);
 
   const lot = await prisma.inventoryLot.create({
@@ -631,7 +738,7 @@ async function createSellableListing(suffix: string) {
       entityType: "LOT",
       entityId: lot.id,
       locationId,
-      deltaQty: "1",
+      deltaQty: quantity,
       reason: "INBOUND_PURCHASE",
       refType: "E2E",
       refId: `${runId}_${suffix}`,

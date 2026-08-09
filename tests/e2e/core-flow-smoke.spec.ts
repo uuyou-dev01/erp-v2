@@ -22,7 +22,9 @@ test.describe("core ERP modules", () => {
 
       await page.goto(route.path);
       await expect(page.locator("main")).toBeVisible();
-      await expect(page.getByRole("heading", { name: route.heading })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: route.heading, exact: true }),
+      ).toBeVisible();
 
       expect(
         errors.filter((line) =>

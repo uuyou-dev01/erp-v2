@@ -309,11 +309,11 @@ export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
           title="暂无商品档案"
           description={
             items.length === 0
-              ? "添加第一个商品组或独立 SKU 开始维护主数据。"
+              ? "添加第一个商品，系统会根据是否有多个规格引导创建。"
               : "没有符合筛选条件的商品。"
           }
-          actionHref={items.length === 0 ? "/inventory/skus/new?mode=group" : undefined}
-          actionLabel={items.length === 0 ? "新增商品组" : undefined}
+          actionHref={items.length === 0 ? "/inventory/skus/new" : undefined}
+          actionLabel={items.length === 0 ? "新增商品" : undefined}
         />
       ) : (
         <div className="overflow-hidden rounded-lg border bg-card">

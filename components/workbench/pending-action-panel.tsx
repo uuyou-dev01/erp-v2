@@ -14,7 +14,7 @@ import {
   FillLogisticsForm,
   InboundForm,
   OpenDetailLink,
-  ResolveExceptionButton,
+  ResolveQuickEntryExceptionForm,
   ReturnInspectionForm,
   SettleOrderForm,
   ShipOrderForm,
@@ -52,6 +52,7 @@ interface PendingActionPanelProps {
   }>;
   onClose?: () => void;
   onComplete?: () => void;
+  compact?: boolean;
 }
 
 type PanelNotice = {
@@ -70,6 +71,7 @@ export function PendingActionPanel({
   consolidationBatches = [],
   onClose,
   onComplete,
+  compact = false,
 }: PendingActionPanelProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -134,6 +136,21 @@ export function PendingActionPanel({
               message: "入库已确认，商品已进入可售库存。",
               href: sellablePageHref,
               actionLabel: "前往可售库存",
+            });
+            router.refresh();
+            return;
+          }
+          if (
+            detail.primaryAction === "disposition" &&
+            "inventoryPageHref" in result &&
+            typeof (result as { inventoryPageHref: string }).inventoryPageHref === "string"
+          ) {
+            const { inventoryPageHref } = result as { inventoryPageHref: string };
+            setNotice({
+              tone: "success",
+              message: "转仓已发起，当前库存已锁定并进入真实在途；目标仓需另行确认到货后才会入库。",
+              href: inventoryPageHref,
+              actionLabel: "查看库存记录",
             });
             router.refresh();
             return;
@@ -207,7 +224,12 @@ export function PendingActionPanel({
     }
     if (detail.primaryAction === "resolveException" || detail.primaryAction === "retryProcess") {
       return detail.entityType === "quickEntry" ? (
-        <ResolveExceptionButton detail={detail} pending={pending} run={run} />
+        <ResolveQuickEntryExceptionForm
+          detail={detail}
+          locations={locations}
+          pending={pending}
+          run={run}
+        />
       ) : (
         <OpenDetailLink detail={detail} />
       );
@@ -216,14 +238,74 @@ export function PendingActionPanel({
   };
 
   const suggestions = getActionSuggestions(detail);
+  const isQuickEntryException =
+    detail.entityType === "quickEntry" &&
+    (detail.primaryAction === "resolveException" ||
+      detail.primaryAction === "retryProcess");
+  const actionTitle = isQuickEntryException
+    ? "补齐录入信息"
+    : detail.primaryAction === "viewDetails"
+      ? detail.primaryActionLabel
+      : actionSpec.title;
+
+  const noticePanel = notice ? (
+    <div
+      role={notice.tone === "error" ? "alert" : "status"}
+      className={
+        notice.tone === "error"
+          ? "mb-3 rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"
+          : "mb-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+      }
+    >
+      <div className="flex items-start gap-2">
+        {notice.tone === "error" ? (
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        ) : (
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p>{notice.message}</p>
+          {notice.href ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="mt-2 h-8 border-current bg-transparent text-current hover:bg-white/60"
+              onClick={() => router.push(notice.href!)}
+            >
+              {notice.actionLabel ?? "查看详情"}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  if (compact) {
+    return (
+      <div className="p-5">
+        <div className="mb-4">
+          <p className="text-xs font-medium text-muted-foreground">下一步</p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight">{actionTitle}</h2>
+        </div>
+        {noticePanel}
+        {renderActionForm()}
+      </div>
+    );
+  }
 
   return (
     <ActionDrawerLayout
       header={
         <ActionDrawerHeader
           detail={detail}
-          title={actionSpec.title}
-          description={actionSpec.description}
+          title={actionTitle}
+          description={
+            isQuickEntryException
+              ? "补齐阻塞处理的字段，保存后系统会自动继续生成采购、库存和后续待办。"
+              : actionSpec.description
+          }
           onClose={onClose}
         />
       }
@@ -242,42 +324,16 @@ export function PendingActionPanel({
       footer={<ActionFooter detailHref={detailHref} />}
     >
       <div className="mb-3">
-        <h3 className="text-sm font-semibold">操作表单</h3>
-        <p className="mt-1 text-xs text-muted-foreground">只填写完成当前动作所需的信息。</p>
+        <h3 className="text-sm font-semibold">
+          {isQuickEntryException ? "需要补充的信息" : "操作表单"}
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {isQuickEntryException
+            ? "这里只显示本次处理缺少的字段。"
+            : "只填写完成当前动作所需的信息。"}
+        </p>
       </div>
-      {notice ? (
-        <div
-          role={notice.tone === "error" ? "alert" : "status"}
-          className={
-            notice.tone === "error"
-              ? "mb-3 rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"
-              : "mb-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
-          }
-        >
-          <div className="flex items-start gap-2">
-            {notice.tone === "error" ? (
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            ) : (
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p>{notice.message}</p>
-              {notice.href ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="mt-2 h-8 border-current bg-transparent text-current hover:bg-white/60"
-                  onClick={() => router.push(notice.href!)}
-                >
-                  {notice.actionLabel ?? "查看详情"}
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {noticePanel}
       {renderActionForm()}
     </ActionDrawerLayout>
   );
@@ -308,7 +364,8 @@ function getActionSuggestions(detail: WorkItemDetail) {
       ];
     }
     return [
-      "确认到货后会进入待分流，你可以再选择入库、集运、转仓或退货。",
+      "确认到货会在所选位置创建库存；资料完整的商品进入可售，待检查商品进入质检与资料队列。",
+      "如果到货位置是转运仓，系统会继续提示分流、集运或转仓。",
       detail.shipments[0]?.trackingNo ? `当前物流单号：${detail.shipments[0].trackingNo}` : "确认到货后会刷新工作台队列。",
     ];
   }
@@ -320,8 +377,8 @@ function getActionSuggestions(detail: WorkItemDetail) {
   }
   if (detail.primaryAction === "disposition") {
     return [
-      "根据销售地点选择直接入库、加入集运批次、发往其他位置，或退货终止。",
-      "加入集运、发出下一段物流或退货后，会从待分流中移除，避免重复处理。",
+      "「加入待集运」只把商品放入批次，不会立即发货；「立即发起转仓」才会创建物流。",
+      "转仓发起后库存进入真实在途；目标仓另行确认到货后，才会生成库存调拨流水。",
     ];
   }
   if (detail.primaryAction === "shipOrder") {
@@ -342,8 +399,8 @@ function getActionSuggestions(detail: WorkItemDetail) {
   }
   if (detail.primaryAction === "approveReturnInspection") {
     return [
-      "退货单品处于待检状态，检验通过后可回到可售库存并重新上架。",
-      "若检验不通过，可在单件档案中继续备注或调整状态。",
+      "确认品级、功能状态和必要图片完整后，单件才会恢复可售并允许重新上架。",
+      "若仍有问题，请先进入单件档案补充检查结果，不要直接放行。",
     ];
   }
   if (detail.primaryAction === "confirmOrder") {

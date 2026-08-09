@@ -1,4 +1,5 @@
 import type { QuickEntry } from "@prisma/client";
+import { formatQuickEntryExceptionMessage } from "@/lib/quick-entry-utils";
 
 export type WorkQueue =
   | "missingLogistics"
@@ -47,6 +48,7 @@ export type EntityType =
   | "quickEntry"
   | "purchaseOrder"
   | "shipment"
+  | "sku"
   | "inventoryLot"
   | "itemUnit"
   | "listing"
@@ -153,7 +155,7 @@ export const QUEUE_LABELS: Record<WorkQueue, string> = {
   pendingShipment: "待发货",
   shipped: "已发货",
   pendingSettlement: "待结算",
-  returnInspection: "退货待检",
+  returnInspection: "待检查 / 补资料",
   completed: "已完成",
   exception: "异常商品",
 };
@@ -236,7 +238,7 @@ export const ACTION_LABELS: Record<PrimaryAction, string> = {
   confirmDelivery: "确认妥投",
   registerReturn: "登记退货",
   cancelOrder: "取消订单",
-  approveReturnInspection: "检验放行",
+  approveReturnInspection: "检查并放行",
   settleOrder: "录入结算",
   resolveException: "处理异常",
   confirmOrder: "确认订单",
@@ -251,13 +253,11 @@ export const WORKFLOW_STAGES: Array<{ key: WorkQueue; label: string }> = [
   { key: "pendingArrival", label: "待确认收货" },
   { key: "pendingDisposition", label: "待分流" },
   { key: "inspectionException", label: "检查异常" },
-  { key: "inStock", label: "库存中" },
   { key: "pendingListing", label: "待上架检查" },
-  { key: "listed", label: "已有上架记录" },
   { key: "pendingShipment", label: "待发货" },
   { key: "shipped", label: "已发货" },
   { key: "pendingSettlement", label: "待结算" },
-  { key: "returnInspection", label: "退货待检" },
+  { key: "returnInspection", label: "待检查 / 补资料" },
   { key: "completed", label: "已完成" },
   { key: "exception", label: "异常商品" },
 ];
@@ -299,6 +299,7 @@ export function deriveQuickEntryWorkItem(entry: QuickEntry): WorkItem | null {
       conditionType: entry.conditionType,
       workflowStage: entry.workflowStage,
       processedStatus: entry.processedStatus,
+      incompleteReasonCodes: entry.errorMessage,
     },
   };
 
@@ -313,7 +314,9 @@ export function deriveQuickEntryWorkItem(entry: QuickEntry): WorkItem | null {
       primaryActionLabel: ACTION_LABELS.resolveException,
       priority: "critical",
       exceptionType: "process_failed",
-      exceptionMessage: entry.errorMessage ?? "结构化处理失败",
+      exceptionMessage: formatQuickEntryExceptionMessage(
+        entry.errorMessage ?? "结构化处理失败"
+      ),
     };
   }
 
@@ -329,7 +332,9 @@ export function deriveQuickEntryWorkItem(entry: QuickEntry): WorkItem | null {
       primaryAction: "resolveException",
       primaryActionLabel: ACTION_LABELS.resolveException,
       priority: "warning",
-      exceptionMessage: entry.errorMessage ?? "字段待补全",
+      exceptionMessage: formatQuickEntryExceptionMessage(
+        entry.errorMessage ?? "字段待补全"
+      ),
     };
   }
 

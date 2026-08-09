@@ -29,7 +29,7 @@ export function LocationCreateDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-      <Card className="relative z-10 w-full max-w-xl">
+      <Card className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-hidden">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>新增仓库位置</CardTitle>
@@ -42,7 +42,7 @@ export function LocationCreateDialog({
             </button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="max-h-[calc(90vh-5rem)] overflow-y-auto">
           <LocationForm
             storeId={storeId}
             mode="dialog"

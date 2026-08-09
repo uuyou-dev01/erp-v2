@@ -6,6 +6,7 @@ const runId = `sku_catalog_${Date.now()}`;
 const organizationCode = `org_${runId}`;
 const storeId = `store_${runId}`;
 let sellableLocationId = "";
+let organizationId = "";
 
 describe("sku catalog detail reference metrics", () => {
   beforeAll(async () => {
@@ -15,6 +16,7 @@ describe("sku catalog detail reference metrics", () => {
         name: "SKU Catalog Detail Test Organization",
       },
     });
+    organizationId = organization.id;
 
     const store = await prisma.store.create({
       data: {
@@ -40,6 +42,12 @@ describe("sku catalog detail reference metrics", () => {
   });
 
   afterAll(async () => {
+    await prisma.productIntelligenceObservation.deleteMany({ where: { storeId } });
+    await prisma.sourceListingSnapshot.deleteMany({
+      where: { sourceListing: { organizationId } },
+    });
+    await prisma.sourceListing.deleteMany({ where: { organizationId } });
+    await prisma.productIntelligenceCapture.deleteMany({ where: { organizationId } });
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
   });
@@ -278,10 +286,7 @@ describe("sku catalog detail reference metrics", () => {
 
     const detail = await getSkuCatalogDetail(parent.id);
 
-    expect(detail?.childSkus.map((child) => child.id)).toEqual([
-      childWithLot.id,
-      childWithUnit.id,
-    ]);
+    expect(detail?.childSkus.map((child) => child.id)).toEqual([childWithLot.id, childWithUnit.id]);
     expect(detail?.business.sellableQty).toBe("4");
     expect(detail?.business.activeListingCount).toBe(2);
     expect(detail?.business.salesCount).toBe(2);
@@ -336,10 +341,8 @@ describe("sku catalog detail reference metrics", () => {
         unitCode: `UNIT_${runId}_CHILD`,
         labelCode: `LBL_${runId}_CHILD`,
         labelStatus: "PRINTED",
-        photos: [
-          "https://example.com/child-unit-1.jpg",
-          "https://example.com/child-unit-2.jpg",
-        ],
+        conditionGrade: "中古",
+        photos: ["https://example.com/child-unit-1.jpg", "https://example.com/child-unit-2.jpg"],
         status: "AVAILABLE",
       },
     });
@@ -358,9 +361,87 @@ describe("sku catalog detail reference metrics", () => {
       unitCode: `UNIT_${runId}_CHILD`,
       labelCode: `LBL_${runId}_CHILD`,
       labelStatus: "PRINTED",
+      conditionType: "USED",
+      conditionGrade: "中古",
+      functionStatus: "UNTESTED",
       photoCount: 2,
       locationName: "Detail Sellable Warehouse",
       status: "AVAILABLE",
+    });
+  });
+
+  it("surfaces linked market intelligence and uses its source image as a fallback", async () => {
+    const sku = await createSku("MARKET_INTELLIGENCE");
+    const item = await prisma.productIntelligenceItem.create({
+      data: {
+        storeId,
+        skuId: sku.id,
+        title: "Mercari 情报商品",
+        visibility: "ORGANIZATION",
+      },
+    });
+    const capture = await prisma.productIntelligenceCapture.create({
+      data: {
+        organizationId,
+        storeId,
+        userId: `user_${runId}`,
+        captureType: "SHARE_URL",
+        businessIntent: "OBSERVE_PRICE",
+        status: "IMPORTED",
+        sourceUrl: "https://jp.mercari.com/item/m-test",
+        platformName: "Mercari",
+        title: "Mercari 情报商品",
+        amount: "5800",
+        currency: "JPY",
+        rawPayload: { imageUrls: ["https://static.example.com/mercari-cover.jpg"] },
+      },
+    });
+    const source = await prisma.sourceListing.create({
+      data: {
+        organizationId,
+        storeId,
+        captureId: capture.id,
+        platformName: "Mercari",
+        externalListingId: "m-test",
+        sourceUrl: capture.sourceUrl,
+      },
+    });
+    const snapshot = await prisma.sourceListingSnapshot.create({
+      data: {
+        sourceListingId: source.id,
+        captureId: capture.id,
+        contentHash: `hash_${runId}`,
+        amount: "5800",
+        currency: "JPY",
+        pageStatus: "SOLD_OUT",
+      },
+    });
+    await prisma.productIntelligenceObservation.create({
+      data: {
+        itemId: item.id,
+        storeId,
+        sourceType: "MARKET_SEEN",
+        amount: "5800",
+        currency: "JPY",
+        platformName: "Mercari",
+        conditionGrade: "新品、未使用",
+        captureId: capture.id,
+        sourceListingId: source.id,
+        sourceSnapshotId: snapshot.id,
+      },
+    });
+
+    const detail = await getSkuCatalogDetail(sku.id);
+
+    expect(detail?.intelligence.marketObservationCount).toBe(1);
+    expect(detail?.intelligence.recentMarketObservations[0]).toMatchObject({
+      itemId: item.id,
+      amount: "5800",
+      currency: "JPY",
+      platformName: "Mercari",
+      pageStatus: "SOLD_OUT",
+      sourceUrl: capture.sourceUrl,
+      imageUrl: "https://static.example.com/mercari-cover.jpg",
     });
   });
 });

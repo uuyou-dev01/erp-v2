@@ -1,8 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import {
-  getStoreStockBreakdown,
-  type SkuStockBreakdown,
-} from "@/lib/application/inventory";
+import { getStoreStockBreakdown, type SkuStockBreakdown } from "@/lib/application/inventory";
 import { deriveCatalogRole, type SkuCatalogRole } from "@/lib/application/sku-identity";
 import Decimal from "decimal.js";
 
@@ -35,6 +32,8 @@ export interface SkuUsedFields {
 export interface SkuCatalogMeta {
   catalogStatus: CatalogStatus;
   productKind: ProductKind;
+  /** SKU 级商品条码。旧数据可能仍存于 newFields.barcode。 */
+  barcode?: string | null;
   referencePrice?: string | null;
   referenceCost?: string | null;
   currency?: string | null;
@@ -49,6 +48,7 @@ export interface SkuCatalogMeta {
 const RESERVED_KEYS = new Set([
   "catalogStatus",
   "productKind",
+  "barcode",
   "referencePrice",
   "referenceCost",
   "currency",
@@ -66,10 +66,7 @@ const DEFAULT_META: SkuCatalogMeta = {
 };
 const VALID_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
-function aggregateStockMetrics(
-  skuIds: string[],
-  stockBreakdown: Map<string, SkuStockBreakdown>
-) {
+function aggregateStockMetrics(skuIds: string[], stockBreakdown: Map<string, SkuStockBreakdown>) {
   return skuIds.reduce(
     (acc, skuId) => {
       const stock = stockBreakdown.get(skuId);
@@ -88,12 +85,22 @@ function emptyStockBreakdown(skuId: string): SkuStockBreakdown {
     skuId,
     sellableQty: 0,
     inTransitQty: 0,
+    heldQty: 0,
     sellableLotQty: 0,
     sellableItemUnitCount: 0,
     inTransitLotQty: 0,
     inTransitItemUnitCount: 0,
+    heldLotQty: 0,
+    heldItemUnitCount: 0,
     sellableLocations: [],
     inTransitLocations: [],
+    heldLocations: [],
+    sellableLotLocations: [],
+    inTransitLotLocations: [],
+    heldLotLocations: [],
+    sellableItemUnitLocations: [],
+    inTransitItemUnitLocations: [],
+    heldItemUnitLocations: [],
   };
 }
 
@@ -104,6 +111,7 @@ function aggregateSkuStockBreakdown(
   const result = emptyStockBreakdown(skuIds[0] ?? "");
   const sellableLocations = new Map<string, SkuStockBreakdown["sellableLocations"][number]>();
   const inTransitLocations = new Map<string, SkuStockBreakdown["inTransitLocations"][number]>();
+  const heldLocations = new Map<string, SkuStockBreakdown["heldLocations"][number]>();
 
   const pushLocation = (
     target: Map<string, SkuStockBreakdown["sellableLocations"][number]>,
@@ -122,24 +130,21 @@ function aggregateSkuStockBreakdown(
     if (!stock) continue;
     result.sellableQty += stock.sellableQty;
     result.inTransitQty += stock.inTransitQty;
+    result.heldQty += stock.heldQty;
     result.sellableLotQty += stock.sellableLotQty;
     result.sellableItemUnitCount += stock.sellableItemUnitCount;
     result.inTransitLotQty += stock.inTransitLotQty;
     result.inTransitItemUnitCount += stock.inTransitItemUnitCount;
-    stock.sellableLocations.forEach((location) =>
-      pushLocation(sellableLocations, location)
-    );
-    stock.inTransitLocations.forEach((location) =>
-      pushLocation(inTransitLocations, location)
-    );
+    result.heldLotQty += stock.heldLotQty;
+    result.heldItemUnitCount += stock.heldItemUnitCount;
+    stock.sellableLocations.forEach((location) => pushLocation(sellableLocations, location));
+    stock.inTransitLocations.forEach((location) => pushLocation(inTransitLocations, location));
+    stock.heldLocations.forEach((location) => pushLocation(heldLocations, location));
   }
 
-  result.sellableLocations = [...sellableLocations.values()].sort(
-    (a, b) => b.qty - a.qty
-  );
-  result.inTransitLocations = [...inTransitLocations.values()].sort(
-    (a, b) => b.qty - a.qty
-  );
+  result.sellableLocations = [...sellableLocations.values()].sort((a, b) => b.qty - a.qty);
+  result.inTransitLocations = [...inTransitLocations.values()].sort((a, b) => b.qty - a.qty);
+  result.heldLocations = [...heldLocations.values()].sort((a, b) => b.qty - a.qty);
   return result;
 }
 
@@ -191,24 +196,27 @@ export function parseSkuCatalogMeta(
     images[0] = { ...images[0], isCover: true };
   }
 
-  const catalogStatus =
-    raw.catalogStatus === "disabled" ? "disabled" : DEFAULT_META.catalogStatus;
+  const catalogStatus = raw.catalogStatus === "disabled" ? "disabled" : DEFAULT_META.catalogStatus;
   const productKind = raw.productKind === "USED" ? "USED" : "NEW";
+  const newFields = asRecord(raw.newFields) as SkuNewFields;
 
   return {
     catalogStatus,
     productKind,
-    referencePrice:
-      typeof raw.referencePrice === "string" ? raw.referencePrice : null,
+    barcode:
+      typeof raw.barcode === "string"
+        ? raw.barcode
+        : typeof newFields.barcode === "string"
+          ? newFields.barcode
+          : null,
+    referencePrice: typeof raw.referencePrice === "string" ? raw.referencePrice : null,
     referenceCost: typeof raw.referenceCost === "string" ? raw.referenceCost : null,
     currency: typeof raw.currency === "string" ? raw.currency : null,
-    tags: Array.isArray(raw.tags)
-      ? raw.tags.filter((t): t is string => typeof t === "string")
-      : [],
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === "string") : [],
     series: typeof raw.series === "string" ? raw.series : null,
     notes: typeof raw.notes === "string" ? raw.notes : null,
     images,
-    newFields: asRecord(raw.newFields) as SkuNewFields,
+    newFields,
     usedFields: asRecord(raw.usedFields) as SkuUsedFields,
     variantAttributes: pickVariantAttributes(raw),
   };
@@ -220,9 +228,7 @@ export function mergeSkuCatalogAttributes(
 ): Record<string, unknown> {
   const parsed = parseSkuCatalogMeta(existing);
   const images =
-    meta.images !== undefined
-      ? meta.images
-      : parsed.images?.map((img) => ({ ...img })) ?? [];
+    meta.images !== undefined ? meta.images : (parsed.images?.map((img) => ({ ...img })) ?? []);
 
   const cover = images.find((img) => img.isCover) ?? images[0];
   if (cover) {
@@ -235,6 +241,8 @@ export function mergeSkuCatalogAttributes(
     ...parsed.variantAttributes,
     catalogStatus: meta.catalogStatus ?? parsed.catalogStatus,
     productKind: meta.productKind ?? parsed.productKind,
+    barcode:
+      meta.barcode !== undefined ? (meta.barcode ?? undefined) : (parsed.barcode ?? undefined),
     referencePrice: meta.referencePrice ?? parsed.referencePrice ?? undefined,
     referenceCost: meta.referenceCost ?? parsed.referenceCost ?? undefined,
     currency: meta.currency ?? parsed.currency ?? undefined,
@@ -264,6 +272,7 @@ export interface SkuCatalogListItem {
   nameSource: string;
   codeSource: string;
   brand: string | null;
+  categoryId?: string | null;
   category: string | null;
   imageUrl: string | null;
   parentSkuId: string | null;
@@ -319,7 +328,7 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
     itemUnitSummary: {
       totalCount: number;
       sellableCount: number;
-      inTransitCount: number;
+      heldCount: number;
       pendingLabelCount: number;
       pendingPhotoCount: number;
     };
@@ -331,6 +340,9 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
       unitCode: string | null;
       labelCode: string | null;
       labelStatus: string;
+      conditionType: string;
+      conditionGrade: string | null;
+      functionStatus: string;
       photoCount: number;
       locationId: string;
       locationCode: string;
@@ -348,6 +360,9 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
       inTransitQty: string;
       inTransitLotQty: string;
       inTransitItemUnitCount: number;
+      heldQty: string;
+      heldLotQty: string;
+      heldItemUnitCount: number;
       sellableLocations: Array<{
         locationId: string;
         code: string;
@@ -356,6 +371,13 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
         qty: string;
       }>;
       inTransitLocations: Array<{
+        locationId: string;
+        code: string;
+        name: string;
+        type: string;
+        qty: string;
+      }>;
+      heldLocations: Array<{
         locationId: string;
         code: string;
         name: string;
@@ -460,6 +482,7 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
     sellableLotQty: string;
     availableItemUnits: number;
     inTransitQty: string;
+    heldQty: string;
     activeListingCount: number;
     purchaseLineCount: number;
     salesLineCount: number;
@@ -484,12 +507,26 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
       orderDate: string;
     }>;
   };
+  intelligence: {
+    marketObservationCount: number;
+    recentMarketObservations: Array<{
+      id: string;
+      itemId: string;
+      itemTitle: string;
+      amount: string;
+      currency: string;
+      platformName: string | null;
+      conditionGrade: string | null;
+      observedAt: string;
+      sourceUrl: string | null;
+      pageStatus: string | null;
+      imageUrl: string | null;
+    }>;
+  };
 }
 
 function stringArrayFromJson(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((item) => String(item).trim()).filter(Boolean)
-    : [];
+  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
 }
 
 function stringRecordFromJson(value: unknown): Record<string, string> {
@@ -498,6 +535,17 @@ function stringRecordFromJson(value: unknown): Record<string, string> {
     Object.entries(value as Record<string, unknown>)
       .map(([key, val]) => [key.trim(), String(val ?? "").trim()] as const)
       .filter(([key, val]) => key && val)
+  );
+}
+
+function firstImageFromPayload(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const imageUrls = (value as Record<string, unknown>).imageUrls;
+  if (!Array.isArray(imageUrls)) return null;
+  return (
+    imageUrls.find(
+      (url): url is string => typeof url === "string" && /^https?:\/\//i.test(url.trim())
+    )?.trim() ?? null
   );
 }
 
@@ -517,6 +565,7 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
         nameSource: true,
         codeSource: true,
         brand: true,
+        categoryId: true,
         category: true,
         imageUrl: true,
         parentSkuId: true,
@@ -630,6 +679,7 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
       nameSource: sku.nameSource,
       codeSource: sku.codeSource,
       brand: sku.brand,
+      categoryId: sku.categoryId,
       category: sku.category,
       imageUrl: resolveCoverImageUrl(meta, sku.imageUrl),
       parentSkuId: sku.parentSkuId,
@@ -664,7 +714,10 @@ function computeSkuPurchaseMetrics(
   }>
 ) {
   const validLines = lines.filter(
-    (line) => !String(line.purchaseOrder.status ?? "").toUpperCase().includes("CANCEL")
+    (line) =>
+      !String(line.purchaseOrder.status ?? "")
+        .toUpperCase()
+        .includes("CANCEL")
   );
   if (validLines.length === 0) {
     return {
@@ -693,10 +746,7 @@ function computeSkuPurchaseMetrics(
 }
 
 function computeSkuMarginMetrics(
-  sales: Pick<
-    ReturnType<typeof computeSkuListSalesMetrics>,
-    "averageSalePrice" | "salesCurrency"
-  >,
+  sales: Pick<ReturnType<typeof computeSkuListSalesMetrics>, "averageSalePrice" | "salesCurrency">,
   purchase: ReturnType<typeof computeSkuPurchaseMetrics>
 ) {
   const saleCurrency = sales.salesCurrency;
@@ -717,9 +767,7 @@ function computeSkuMarginMetrics(
 
   return {
     grossProfitPerUnit: grossProfit.toFixed(2),
-    grossMarginRate: averageSale.gt(0)
-      ? grossProfit.div(averageSale).mul(100).toFixed(1)
-      : null,
+    grossMarginRate: averageSale.gt(0) ? grossProfit.div(averageSale).mul(100).toFixed(1) : null,
   };
 }
 
@@ -776,8 +824,7 @@ function computeSkuListSalesMetrics(
   const latestSalePrice = latestQty.gt(0)
     ? new Decimal(latest.lineAmount.toString()).div(latestQty).toFixed(2)
     : null;
-  const primaryPlatform =
-    [...platformCounts.values()].sort((a, b) => b.count - a.count)[0] ?? null;
+  const primaryPlatform = [...platformCounts.values()].sort((a, b) => b.count - a.count)[0] ?? null;
 
   return {
     latestSalePrice,
@@ -810,8 +857,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     parentSkuId: sku.parentSkuId,
     childCount: sku.childSkus.length,
   });
-  const metricSkuIds =
-    catalogRole === "GROUP" ? sku.childSkus.map((child) => child.id) : [sku.id];
+  const metricSkuIds = catalogRole === "GROUP" ? sku.childSkus.map((child) => child.id) : [sku.id];
   const metricSkuIdSet = new Set(metricSkuIds);
 
   const [
@@ -825,6 +871,8 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     inventoryLots,
     lotAggregates,
     itemUnits,
+    marketObservations,
+    marketObservationCount,
   ] = await Promise.all([
     getStoreStockBreakdown(sku.storeId),
     prisma.orderLine.findMany({
@@ -850,32 +898,30 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
       where: {
         storeId: sku.storeId,
         status: "ACTIVE",
-        OR: [
-          { skuId: { in: metricSkuIds } },
-          { itemUnit: { skuId: { in: metricSkuIds } } },
-        ],
+        OR: [{ skuId: { in: metricSkuIds } }, { itemUnit: { skuId: { in: metricSkuIds } } }],
       },
       orderBy: { listedAt: "desc" },
       include: {
         platform: { select: { name: true, code: true } },
         sku: { select: { id: true, code: true } },
-        itemUnit: { select: { id: true, unitCode: true, skuId: true, sku: { select: { code: true } } } },
+        itemUnit: {
+          select: { id: true, unitCode: true, skuId: true, sku: { select: { code: true } } },
+        },
       },
     }),
     prisma.listing.findMany({
       where: {
         storeId: sku.storeId,
-        OR: [
-          { skuId: { in: metricSkuIds } },
-          { itemUnit: { skuId: { in: metricSkuIds } } },
-        ],
+        OR: [{ skuId: { in: metricSkuIds } }, { itemUnit: { skuId: { in: metricSkuIds } } }],
       },
       take: 500,
       orderBy: { listedAt: "desc" },
       include: {
         platform: { select: { name: true, code: true } },
         sku: { select: { id: true, code: true } },
-        itemUnit: { select: { id: true, unitCode: true, skuId: true, sku: { select: { code: true } } } },
+        itemUnit: {
+          select: { id: true, unitCode: true, skuId: true, sku: { select: { code: true } } },
+        },
       },
     }),
     prisma.purchaseLine.findMany({
@@ -930,6 +976,26 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
         location: true,
       },
     }),
+    prisma.productIntelligenceObservation.findMany({
+      where: {
+        sourceType: "MARKET_SEEN",
+        item: { skuId: { in: metricSkuIds } },
+      },
+      take: 5,
+      orderBy: [{ observedAt: "desc" }, { createdAt: "desc" }],
+      include: {
+        item: { select: { id: true, title: true, imageUrl: true } },
+        capture: { select: { sourceUrl: true, rawPayload: true } },
+        sourceListing: { select: { sourceUrl: true } },
+        sourceSnapshot: { select: { pageStatus: true, rawPayload: true } },
+      },
+    }),
+    prisma.productIntelligenceObservation.count({
+      where: {
+        sourceType: "MARKET_SEEN",
+        item: { skuId: { in: metricSkuIds } },
+      },
+    }),
   ]);
   const stockBreakdown = aggregateSkuStockBreakdown(metricSkuIds, storeStockBreakdown);
   const parsed = parseSkuCatalogMeta(sku.attributes, sku.imageUrl);
@@ -967,6 +1033,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     nameSource: sku.nameSource,
     codeSource: sku.codeSource,
     brand: sku.brand,
+    categoryId: sku.categoryId,
     category: sku.category,
     imageUrl: resolveCoverImageUrl(parsed, sku.imageUrl),
     parentSkuId: sku.parentSkuId,
@@ -994,6 +1061,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
       sellableLotQty: stockBreakdown.sellableLotQty.toString(),
       availableItemUnits: stockBreakdown.sellableItemUnitCount,
       inTransitQty: stockBreakdown.inTransitQty.toString(),
+      heldQty: stockBreakdown.heldQty.toString(),
       activeListingCount: activeListings.length,
       purchaseLineCount,
       salesLineCount: salesLines.length,
@@ -1006,8 +1074,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
         currency: line.purchaseOrder.currency,
         status: line.purchaseOrder.status,
         orderedAt:
-          (line.purchaseOrder.orderedAt ?? line.purchaseOrder.createdAt)?.toISOString() ??
-          null,
+          (line.purchaseOrder.orderedAt ?? line.purchaseOrder.createdAt)?.toISOString() ?? null,
       })),
       recentSalesLines: salesLines.slice(0, 5).map((line) => ({
         id: line.id,
@@ -1018,6 +1085,25 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
         currency: line.order.currency,
         platformName: line.order.platform?.name ?? null,
         orderDate: line.order.orderDate.toISOString(),
+      })),
+    },
+    intelligence: {
+      marketObservationCount,
+      recentMarketObservations: marketObservations.map((observation) => ({
+        id: observation.id,
+        itemId: observation.item.id,
+        itemTitle: observation.item.title,
+        amount: observation.amount.toString(),
+        currency: observation.currency,
+        platformName: observation.platformName ?? observation.sourceName,
+        conditionGrade: observation.conditionGrade,
+        observedAt: observation.observedAt.toISOString(),
+        sourceUrl: observation.capture?.sourceUrl ?? observation.sourceListing?.sourceUrl ?? null,
+        pageStatus: observation.sourceSnapshot?.pageStatus ?? null,
+        imageUrl:
+          observation.item.imageUrl ??
+          firstImageFromPayload(observation.capture?.rawPayload) ??
+          firstImageFromPayload(observation.sourceSnapshot?.rawPayload),
       })),
     },
     analysis,
@@ -1049,6 +1135,9 @@ function buildSkuInventorySections(input: {
     unitCode: string | null;
     labelCode: string | null;
     labelStatus: string;
+    conditionType: string;
+    conditionGrade: string | null;
+    functionStatus: string;
     photos: unknown;
     status: string;
     sku: { code: string; name: string };
@@ -1089,6 +1178,9 @@ function buildSkuInventorySections(input: {
     unitCode: unit.unitCode,
     labelCode: unit.labelCode,
     labelStatus: unit.labelStatus,
+    conditionType: unit.conditionType,
+    conditionGrade: unit.conditionGrade,
+    functionStatus: unit.functionStatus,
     photoCount: countPhotos(unit.photos),
     locationId: unit.locationId,
     locationCode: unit.location.code,
@@ -1105,9 +1197,8 @@ function buildSkuInventorySections(input: {
       sellableCount: itemUnits.filter(
         (unit) => unit.status === "AVAILABLE" && unit.isSellableLocation
       ).length,
-      inTransitCount: itemUnits.filter(
-        (unit) => unit.status === "AVAILABLE" && !unit.isSellableLocation
-      ).length,
+      heldCount: itemUnits.filter((unit) => unit.status === "AVAILABLE" && !unit.isSellableLocation)
+        .length,
       pendingLabelCount: itemUnits.filter(
         (unit) => unit.status === "AVAILABLE" && unit.labelStatus !== "ATTACHED"
       ).length,
@@ -1240,14 +1331,8 @@ function buildSkuDetailAnalysis(input: {
     }
   }
 
-  const salesTimeline = buildSkuSalesTimeline(
-    input.salesLines,
-    input.historicalListings
-  );
-  const listingLifecycle = buildListingLifecycle(
-    input.salesLines,
-    input.historicalListings
-  );
+  const salesTimeline = buildSkuSalesTimeline(input.salesLines, input.historicalListings);
+  const listingLifecycle = buildListingLifecycle(input.salesLines, input.historicalListings);
   const listingSellThrough = buildListingSellThrough(listingLifecycle);
   const skuAverages = buildSkuAverageMetrics(input.salesLines, input.purchaseLines);
   const grossProfit = costMatchedSalesAmount.minus(allocatedInventoryCost);
@@ -1263,11 +1348,18 @@ function buildSkuDetailAnalysis(input: {
       inTransitQty: input.stockBreakdown.inTransitQty.toString(),
       inTransitLotQty: input.stockBreakdown.inTransitLotQty.toString(),
       inTransitItemUnitCount: input.stockBreakdown.inTransitItemUnitCount,
+      heldQty: input.stockBreakdown.heldQty.toString(),
+      heldLotQty: input.stockBreakdown.heldLotQty.toString(),
+      heldItemUnitCount: input.stockBreakdown.heldItemUnitCount,
       sellableLocations: input.stockBreakdown.sellableLocations.map((location) => ({
         ...location,
         qty: location.qty.toString(),
       })),
       inTransitLocations: input.stockBreakdown.inTransitLocations.map((location) => ({
+        ...location,
+        qty: location.qty.toString(),
+      })),
+      heldLocations: input.stockBreakdown.heldLocations.map((location) => ({
         ...location,
         qty: location.qty.toString(),
       })),
@@ -1349,9 +1441,7 @@ function buildSalesVelocity(
   );
   const averageMonthlyQty = totalQty.div(new Decimal(activeDays).div(30)).toFixed(2);
   const averageDaysBetweenSales =
-    sorted.length > 1
-      ? new Decimal(activeDays - 1).div(sorted.length - 1).toFixed(1)
-      : null;
+    sorted.length > 1 ? new Decimal(activeDays - 1).div(sorted.length - 1).toFixed(1) : null;
 
   return {
     firstSoldAt: first.toISOString(),
@@ -1527,8 +1617,7 @@ function buildListingSellThrough(
 
   const totalDays = days.reduce((sum, value) => sum + value, 0);
   const middle = Math.floor(days.length / 2);
-  const median =
-    days.length % 2 === 0 ? (days[middle - 1] + days[middle]) / 2 : days[middle];
+  const median = days.length % 2 === 0 ? (days[middle - 1] + days[middle]) / 2 : days[middle];
 
   return {
     soldCount: lifecycle.length,
@@ -1576,9 +1665,7 @@ function buildSkuAverageMetrics(
     const qty = new Decimal(line.quantity.toString());
     if (qty.lte(0)) continue;
     const amount = new Decimal(line.lineAmount.toString());
-    const unitPrice = line.unitPrice
-      ? new Decimal(line.unitPrice.toString())
-      : amount.div(qty);
+    const unitPrice = line.unitPrice ? new Decimal(line.unitPrice.toString()) : amount.div(qty);
     salePrices.push(unitPrice);
     soldQty = soldQty.plus(qty);
     salesAmount = salesAmount.plus(amount);
@@ -1586,15 +1673,17 @@ function buildSkuAverageMetrics(
   }
 
   for (const line of purchaseLines) {
-    if (String(line.purchaseOrder.status ?? "").toUpperCase().includes("CANCEL")) {
+    if (
+      String(line.purchaseOrder.status ?? "")
+        .toUpperCase()
+        .includes("CANCEL")
+    ) {
       continue;
     }
     const qty = new Decimal(line.quantity.toString());
     if (qty.lte(0)) continue;
     const amount = new Decimal(line.lineAmount.toString());
-    const unitPrice = line.unitPrice
-      ? new Decimal(line.unitPrice.toString())
-      : amount.div(qty);
+    const unitPrice = line.unitPrice ? new Decimal(line.unitPrice.toString()) : amount.div(qty);
     purchasePrices.push(unitPrice);
     purchasedQty = purchasedQty.plus(qty);
     purchaseAmount = purchaseAmount.plus(amount);
@@ -1602,11 +1691,8 @@ function buildSkuAverageMetrics(
   }
 
   const averageSalePrice = soldQty.gt(0) ? salesAmount.div(soldQty) : null;
-  const averagePurchasePrice = purchasedQty.gt(0)
-    ? purchaseAmount.div(purchasedQty)
-    : null;
-  const sameCurrency =
-    !salesCurrency || !purchaseCurrency || salesCurrency === purchaseCurrency;
+  const averagePurchasePrice = purchasedQty.gt(0) ? purchaseAmount.div(purchasedQty) : null;
+  const sameCurrency = !salesCurrency || !purchaseCurrency || salesCurrency === purchaseCurrency;
   const averageGrossProfit =
     averageSalePrice && averagePurchasePrice && sameCurrency
       ? averageSalePrice.minus(averagePurchasePrice)
@@ -1633,10 +1719,8 @@ function buildSkuAverageMetrics(
     purchaseCount: purchaseLines.length,
     purchasedQty: purchasedQty.toString(),
     averagePurchasePrice: averagePurchasePrice?.toFixed(2) ?? null,
-    minPurchasePrice:
-      purchasePrices.length > 0 ? Decimal.min(...purchasePrices).toFixed(2) : null,
-    maxPurchasePrice:
-      purchasePrices.length > 0 ? Decimal.max(...purchasePrices).toFixed(2) : null,
+    minPurchasePrice: purchasePrices.length > 0 ? Decimal.min(...purchasePrices).toFixed(2) : null,
+    maxPurchasePrice: purchasePrices.length > 0 ? Decimal.max(...purchasePrices).toFixed(2) : null,
     purchaseCurrency,
     averageGrossProfit: averageGrossProfit?.toFixed(2) ?? null,
     grossMarginRate:
@@ -1703,7 +1787,11 @@ function buildSkuPriceHistory(
   }
 
   for (const line of purchaseLines) {
-    if (String(line.purchaseOrder.status ?? "").toUpperCase().includes("CANCEL")) {
+    if (
+      String(line.purchaseOrder.status ?? "")
+        .toUpperCase()
+        .includes("CANCEL")
+    ) {
       continue;
     }
     const qty = new Decimal(line.quantity.toString());
@@ -1720,9 +1808,7 @@ function buildSkuPriceHistory(
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((bucket) => ({
       date: bucket.date,
-      salePrice: bucket.saleQty.gt(0)
-        ? bucket.saleAmount.div(bucket.saleQty).toFixed(2)
-        : null,
+      salePrice: bucket.saleQty.gt(0) ? bucket.saleAmount.div(bucket.saleQty).toFixed(2) : null,
       purchasePrice: bucket.purchaseQty.gt(0)
         ? bucket.purchaseAmount.div(bucket.purchaseQty).toFixed(2)
         : null,

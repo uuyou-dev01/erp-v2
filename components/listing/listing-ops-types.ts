@@ -6,6 +6,7 @@ export interface ListingOpsPlatform {
   id: string;
   name: string;
   code: string;
+  country?: string | null;
 }
 
 export interface ListingOpsRisk {

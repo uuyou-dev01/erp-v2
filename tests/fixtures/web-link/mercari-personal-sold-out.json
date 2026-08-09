@@ -1,0 +1,48 @@
+{
+  "requestedUrl": "https://jp.mercari.com/item/m17569275815",
+  "finalUrl": "https://jp.mercari.com/item/m17569275815",
+  "extractionMethod": "BROWSER",
+  "heading": "ミッキー ポップマート POPMART ぬいぐるみ キーホルダー ディズニー",
+  "articleText": "ミッキー ポップマート POPMART ぬいぐるみ キーホルダー ディズニー\n売り切れ\nこの商品はゆうパケットプラス(送料 ¥455)で配送されました\n商品の説明\nPOPMART DISNEY ミッキーの可愛いぬいぐるみキーホルダー\n1日前\n商品の情報\n商品の状態\n新品、未使用",
+  "jsonLd": [
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Product",
+          "productID": "m17569275815",
+          "name": "ミッキー ポップマート POPMART ぬいぐるみ キーホルダー ディズニー",
+          "description": "POPMART DISNEY ミッキーの可愛いぬいぐるみキーホルダー",
+          "image": [
+            "https://static.mercdn.net/item/detail/orig/photos/m17569275815_1.jpg",
+            "https://static.mercdn.net/item/detail/orig/photos/m17569275815_2.jpg"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "availability": "https://schema.org/SoldOut",
+            "price": 3999,
+            "priceCurrency": "JPY"
+          }
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "text": "ゲーム・おもちゃ・グッズ",
+      "href": "https://jp.mercari.com/search?category_id=1328"
+    },
+    {
+      "text": "キャラクターグッズ",
+      "href": "https://jp.mercari.com/search?category_id=745"
+    },
+    {
+      "text": "ぬいぐるみ・マスコット",
+      "href": "https://jp.mercari.com/search?category_id=10869"
+    }
+  ],
+  "images": [
+    "https://static.mercdn.net/item/detail/orig/photos/m17569275815_1.jpg",
+    "https://static.mercdn.net/item/detail/orig/photos/m17569275815_2.jpg"
+  ]
+}

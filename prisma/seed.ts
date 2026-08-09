@@ -4,6 +4,22 @@ const prisma = new PrismaClient();
 const DEMO_STORE_ID = "store_1";
 
 async function resetDemoBusinessData(storeId: string) {
+  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { organizationId: true } });
+  if (store?.organizationId) {
+    await prisma.notificationOutbox.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.notificationPreference.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.pushSubscription.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.companionDevice.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.mobileActionRequest.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.mobileRateLimitBucket.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.notification.deleteMany({ where: { organizationId: store.organizationId, OR: [{ storeId }, { storeId: null }] } });
+    await prisma.activityLog.deleteMany({ where: { organizationId: store.organizationId, OR: [{ storeId }, { storeId: null }] } });
+  }
+  await prisma.task.deleteMany({ where: { storeId } });
+  await prisma.mobileAsset.deleteMany({ where: { storeId } });
+  await prisma.sourceListingSnapshot.deleteMany({ where: { sourceListing: { storeId } } });
+  await prisma.sourceListing.deleteMany({ where: { storeId } });
+  await prisma.productIntelligenceCapture.deleteMany({ where: { storeId } });
   const inventorySplits = await prisma.inventorySplit.findMany({
     where: { storeId },
     select: { id: true },
@@ -400,8 +416,9 @@ async function seedDemoCatalog(storeId: string, userId: string) {
       orderNo: "PO-DEMO-SPU-001",
       supplierName: "Demo Supplier",
       currency: "JPY",
-      subtotal: "90000",
-      totalAmount: "90000",
+      fxRate: "0.05000000",
+      subtotal: "88000",
+      totalAmount: "88000",
       status: "RECEIVED",
       orderedAt: new Date("2026-07-01T00:00:00.000Z"),
       receivedAt: new Date("2026-07-03T00:00:00.000Z"),
@@ -409,23 +426,49 @@ async function seedDemoCatalog(storeId: string, userId: string) {
     },
   });
 
-  await prisma.purchaseLine.createMany({
-    data: [
-      {
-        purchaseOrderId: purchaseOrder.id,
-        skuId: aj1Size41.id,
-        quantity: "1",
-        unitPrice: "28000",
-        lineAmount: "28000",
-      },
-      {
-        purchaseOrderId: purchaseOrder.id,
-        skuId: aj1Size42.id,
-        quantity: "2",
-        unitPrice: "30000",
-        lineAmount: "60000",
-      },
-    ],
+  const aj1Size41Line = await prisma.purchaseLine.create({
+    data: {
+      purchaseOrderId: purchaseOrder.id,
+      skuId: aj1Size41.id,
+      quantity: "1",
+      unitPrice: "28000",
+      lineAmount: "28000",
+    },
+  });
+  const aj1Size42Line = await prisma.purchaseLine.create({
+    data: {
+      purchaseOrderId: purchaseOrder.id,
+      skuId: aj1Size42.id,
+      quantity: "2",
+      unitPrice: "30000",
+      lineAmount: "60000",
+    },
+  });
+
+  const aj1Size41Lot = await prisma.inventoryLot.create({
+    data: {
+      storeId,
+      skuId: aj1Size41.id,
+      locationId: jpWarehouse.id,
+      unitCost: "28000",
+      costCurrency: "JPY",
+      sourceType: "PURCHASE",
+      sourceId: aj1Size41Line.id,
+      receivedAt: new Date("2026-07-03T00:00:00.000Z"),
+      batchLabel: "AJ1-41-DEMO",
+    } as never,
+  });
+  await prisma.stockLedger.create({
+    data: {
+      storeId,
+      entityType: "LOT",
+      entityId: aj1Size41Lot.id,
+      locationId: jpWarehouse.id,
+      deltaQty: "1",
+      reason: "INBOUND_PURCHASE",
+      refType: "PURCHASE_LINE",
+      refId: aj1Size41Line.id,
+    },
   });
 
   const aj1Lot = await prisma.inventoryLot.create({
@@ -436,7 +479,7 @@ async function seedDemoCatalog(storeId: string, userId: string) {
       unitCost: "30000",
       costCurrency: "JPY",
       sourceType: "PURCHASE",
-      sourceId: purchaseOrder.id,
+      sourceId: aj1Size42Line.id,
       receivedAt: new Date("2026-07-03T00:00:00.000Z"),
       batchLabel: "AJ1-42-DEMO",
     } as never,
@@ -449,8 +492,8 @@ async function seedDemoCatalog(storeId: string, userId: string) {
       locationId: jpWarehouse.id,
       deltaQty: "2",
       reason: "INBOUND_PURCHASE",
-      refType: "PURCHASE_ORDER",
-      refId: purchaseOrder.id,
+      refType: "PURCHASE_LINE",
+      refId: aj1Size42Line.id,
     },
   });
 
@@ -550,19 +593,45 @@ async function seedDemoCatalog(storeId: string, userId: string) {
       currency: "JPY",
       subtotal: "52000",
       totalPaid: "52000",
-      orderStatus: "CONFIRMED",
+      orderStatus: "DELIVERED",
       createdAt: new Date("2026-07-05T00:00:00.000Z"),
       confirmedAt: new Date("2026-07-05T00:00:00.000Z"),
+      shippedAt: new Date("2026-07-06T00:00:00.000Z"),
+      settledAt: new Date("2026-07-07T00:00:00.000Z"),
     },
   });
-  await prisma.orderLine.create({
+  const customerOrderLine = await prisma.orderLine.create({
     data: {
       orderId: customerOrder.id,
       skuId: aj1Size42.id,
       quantity: "1",
       unitPrice: "52000",
       lineAmount: "52000",
-      supplyStatus: "ALLOCATED_FROM_STOCK",
+      supplyStatus: "CONSUMED",
+    },
+  });
+  await prisma.orderAllocation.create({
+    data: {
+      orderLineId: customerOrderLine.id,
+      allocationType: "LOT",
+      lotId: aj1Lot.id,
+      quantity: "1",
+      unitCost: "30000",
+      costAmount: "30000",
+      status: "DELIVERED",
+    },
+  });
+  await prisma.stockLedger.create({
+    data: {
+      storeId,
+      occurredAt: new Date("2026-07-06T00:00:00.000Z"),
+      entityType: "LOT",
+      entityId: aj1Lot.id,
+      locationId: jpWarehouse.id,
+      deltaQty: "-1",
+      reason: "OUTBOUND_SALE",
+      refType: "ORDER_LINE",
+      refId: customerOrderLine.id,
     },
   });
 
@@ -746,34 +815,70 @@ async function main() {
   const locations = [
     {
       code: "WH-CN-01",
-      name: "中国主仓",
+      name: "上海家庭仓",
       type: "WAREHOUSE",
       region: "CN_SHANGHAI",
     },
     {
+      code: "FWD-CN-SH-01",
+      name: "上海转运仓库",
+      type: "FORWARDER",
+      region: "CN_SHANGHAI",
+    },
+    {
       code: "WH-JP-01",
-      name: "日本仓库",
+      name: "日本自己家仓库",
       type: "WAREHOUSE",
       region: "JP_TOKYO",
     },
     {
       code: "FWD-01",
-      name: "集运仓",
+      name: "日本转运地址",
       type: "FORWARDER",
       region: "JP_OSAKA",
+    },
+    {
+      code: "PR-JESSE",
+      name: "日本杰西家仓库",
+      type: "PERSON",
+      region: null,
+    },
+    {
+      code: "PR-2013",
+      name: "日本林晨家仓库",
+      type: "PERSON",
+      region: null,
+    },
+    {
+      code: "PR-KEVIN",
+      name: "日本Kevin家仓库",
+      type: "PERSON",
+      region: null,
+    },
+    {
+      code: "PR-3837",
+      name: "日本沈哥家仓库",
+      type: "PERSON",
+      region: null,
     },
   ];
 
   for (const loc of locations) {
     await prisma.location.upsert({
       where: { storeId_code: { storeId: store.id, code: loc.code } },
-      update: { name: loc.name, type: loc.type, region: loc.region },
+      update: {
+        name: loc.name,
+        type: loc.type,
+        region: loc.region,
+        isSellableDefault: loc.type !== "FORWARDER",
+      },
       create: {
         storeId: store.id,
         code: loc.code,
         name: loc.name,
         type: loc.type,
         region: loc.region,
+        isSellableDefault: loc.type !== "FORWARDER",
       },
     });
   }
@@ -785,14 +890,24 @@ async function main() {
     { fromCurrency: "USD", toCurrency: "CNY", rate: 7.25 },
     { fromCurrency: "USD", toCurrency: "JPY", rate: 148.5 },
   ];
+  const fxEffectiveDate = new Date();
+  fxEffectiveDate.setUTCHours(0, 0, 0, 0);
 
   for (const fx of fxRates) {
-    await prisma.fxRate.create({
-      data: {
+    await prisma.fxRate.upsert({
+      where: {
+        fromCurrency_toCurrency_effectiveDate: {
+          fromCurrency: fx.fromCurrency,
+          toCurrency: fx.toCurrency,
+          effectiveDate: fxEffectiveDate,
+        },
+      },
+      update: { rate: fx.rate },
+      create: {
         fromCurrency: fx.fromCurrency,
         toCurrency: fx.toCurrency,
         rate: fx.rate,
-        effectiveDate: new Date(),
+        effectiveDate: fxEffectiveDate,
       },
     });
   }

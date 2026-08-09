@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlatformForm } from "@/components/listing/platform-form";
 import { ArrowLeft } from "lucide-react";
@@ -6,10 +7,9 @@ import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
-// Temporary hardcoded storeId
-const STORE_ID = "store_1";
 
-export default function NewPlatformPage() {
+export default async function NewPlatformPage() {
+  const { activeStoreId: storeId } = await requireUserContext();
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -31,7 +31,7 @@ export default function NewPlatformPage() {
           <CardTitle>平台信息</CardTitle>
         </CardHeader>
         <CardContent>
-          <PlatformForm storeId={STORE_ID} />
+          <PlatformForm storeId={storeId} />
         </CardContent>
       </Card>
     </div>

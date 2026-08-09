@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getInventoryLotById, getAvailableQuantity } from "@/app/actions/inventory-lots";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +14,9 @@ import { notFound } from "next/navigation";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { Package, MapPin, DollarSign, Activity } from "lucide-react";
 import { LotSplitForm } from "@/components/inventory/lot-split-form";
+import { BackButton } from "@/components/shared/back-button";
 
 export const dynamic = "force-dynamic";
-
-const STORE_ID = "store_1";
 
 function getAdjustMeta(ledgerMeta: unknown) {
   if (!ledgerMeta || typeof ledgerMeta !== "object") return null;
@@ -39,6 +39,7 @@ export default async function InventoryLotDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const { id } = await params;
   const lot = await getInventoryLotById(id);
 
@@ -50,9 +51,12 @@ export default async function InventoryLotDetailPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">入库库存详情</h1>
-        <p className="text-muted-foreground">查看库存来源、成本和交易历史</p>
+      <div className="flex items-start gap-3">
+        <BackButton label="" fallbackHref="/inventory/lots" className="mt-0.5 shrink-0" />
+        <div>
+          <h1 className="text-3xl font-bold">入库库存详情</h1>
+          <p className="text-muted-foreground">查看库存来源、成本和交易历史</p>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -99,7 +103,11 @@ export default async function InventoryLotDetailPage({
           <CardContent>
             <div className="text-2xl font-bold">
               <Badge variant={lot.status === "ACTIVE" ? "default" : "secondary"}>
-                {lot.status === "ACTIVE" ? "活跃" : "已消耗"}
+                {lot.status === "ACTIVE"
+                  ? "活跃"
+                  : lot.status === "CONSOLIDATING"
+                    ? "转运锁定"
+                    : "已消耗"}
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">当前状态</p>
@@ -129,7 +137,13 @@ export default async function InventoryLotDetailPage({
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <p className="text-sm font-medium text-muted-foreground">来源类型</p>
-              <Badge variant="outline">{lot.sourceType === "PURCHASE" ? "采购" : "拆分"}</Badge>
+              <Badge variant="outline">
+                {lot.sourceType === "PURCHASE"
+                  ? "采购"
+                  : lot.sourceType === "OPENING_STOCK"
+                    ? "期初库存"
+                    : "拆分"}
+              </Badge>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">来源ID</p>
@@ -163,9 +177,7 @@ export default async function InventoryLotDetailPage({
                     <TableCell>{formatQuantity(allocation.quantity)}</TableCell>
                     <TableCell>{formatCurrency(allocation.costAmount, lot.costCurrency)}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">
-                        {allocation.orderLine.order.orderStatus}
-                      </Badge>
+                      <Badge variant="secondary">{allocation.orderLine.order.orderStatus}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -196,9 +208,7 @@ export default async function InventoryLotDetailPage({
                 const adjustMeta = ledger.reason === "ADJUST" ? getAdjustMeta(ledger.meta) : null;
                 return (
                   <TableRow key={ledger.id}>
-                    <TableCell>
-                      {new Date(ledger.occurredAt).toLocaleString("zh-CN")}
-                    </TableCell>
+                    <TableCell>{new Date(ledger.occurredAt).toLocaleString("zh-CN")}</TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -227,9 +237,12 @@ export default async function InventoryLotDetailPage({
                       {adjustMeta ? (
                         <div className="text-xs">
                           {adjustMeta.fromSkuStocktake ? (
-                            <p className="text-muted-foreground">来源: SKU 盘点</p>
+                            <p className="text-muted-foreground">来源: SKU 库存调整</p>
                           ) : null}
-                          <p>盘点单价: {formatCurrency(adjustMeta.countedUnitCost ?? "0", lot.costCurrency)}</p>
+                          <p>
+                            调整单价:{" "}
+                            {formatCurrency(adjustMeta.countedUnitCost ?? "0", lot.costCurrency)}
+                          </p>
                           {adjustMeta.notes ? (
                             <p className="text-muted-foreground">备注: {adjustMeta.notes}</p>
                           ) : null}
@@ -254,11 +267,7 @@ export default async function InventoryLotDetailPage({
       </Card>
 
       {lot.status === "ACTIVE" && parseFloat(availableQty) > 0 && (
-        <LotSplitForm
-          lotId={id}
-          storeId={STORE_ID}
-          availableQty={availableQty}
-        />
+        <LotSplitForm lotId={id} storeId={storeId} availableQty={availableQty} />
       )}
     </div>
   );

@@ -1,49 +1,51 @@
-"use client";
+import { DashboardShell } from "@/components/layout/dashboard-shell";
+import { requireUserContext } from "@/lib/auth/user-context";
+import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
 
-import { Suspense, useEffect, useState } from "react";
-import { Sidebar } from "@/components/layout/sidebar";
-import { Header } from "@/components/layout/header";
-import { CommandPalette } from "@/components/command/command-palette";
-
-function SidebarFallback() {
-  return <div className="hidden w-56 shrink-0 border-r bg-sidebar md:block" />;
-}
-
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [commandOpen, setCommandOpen] = useState(false);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandOpen(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const context = await requireUserContext().catch(() => redirect("/login"));
+  const [stores, account, organizations] = await Promise.all([
+    prisma.store.findMany({
+      where: { id: { in: context.storeIds } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.user.findUniqueOrThrow({
+      where: { id: context.userId },
+      select: {
+        name: true,
+        email: true,
+        memberships: {
+          where: { organizationId: context.organizationId },
+          select: { organization: { select: { name: true } } },
+          take: 1,
+        },
+      },
+    }),
+    prisma.organization.findMany({
+      where: {
+        memberships: { some: { userId: context.userId, status: "ACTIVE" } },
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   return (
-    <div className="flex h-screen bg-muted/30">
-      <Suspense fallback={<SidebarFallback />}>
-        <Sidebar
-          mobileOpen={mobileMenuOpen}
-          onMobileClose={() => setMobileMenuOpen(false)}
-        />
-      </Suspense>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Header
-          onMenuClick={() => setMobileMenuOpen(true)}
-          onCommandOpen={() => setCommandOpen(true)}
-        />
-        <main className="flex-1 overflow-y-auto bg-background p-4 md:p-6">{children}</main>
-      </div>
-      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
-    </div>
+    <DashboardShell
+      stores={stores}
+      activeStoreId={context.activeStoreId}
+      organizations={organizations}
+      activeOrganizationId={context.organizationId}
+      account={{
+        name: account.name ?? "",
+        email: account.email,
+        organizationName: account.memberships[0]?.organization.name ?? "当前企业",
+      }}
+      role={context.role}
+    >
+      {children}
+    </DashboardShell>
   );
 }

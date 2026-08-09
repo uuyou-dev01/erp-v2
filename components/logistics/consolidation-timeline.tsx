@@ -25,7 +25,9 @@ export function ConsolidationTimeline({ status }: { status: string }) {
             )}
             <div>
               <p className="text-xs font-medium">{LABELS[step]}</p>
-              <p className="text-[10px] text-muted-foreground">{step}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {done ? "已完成" : current ? "当前阶段" : "尚未开始"}
+              </p>
             </div>
           </div>
         );

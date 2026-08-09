@@ -138,6 +138,10 @@ export function WorkItemRow({
 
   const canCancelPurchase = item.entityType === "purchaseOrder" && item.queue === "missingLogistics";
   const tracking = trackingLabel(item);
+  const physicalStateLabel =
+    typeof item.metadata?.physicalStateLabel === "string"
+      ? item.metadata.physicalStateLabel
+      : null;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -179,7 +183,7 @@ export function WorkItemRow({
           </Badge>
           {item.lifecycleStage && (
             <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
-              {LIFECYCLE_LABELS[item.lifecycleStage]}
+              {physicalStateLabel ?? LIFECYCLE_LABELS[item.lifecycleStage]}
             </Badge>
           )}
           {item.taskId && (

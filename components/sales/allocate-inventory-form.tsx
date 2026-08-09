@@ -11,6 +11,7 @@ import { getInventoryLots, getAvailableQuantity } from "@/app/actions/inventory-
 import { isValidDecimal } from "@/lib/decimal";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { AlertCircle, Package } from "lucide-react";
+import { locationMatchesMarket, type SellableMarketCode } from "@/lib/application/sellable-market";
 
 interface AllocateInventoryFormProps {
   orderLineId: string;
@@ -18,6 +19,7 @@ interface AllocateInventoryFormProps {
   skuCode: string;
   requiredQty: string;
   storeId: string;
+  shippingCountry?: string | null;
 }
 
 export function AllocateInventoryForm({
@@ -26,13 +28,24 @@ export function AllocateInventoryForm({
   skuCode,
   requiredQty,
   storeId,
+  shippingCountry,
 }: AllocateInventoryFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [lots, setLots] = useState<
     Array<{
       id: string;
-      location: { code: string; name: string };
+      location: {
+        code: string;
+        name: string;
+        region: string | null;
+        capabilities: Array<{ code: string; enabled: boolean }>;
+        shippingLanesFrom: Array<{
+          laneType: string;
+          destinationCountry: string | null;
+          active: boolean;
+        }>;
+      };
       unitCost: { toString: () => string };
       costCurrency: string;
       status: string;
@@ -48,7 +61,13 @@ export function AllocateInventoryForm({
 
   useEffect(() => {
     getInventoryLots(storeId).then((allLots) => {
-      const skuLots = allLots.filter((lot) => lot.skuId === skuId && lot.status === "ACTIVE");
+      const skuLots = allLots.filter(
+        (lot) =>
+          lot.skuId === skuId &&
+          lot.status === "ACTIVE" &&
+          (!shippingCountry ||
+            locationMatchesMarket(lot.location, shippingCountry as SellableMarketCode))
+      );
       setLots(skuLots);
 
       skuLots.forEach((lot) => {
@@ -57,7 +76,7 @@ export function AllocateInventoryForm({
         });
       });
     });
-  }, [storeId, skuId]);
+  }, [storeId, skuId, shippingCountry]);
 
   const updateFormData = (updates: Partial<typeof formData>) => {
     setErrors((prev) => {
@@ -123,9 +142,12 @@ export function AllocateInventoryForm({
         <Package className="h-5 w-5 text-primary" />
         <div className="flex-1 space-y-1 text-sm">
           <p className="font-medium">分配库存给 SKU: {skuCode}</p>
-          <p className="text-muted-foreground">
-            需求数量: {formatQuantity(requiredQty)}
-          </p>
+          <p className="text-muted-foreground">需求数量: {formatQuantity(requiredQty)}</p>
+          {shippingCountry ? (
+            <p className="text-muted-foreground">
+              仅显示具有到 {shippingCountry} 有效配送线路的库存节点
+            </p>
+          ) : null}
         </div>
       </div>
       {errors.form && (
@@ -138,9 +160,7 @@ export function AllocateInventoryForm({
       {lots.length === 0 ? (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm">
           <p className="font-medium text-destructive">无可用库存</p>
-          <p className="text-muted-foreground">
-            该SKU没有可用的入库库存。请先进行收货。
-          </p>
+          <p className="text-muted-foreground">该SKU没有可用的入库库存。请先进行收货。</p>
         </div>
       ) : (
         <>
@@ -166,12 +186,11 @@ export function AllocateInventoryForm({
             </Select>
             {errors.lotId && (
               <p className="flex items-center gap-1 text-xs text-destructive">
-                <AlertCircle className="h-3 w-3" />{errors.lotId}
+                <AlertCircle className="h-3 w-3" />
+                {errors.lotId}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
-              入库库存按到货日期排序（先进先出）
-            </p>
+            <p className="text-xs text-muted-foreground">入库库存按到货日期排序（先进先出）</p>
           </div>
 
           {formData.lotId && availableQty[formData.lotId] && (
@@ -195,7 +214,8 @@ export function AllocateInventoryForm({
             />
             {errors.quantity && (
               <p className="flex items-center gap-1 text-xs text-destructive">
-                <AlertCircle className="h-3 w-3" />{errors.quantity}
+                <AlertCircle className="h-3 w-3" />
+                {errors.quantity}
               </p>
             )}
           </div>

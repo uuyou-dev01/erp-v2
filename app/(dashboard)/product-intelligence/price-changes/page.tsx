@@ -1,0 +1,12 @@
+import Link from "next/link";
+import { ArrowDownRight, ArrowUpRight, ExternalLink } from "lucide-react";
+import { requireUserContext } from "@/lib/auth/user-context";
+import { prisma } from "@/lib/prisma";
+
+export const dynamic = "force-dynamic";
+
+export default async function PriceChangesPage() {
+  const context = await requireUserContext();
+  const changes = await prisma.sourcePriceChange.findMany({ where: { sourceListing: { organizationId: context.organizationId, storeId: context.activeStoreId } }, include: { sourceListing: true }, orderBy: { observedAt: "desc" }, take: 200 });
+  return <div className="space-y-6"><header><Link href="/product-intelligence/captures" className="text-sm text-muted-foreground">← 返回采集箱</Link><h1 className="mt-3 text-2xl font-semibold tracking-tight">来源价格变化</h1><p className="mt-1 text-sm text-muted-foreground">同一平台商品再次采集后，自动对比前一次有效价格。</p></header><div className="overflow-hidden rounded-xl border bg-card">{changes.length ? <div className="divide-y">{changes.map((change) => { const up = Number(change.deltaAmount) > 0; return <div key={change.id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto_auto]"><div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate font-medium">{change.sourceListing.title || "未命名来源商品"}</span><span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{change.sourceListing.platformName}</span></div><p className="mt-1 text-xs text-muted-foreground">{change.observedAt.toLocaleString("zh-CN")}</p></div><div className="text-sm md:text-right"><p>{change.currency} {change.previousAmount.toString()} → {change.amount.toString()}</p><p className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${up ? "text-rose-600" : "text-emerald-600"}`}>{up ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}{change.deltaAmount.toString()} · {change.deltaRate ? `${(Number(change.deltaRate) * 100).toFixed(1)}%` : "—"}</p></div><div className="flex items-center gap-3 text-xs"><Link href={`/product-intelligence/captures/${change.captureId}`} className="text-blue-600">查看采集</Link>{change.sourceListing.sourceUrl ? <a href={change.sourceListing.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源"><ExternalLink className="h-4 w-4 text-muted-foreground" /></a> : null}</div></div>; })}</div> : <div className="p-16 text-center text-sm text-muted-foreground">同一来源出现第二次不同价格后，会显示在这里。</div>}</div></div>;
+}

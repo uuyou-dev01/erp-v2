@@ -1,18 +1,33 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ListingForm } from "@/components/listing/listing-form";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import type { SellableMarketCode } from "@/lib/application/sellable-market";
 
 export const dynamic = "force-dynamic";
 
 // Temporary hardcoded storeId
-const STORE_ID = "store_1";
 
 function safeReturnPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
   if (!value.startsWith("/") || value.startsWith("//")) return fallback;
   return value;
+}
+
+function parseMarket(value?: string): SellableMarketCode | undefined {
+  if (
+    value === "CN" ||
+    value === "JP" ||
+    value === "US" ||
+    value === "EU" ||
+    value === "GLOBAL" ||
+    value === "UNKNOWN"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 export default async function NewListingPage({
@@ -24,10 +39,13 @@ export default async function NewListingPage({
     platformId?: string;
     listingType?: "SKU" | "ITEM_UNIT";
     returnTo?: string;
+    market?: string;
   }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const params = await searchParams;
   const returnHref = safeReturnPath(params.returnTo, "/inventory/sellable");
+  const targetMarket = parseMarket(params.market);
 
   return (
     <div className="space-y-6">
@@ -51,12 +69,13 @@ export default async function NewListingPage({
         </CardHeader>
         <CardContent>
           <ListingForm
-            storeId={STORE_ID}
+            storeId={storeId}
             initialSkuId={params.skuId}
             initialItemUnitId={params.itemUnitId}
             initialPlatformId={params.platformId}
             initialListingType={params.listingType}
             returnHref={returnHref}
+            targetMarket={targetMarket}
           />
         </CardContent>
       </Card>

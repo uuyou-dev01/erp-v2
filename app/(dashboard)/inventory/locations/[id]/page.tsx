@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getLocationById, getLocationStats } from "@/app/actions/locations";
 import { LocationForm } from "@/components/inventory/location-form";
 import { LocationStatsChart } from "@/components/inventory/location-stats-chart";
@@ -8,21 +9,16 @@ import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
 import Link from "next/link";
+import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
+import { capabilityLabel, fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
-
-export default async function LocationDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function LocationDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const context = await requireUserContext();
+  const { activeStoreId: storeId } = context;
   const { id } = await params;
-  const [location, stats] = await Promise.all([
-    getLocationById(id),
-    getLocationStats(id),
-  ]);
+  const [location, stats] = await Promise.all([getLocationById(id), getLocationStats(id)]);
 
   if (!location) {
     notFound();
@@ -44,12 +40,31 @@ export default async function LocationDetailPage({
           </Badge>
           <Badge variant="secondary">{formatLocationRegion(location.region)}</Badge>
           <Badge variant={location.isSellableDefault ? "default" : "outline"}>
-            {location.isSellableDefault ? "计入可售库存" : "仅作在途/暂存"}
+            {location.isSellableDefault ? "库存可分配" : "仅作在途/暂存"}
           </Badge>
         </div>
         <p className="text-muted-foreground">
-          仓库地区决定货盘市场；可售开关决定库存看板中计入可售还是在途。
+          地区表示库存实际位置；订单能否从这里发出，由节点能力和客户配送线路共同决定。
         </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {location.capabilities
+            .filter((capability) => capability.enabled)
+            .map((capability) => (
+              <Badge key={capability.code} variant="outline">
+                {capabilityLabel(capability.code)}
+              </Badge>
+            ))}
+          {location.shippingLanesFrom
+            .filter(
+              (lane) =>
+                lane.active && lane.laneType === "CUSTOMER_DELIVERY" && lane.destinationCountry
+            )
+            .map((lane) => (
+              <Badge key={lane.id} variant="secondary">
+                可发往{fulfillmentDestinationLabel(lane.destinationCountry!)}
+              </Badge>
+            ))}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -100,17 +115,22 @@ export default async function LocationDetailPage({
 
       <LocationStatsChart data={stats.skuBreakdown} />
 
-      <LocationForm
-        storeId={STORE_ID}
-        initialData={{
-          id: location.id,
-          code: location.code,
-          name: location.name,
-          type: location.type as "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT",
-          region: location.region,
-          isSellableDefault: location.isSellableDefault,
-        }}
-      />
+      {location.operatorOrganizationId === context.organizationId &&
+      hasRoleAtLeast(context.role, ROLES.ADMIN) ? (
+        <LocationForm
+          storeId={storeId}
+          initialData={{
+            id: location.id,
+            code: location.code,
+            name: location.name,
+            type: location.type as "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT",
+            region: location.region,
+            isSellableDefault: location.isSellableDefault,
+            capabilities: location.capabilities,
+            shippingLanesFrom: location.shippingLanesFrom,
+          }}
+        />
+      ) : null}
     </div>
   );
 }

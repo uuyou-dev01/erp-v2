@@ -7,6 +7,8 @@ import {
   sortCoreSellingPlatforms,
 } from "@/lib/core-platforms";
 import { getStoreStockBreakdown, type StockLocationBreakdown } from "@/lib/application/inventory";
+import { locationMatchesPlatformMarket } from "@/lib/application/sellable-market";
+import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -16,6 +18,7 @@ export interface ListingPendingPlatform {
   id: string;
   name: string;
   code: string;
+  country?: string | null;
 }
 
 export interface ListingPendingItem {
@@ -119,13 +122,25 @@ function formatReferencePrice(reference: ReferencePrice | undefined) {
   return reference?.price.toFixed(2) ?? null;
 }
 
-function eligiblePlatforms<T extends { code: string }>(
+function eligiblePlatforms<T extends { code: string; country: string | null }>(
   platforms: T[],
-  hasSellableStock: boolean,
+  sellableLocations: Array<{
+    region?: string | null;
+    code?: string | null;
+    name?: string | null;
+    fulfillableMarkets?: string[];
+    capabilities?: Array<{ code: string; enabled?: boolean }>;
+    shippingLanesFrom?: Array<{
+      laneType: string;
+      destinationCountry: string | null;
+      active: boolean;
+    }>;
+  }>
 ) {
   return sortCoreSellingPlatforms(platforms).filter(
     (platform) =>
-      hasSellableStock || !requiresSellableStockForListing(platform.code),
+      !requiresSellableStockForListing(platform.code) ||
+      sellableLocations.some((location) => locationMatchesPlatformMarket(location, platform))
   );
 }
 
@@ -133,7 +148,7 @@ export async function getListingPendingItems(storeId: string) {
   const [platforms, skus, itemUnits, stockBreakdown] = await Promise.all([
     prisma.platform.findMany({
       where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
-      select: { id: true, name: true, code: true },
+      select: { id: true, name: true, code: true, country: true },
     }),
     prisma.sKU.findMany({
       where: { storeId },
@@ -147,7 +162,7 @@ export async function getListingPendingItems(storeId: string) {
           where: { status: "ACTIVE", itemUnitId: null },
           include: {
             platform: {
-              select: { id: true, name: true, code: true },
+              select: { id: true, name: true, code: true, country: true },
             },
           },
         },
@@ -155,7 +170,13 @@ export async function getListingPendingItems(storeId: string) {
       orderBy: { createdAt: "desc" },
     }),
     prisma.itemUnit.findMany({
-      where: { storeId, status: "AVAILABLE" },
+      where: {
+        storeId,
+        status: "AVAILABLE",
+        allocations: {
+          none: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+        },
+      },
       select: {
         id: true,
         skuId: true,
@@ -164,8 +185,15 @@ export async function getListingPendingItems(storeId: string) {
         photos: true,
         location: {
           select: {
+            code: true,
             name: true,
+            region: true,
             isSellableDefault: true,
+            capabilities: { where: { enabled: true }, select: { code: true, enabled: true } },
+            shippingLanesFrom: {
+              where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+              select: { laneType: true, destinationCountry: true, active: true },
+            },
           },
         },
         sku: {
@@ -180,7 +208,7 @@ export async function getListingPendingItems(storeId: string) {
           where: { status: "ACTIVE" },
           include: {
             platform: {
-              select: { id: true, name: true, code: true },
+              select: { id: true, name: true, code: true, country: true },
             },
           },
         },
@@ -205,9 +233,11 @@ export async function getListingPendingItems(storeId: string) {
         .filter((listing) => isCoreSellingPlatform(listing.platform.code))
         .map((listing) => listing.platform);
       const breakdown = stockBreakdown.get(sku.id);
-      const sellableQty = breakdown?.sellableQty ?? 0;
-      const inTransitQty = breakdown?.inTransitQty ?? 0;
-      const availablePlatforms = eligiblePlatforms(platforms, sellableQty > 0).filter(
+      const sellableQty = breakdown?.sellableLotQty ?? 0;
+      const inTransitQty = breakdown?.inTransitLotQty ?? 0;
+      const sellableLocations = breakdown?.sellableLotLocations ?? [];
+      const inTransitLocations = breakdown?.inTransitLotLocations ?? [];
+      const availablePlatforms = eligiblePlatforms(platforms, sellableLocations).filter(
         (platform) => !activePlatformIds.has(platform.id)
       );
       const reference = referencePrices.get(sku.id);
@@ -220,10 +250,11 @@ export async function getListingPendingItems(storeId: string) {
         skuName: sku.name,
         imageUrl: sku.imageUrl,
         waitingSince: sku.updatedAt.toISOString(),
+        locationName: sellableLocations[0]?.name ?? inTransitLocations[0]?.name ?? null,
         sellableQty,
         inTransitQty,
-        sellableLocations: breakdown?.sellableLocations ?? [],
-        inTransitLocations: breakdown?.inTransitLocations ?? [],
+        sellableLocations,
+        inTransitLocations,
         activePlatforms,
         availablePlatforms,
         suggestedPrice: formatReferencePrice(reference),
@@ -247,9 +278,10 @@ export async function getListingPendingItems(storeId: string) {
         .map((listing) => listing.platform);
       const reference = referencePrices.get(item.skuId);
       const isSellable = item.location.isSellableDefault;
-      const availablePlatforms = eligiblePlatforms(platforms, isSellable).filter(
-        (platform) => !activePlatformIds.has(platform.id)
-      );
+      const availablePlatforms = eligiblePlatforms(
+        platforms,
+        isSellable ? [item.location] : []
+      ).filter((platform) => !activePlatformIds.has(platform.id));
 
       return {
         id: `item-${item.id}`,
@@ -263,7 +295,7 @@ export async function getListingPendingItems(storeId: string) {
         conditionGrade: item.conditionGrade,
         locationName: item.location.name,
         sellableQty: isSellable ? 1 : 0,
-        inTransitQty: isSellable ? 0 : 1,
+        inTransitQty: 0,
         sellableLocations: [],
         inTransitLocations: [],
         activePlatforms,
@@ -272,7 +304,7 @@ export async function getListingPendingItems(storeId: string) {
         suggestedCurrency: reference?.currency ?? null,
       };
     })
-    .filter((item) => item.availablePlatforms.length > 0);
+    .filter((item) => item.sellableQty > 0 && item.availablePlatforms.length > 0);
 
   return [...unitItems, ...skuItems];
 }

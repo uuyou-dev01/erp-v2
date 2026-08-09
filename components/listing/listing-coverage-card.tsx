@@ -2,12 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProductImage } from "@/components/ui/product-image";
+import {
+  SkuQuickEditDialog,
+  type SkuQuickEditTarget,
+} from "@/components/inventory/sku-quick-edit-dialog";
 import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { ListingRecordCompactRow } from "@/components/listing/listing-record-compact-row";
 import { QuickAddListingDialog } from "@/components/listing/quick-add-listing-dialog";
@@ -28,17 +31,30 @@ import {
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
 import {
+  buildProductInventoryEntryHref,
   buildProductStocktakeHref,
 } from "@/lib/application/inventory-dashboard";
 import { productKindLabel } from "@/lib/application/sku-catalog";
 import { formatCurrency } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, ClipboardCheck, MapPin, Plus, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardCheck,
+  FileText,
+  MapPin,
+  MoreHorizontal,
+  PackagePlus,
+  Pencil,
+  Plus,
+  X,
+} from "lucide-react";
 
 interface ListingCoverageCardProps {
   product: ListingCoverageProduct;
+  storeId: string;
   focusLocationId?: string;
   focusMarket?: SellableMarketCode;
+  categoryOptions?: string[];
 }
 
 function riskClassName(risk: ListingCoverageRisk) {
@@ -118,46 +134,6 @@ function platformStateFromRecords(
   });
 }
 
-function CompactChannelRow({
-  label,
-  metrics,
-}: {
-  label: string;
-  metrics: Array<{
-    label: string;
-    value: number;
-    tone?: "default" | "muted" | "amber" | "green" | "blue";
-  }>;
-}) {
-  return (
-    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
-      <div className="mb-1.5 text-[11px] font-medium text-foreground">{label}</div>
-      <div className="flex flex-wrap gap-1">
-        {metrics.map((metric) => (
-          <span
-            key={`${label}-${metric.label}`}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] leading-4",
-              metric.tone === "green"
-                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700"
-                : metric.tone === "blue"
-                  ? "border-blue-500/25 bg-blue-500/10 text-blue-700"
-                  : metric.tone === "amber"
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-800"
-                    : metric.tone === "muted"
-                      ? "border-border bg-background/70 text-muted-foreground"
-                      : "border-border bg-background text-foreground"
-            )}
-          >
-            <span>{metric.label}</span>
-            <span className="font-semibold tabular-nums">{metric.value}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function StockMetricBadge({
   label,
   value,
@@ -183,43 +159,39 @@ function StockMetricBadge({
   );
 }
 
-function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-2 rounded-lg border bg-background/70 p-3">
-      <h3 className="text-xs font-semibold text-foreground">{title}</h3>
-      {children}
-    </section>
-  );
+function platformCoverageStatusLabel(platform: ListingCoveragePlatform) {
+  if (platform.state === "missing") return "未上架";
+  if (platform.state === "sold_out") return "已上架（已售罄）";
+  if (platform.state === "delisted") return "已下架";
+  return "已上架";
 }
 
-function SkuCodeLine({ code }: { code: string }) {
-  return (
-    <span className="truncate font-mono text-[10px] text-muted-foreground">
-      {code || "未设置货号"}
-    </span>
-  );
+function platformCoverageTitle(platform: ListingCoveragePlatform) {
+  return `${platform.name} ${platformCoverageStatusLabel(platform)}`;
 }
 
-function PlatformCoverageDots({ platforms }: { platforms: ListingCoveragePlatform[] }) {
+function PlatformCoverageDots({
+  platforms,
+  maxVisible = 3,
+}: {
+  platforms: ListingCoveragePlatform[];
+  maxVisible?: number;
+}) {
   if (platforms.length === 0) return null;
 
+  const visiblePlatforms = platforms.slice(0, maxVisible);
+  const hiddenPlatforms = platforms.slice(maxVisible);
+  const hiddenTitle = hiddenPlatforms.map(platformCoverageTitle).join("；");
+
   return (
-    <div className="flex flex-wrap items-center justify-end gap-0.5">
-      {platforms.map((platform) => {
+    <div className="flex min-w-0 flex-nowrap items-center justify-end gap-0.5">
+      {visiblePlatforms.map((platform) => {
         const isListed = platform.state === "active" || platform.state === "sold_out";
-        const title =
-          platform.state === "missing"
-            ? `${platform.name} 未上架`
-            : platform.state === "sold_out"
-              ? `${platform.name} 已上架（已售罄）`
-              : platform.state === "delisted"
-                ? `${platform.name} 已下架`
-                : `${platform.name} 已上架`;
 
         return (
           <span
             key={platform.id}
-            title={title}
+            title={platformCoverageTitle(platform)}
             className={cn(platform.state === "delisted" && "opacity-30")}
           >
             <ListingPlatformMark
@@ -231,6 +203,44 @@ function PlatformCoverageDots({ platforms }: { platforms: ListingCoveragePlatfor
           </span>
         );
       })}
+      {hiddenPlatforms.length > 0 ? (
+        <details className="group relative shrink-0">
+          <summary
+            title={hiddenTitle}
+            aria-label={`查看其余 ${hiddenPlatforms.length} 个平台`}
+            className="inline-flex h-4 min-w-4 cursor-pointer list-none items-center justify-center rounded-full border bg-muted px-1 text-[9px] font-semibold tabular-nums text-muted-foreground hover:border-primary/30 hover:text-foreground [&::-webkit-details-marker]:hidden"
+          >
+            +{hiddenPlatforms.length}
+          </summary>
+          <div className="absolute right-0 top-5 z-40 max-h-64 w-56 overflow-y-auto rounded-lg border bg-popover p-1.5 text-popover-foreground shadow-lg">
+            {hiddenPlatforms.map((platform) => {
+              const isListed = platform.state === "active" || platform.state === "sold_out";
+              return (
+                <div
+                  key={`${platform.id}-overflow`}
+                  className="flex items-center gap-2 rounded-md px-2 py-1.5"
+                >
+                  <ListingPlatformMark
+                    code={platform.code}
+                    name={platform.name}
+                    muted={!isListed}
+                    className="h-5 w-5 shrink-0 rounded border-0 bg-transparent p-0 text-[9px] shadow-none"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[11px]">{platform.name}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 text-[10px]",
+                      isListed ? "text-emerald-700" : "text-muted-foreground"
+                    )}
+                  >
+                    {platformCoverageStatusLabel(platform)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -261,8 +271,10 @@ function LocationDistribution({
 
 export function ListingCoverageCard({
   product,
+  storeId,
   focusLocationId,
   focusMarket,
+  categoryOptions = [],
 }: ListingCoverageCardProps) {
   const [mounted, setMounted] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -273,6 +285,9 @@ export function ListingCoverageCard({
   const [addListingScope, setAddListingScope] = useState<"SKU" | "ITEM_UNIT" | undefined>();
   const [addItemUnitId, setAddItemUnitId] = useState<string | undefined>();
   const [selectedVariantSkuId, setSelectedVariantSkuId] = useState<string | null>(null);
+  const [quickEditTarget, setQuickEditTarget] = useState<SkuQuickEditTarget | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
 
   const kind = product.hasItemUnits && !product.hasLotStock ? "USED" : product.productKind;
   const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
@@ -352,6 +367,7 @@ export function ListingCoverageCard({
         skuName: selectedVariant.skuName,
         imageUrl: selectedVariant.imageUrl ?? product.imageUrl,
         brand: selectedVariant.brand ?? product.brand,
+        categoryId: selectedVariant.categoryId ?? product.categoryId,
         category: selectedVariant.category ?? product.category,
         productKind: selectedVariant.productKind ?? product.productKind,
         referencePrice: selectedVariant.referencePrice ?? product.referencePrice,
@@ -379,6 +395,13 @@ export function ListingCoverageCard({
   const detailItemUnitListingRecords = detailRecords.filter(
     (record) => record.listingScope === "ITEM_UNIT"
   );
+  const detailRisks = [
+    ...new Map(
+      detailRecords
+        .flatMap((record) => record.risks)
+        .map((risk) => [`${risk.key}:${risk.label}`, risk] as const)
+    ).values(),
+  ];
   const detailItemUnits = selectedVariant ? selectedVariant.scopedItemUnits : product.itemUnits;
   const detailSellableUnits = detailItemUnits.filter((unit) => unit.sellable);
   const detailInTransitUnits = detailItemUnits.filter((unit) => unit.inTransit);
@@ -429,6 +452,7 @@ export function ListingCoverageCard({
         skuName: selectedVariant.skuName,
         imageUrl: selectedVariant.imageUrl ?? product.imageUrl,
         brand: selectedVariant.brand ?? product.brand,
+        categoryId: selectedVariant.categoryId ?? product.categoryId,
         category: selectedVariant.category ?? product.category,
         productKind: selectedVariant.productKind ?? product.productKind,
         referencePrice: selectedVariant.referencePrice ?? product.referencePrice,
@@ -453,18 +477,45 @@ export function ListingCoverageCard({
     0,
     detailProduct.inTransitQty - detailInTransitUnits.length
   );
-  const cardCatalogHref = withReturnTo(`/inventory/skus/${cardProduct.skuId}`, currentHref);
   const detailCatalogHref = withReturnTo(`/inventory/skus/${detailProduct.skuId}`, currentHref);
   const palletLabel = focusMarket ? marketLabel(focusMarket) : product.marketLabel;
   const displayedVariantViews =
-    visibleVariantViews.length > 0 ? visibleVariantViews.slice(0, 3) : variantViews.slice(0, 3);
+    visibleVariantViews.length > 0 ? visibleVariantViews.slice(0, 2) : variantViews.slice(0, 2);
+  const hasVariantChildren = product.variantRows.some((variant) => variant.skuId !== product.skuId);
   const skuCount = visibleVariantViews.length || product.variantRows.length || 1;
   const readySkuCount = visibleVariantViews.filter(
     (variant) => variant.scopedSellableQty > 0
   ).length;
   const transitSkuCount = variantViews.filter((variant) => variant.scopedInTransitQty > 0).length;
-  const headerMeta = [cardProduct.brand, cardProduct.category].filter(Boolean).join(" · ");
+  const headerMeta = [product.brand, product.category].filter(Boolean).join(" · ");
   const primaryActionLabel = cardProduct.records.length === 0 ? "首上架" : "补平台";
+  const coverageVariantViews = visibleVariantViews.length > 0 ? visibleVariantViews : variantViews;
+  const variantPlatformCoverage = new Map(
+    variantViews.map((variant) => {
+      const platforms = platformStateFromRecords(variant.scopedPlatforms, variant.scopedRecords);
+      const activeCount = activePlatformCount(variant.scopedRecords, variant.scopedPlatforms);
+      return [
+        variant.skuId,
+        {
+          platforms,
+          activeCount,
+          fullyCovered: platforms.length > 0 && activeCount === platforms.length,
+        },
+      ] as const;
+    })
+  );
+  const fullyCoveredSkuCount = coverageVariantViews.filter(
+    (variant) => variantPlatformCoverage.get(variant.skuId)?.fullyCovered
+  ).length;
+  const listedSkuCount = coverageVariantViews.filter(
+    (variant) => (variantPlatformCoverage.get(variant.skuId)?.activeCount ?? 0) > 0
+  ).length;
+  const stockFormLabel =
+    product.hasLotStock && product.hasItemUnits
+      ? "混合库存"
+      : product.hasItemUnits
+        ? "单件库存"
+        : "批量库存";
 
   useEffect(() => {
     if (!detailsOpen || product.variantRows.length <= 1) return;
@@ -487,6 +538,24 @@ export function ListingCoverageCard({
     };
   }, [detailsOpen]);
 
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!actionsMenuRef.current?.contains(event.target as Node)) {
+        setActionsOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActionsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [actionsOpen]);
+
   const openAdd = (
     platformId?: string,
     options?: { listingScope?: "SKU" | "ITEM_UNIT"; itemUnitId?: string }
@@ -497,139 +566,294 @@ export function ListingCoverageCard({
     setAddOpen(true);
   };
 
+  const openProductQuickEdit = () => {
+    setQuickEditTarget({
+      id: product.skuId,
+      code: product.skuCode,
+      name: product.skuName,
+      brand: product.brand,
+      categoryId: product.categoryId,
+      category: product.category,
+    });
+  };
+
   return (
     <>
-      <article className="overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:border-primary/30 hover:shadow-md">
-        <div className="border-b px-3 py-2.5">
-          <button
-            type="button"
-            onClick={() => setDetailsOpen(true)}
-            className="w-full min-w-0 rounded-md text-left"
-          >
-            <div className="flex min-w-0 items-center gap-2.5">
-              <ProductImage
-                src={product.imageUrl}
-                alt={product.skuName}
-                size="lg"
-                className="h-11 w-11 shrink-0 rounded-md"
-              />
-              <div className="grid min-w-0 flex-1 gap-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold leading-tight">{product.skuName}</p>
-                  <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-                    {headerMeta || "未设置品牌/类目"}
-                  </p>
-                </div>
-                <p className="truncate text-[10px] text-muted-foreground sm:text-right">
-                  {palletLabel} · SKU {readySkuCount}/{skuCount}
-                  {transitSkuCount > 0 ? ` · ${transitSkuCount} 在途` : ""}
-                </p>
+      <article className="grid gap-3 rounded-lg border bg-card p-3 shadow-sm transition-all hover:-translate-y-px hover:border-primary/30 hover:shadow-md xl:grid-cols-[minmax(210px,1.35fr)_82px_108px_minmax(170px,1.15fr)_minmax(125px,.8fr)_104px_96px_154px] xl:items-center">
+        <div className="min-w-0">
+          <span className="mb-1 block text-[10px] font-medium text-muted-foreground xl:hidden">
+            商品信息
+          </span>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <ProductImage
+              src={product.imageUrl}
+              alt={product.skuName}
+              size="lg"
+              className="h-11 w-11 shrink-0 rounded-md"
+            />
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={() => setDetailsOpen(true)}
+                className="block w-full truncate rounded-sm text-left text-sm font-semibold leading-tight hover:text-primary"
+              >
+                {product.skuName}
+              </button>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                <span
+                  className={cn(
+                    "min-w-0 truncate text-[10px]",
+                    headerMeta ? "text-muted-foreground" : "text-amber-700"
+                  )}
+                >
+                  {headerMeta || "品牌 / 品类待补充"}
+                </span>
+                <button
+                  type="button"
+                  onClick={openProductQuickEdit}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium hover:bg-muted",
+                    product.category
+                      ? "text-muted-foreground hover:text-foreground"
+                      : "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15"
+                  )}
+                  title={product.category ? "编辑商品组信息" : "补充商品品类"}
+                >
+                  <Pencil className="h-2.5 w-2.5" />
+                  {product.category ? "编辑" : "补品类"}
+                </button>
               </div>
+              <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+                {product.skuCode || "未设置货号"}
+              </p>
             </div>
-          </button>
+          </div>
         </div>
 
-        <div className="flex flex-col space-y-2 px-2.5 py-2">
-          <div className="flex items-center justify-between gap-2 px-0.5 text-[10px] font-medium text-muted-foreground">
-            <span>SKU 明细</span>
-            <span>库存 / 仓位 / 平台</span>
+        <div className="min-w-0">
+          <span className="mb-1 block text-[10px] font-medium text-muted-foreground xl:hidden">
+            新旧 / 形态
+          </span>
+          <Badge variant="secondary" className="h-6 rounded-md px-2 text-[11px]">
+            {productKindLabel(kind)}
+          </Badge>
+          <p className="mt-1 truncate text-[10px] text-muted-foreground">{stockFormLabel}</p>
+        </div>
+
+        <div className="min-w-0">
+          <span className="mb-1 block text-[10px] font-medium text-muted-foreground xl:hidden">
+            库存
+          </span>
+          <div className="flex items-baseline gap-1">
+            <span className="text-lg font-semibold tabular-nums leading-none">
+              {product.sellableQty}
+            </span>
+            <span className="text-[10px] text-muted-foreground">现货</span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+            <span className="tabular-nums">在途 {product.inTransitQty}</span>
+            <span className="tabular-nums">单件 {product.sellableItemUnitCount}</span>
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-medium text-muted-foreground xl:hidden">
+              SKU 规格
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              可售 {readySkuCount}/{skuCount}
+              {transitSkuCount > 0 ? ` · ${transitSkuCount} 在途` : ""}
+            </span>
           </div>
           <div className="space-y-1">
             {displayedVariantViews.map((variant) => {
-              const skuRecords = variant.scopedSkuRecords;
-              const variantPlatforms = platformStateFromRecords(
-                variant.scopedPlatforms,
-                skuRecords
-              );
-              const lowStock = variant.scopedSellableQty > 0 && variant.scopedSellableQty <= 2;
               const isSelected = selectedVariant?.skuId === variant.skuId;
 
               return (
-                <button
-                  key={variant.skuId}
-                  type="button"
-                  onClick={() => setSelectedVariantSkuId(variant.skuId)}
-                  className={cn(
-                    "w-full rounded-md border px-2 py-1.5 text-left transition-colors",
-                    isSelected
-                      ? "border-primary/40 bg-primary/5"
-                      : "bg-background/70 hover:bg-muted/40"
-                  )}
-                >
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-[12px] font-semibold leading-4">
-                        {shortVariantName(product.skuName, variant.skuName)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
-                    <div className="flex flex-wrap gap-1">
-                      <StockMetricBadge
-                        label="现货"
-                        value={variant.scopedSellableQty}
-                        tone={
-                          lowStock ? "amber" : variant.scopedSellableQty > 0 ? "green" : "muted"
-                        }
-                      />
-                      <StockMetricBadge
-                        label="在途"
-                        value={variant.scopedInTransitQty}
-                        tone={variant.scopedInTransitQty > 0 ? "blue" : "muted"}
-                      />
-                      <StockMetricBadge
-                        label="单件"
-                        value={variant.scopedSellableItemUnitCount}
-                        tone={variant.scopedSellableItemUnitCount > 0 ? "amber" : "muted"}
-                      />
-                    </div>
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <LocationDistribution locations={variant.scopedSellableLocations} />
-                      <PlatformCoverageDots platforms={variantPlatforms} />
-                    </div>
-                  </div>
-                </button>
+                <div key={variant.skuId} className="flex min-w-0 items-center">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVariantSkuId(variant.skuId)}
+                    className={cn(
+                      "flex h-7 min-w-0 flex-1 items-center justify-between gap-2 rounded-md border px-2 text-left transition-colors",
+                      isSelected
+                        ? "border-primary/40 bg-primary/5"
+                        : "bg-background/70 hover:bg-muted/40"
+                    )}
+                  >
+                    <span className="min-w-0 truncate text-[11px] font-medium">
+                      {shortVariantName(product.skuName, variant.skuName)}
+                    </span>
+                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      现 {variant.scopedSellableQty}
+                      {variant.scopedInTransitQty > 0 ? ` · 途 ${variant.scopedInTransitQty}` : ""}
+                    </span>
+                  </button>
+                </div>
               );
             })}
             {visibleVariantViews.length > displayedVariantViews.length ? (
               <button
                 type="button"
                 onClick={() => setDetailsOpen(true)}
-                className="w-full rounded-md border border-dashed px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
+                className="h-7 w-full rounded-md border border-dashed px-2 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
               >
-                还有 {visibleVariantViews.length - displayedVariantViews.length} 个
-                SKU，打开库存明细查看
+                +{visibleVariantViews.length - displayedVariantViews.length} 个 SKU
               </button>
             ) : null}
           </div>
+        </div>
 
-          <div className="mt-auto flex flex-wrap gap-1 pt-0.5">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              onClick={() => openAdd()}
-            >
-              <Plus className="mr-1 h-3 w-3" />
-              {primaryActionLabel}
-            </Button>
+        <div className="min-w-0">
+          <span className="mb-1 block text-[10px] font-medium text-muted-foreground xl:hidden">
+            仓位
+          </span>
+          <LocationDistribution locations={product.sellableLocations} />
+          <p className="mt-1 truncate text-[10px] text-muted-foreground">{palletLabel}</p>
+        </div>
+
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center justify-between gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground xl:hidden">
+              SKU 平台
+            </span>
+            <span className="truncate text-[10px] tabular-nums text-muted-foreground">
+              完整 {fullyCoveredSkuCount}/{coverageVariantViews.length}
+            </span>
+          </div>
+          <div className="space-y-1">
+            {displayedVariantViews.map((variant) => (
+              <div
+                key={`${variant.skuId}-platforms`}
+                className="flex h-7 items-center justify-end rounded-md border border-transparent px-1"
+                title={`${shortVariantName(product.skuName, variant.skuName)}的平台覆盖`}
+              >
+                <PlatformCoverageDots
+                  platforms={variantPlatformCoverage.get(variant.skuId)?.platforms ?? []}
+                  maxVisible={3}
+                />
+              </div>
+            ))}
+            {visibleVariantViews.length > displayedVariantViews.length ? (
+              <div className="flex h-7 items-center justify-end px-1 text-[10px] text-muted-foreground">
+                其余 {visibleVariantViews.length - displayedVariantViews.length} 个见明细
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <span className="mb-1 block text-[10px] font-medium text-muted-foreground xl:hidden">
+            状态
+          </span>
+          {product.aggregateRisks.length > 0 ? (
+            <div className="space-y-1">
+              <Badge
+                variant="outline"
+                className={cn(
+                  "h-5 max-w-full px-1.5 text-[10px]",
+                  riskClassName(product.aggregateRisks[0])
+                )}
+              >
+                <AlertTriangle className="mr-1 h-3 w-3 shrink-0" />
+                <span className="truncate">{product.aggregateRisks[0].label}</span>
+              </Badge>
+              {product.aggregateRisks.length > 1 ? (
+                <p className="text-[10px] text-muted-foreground">
+                  +{product.aggregateRisks.length - 1} 项风险
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              正常
+            </span>
+          )}
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            {listedSkuCount > 0
+              ? `已上架 ${listedSkuCount}/${coverageVariantViews.length} SKU`
+              : "未上架"}
+          </p>
+        </div>
+
+        <div className="min-w-0">
+          <span className="mb-1 block text-[10px] font-medium text-muted-foreground xl:hidden">
+            操作
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 w-full px-2 text-[11px]"
+            onClick={() => openAdd()}
+          >
+            <Plus className="mr-1 h-3 w-3" />
+            {primaryActionLabel}
+          </Button>
+          <div ref={actionsMenuRef} className="relative mt-1 flex justify-end">
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-[11px] text-muted-foreground"
-              onClick={() => setDetailsOpen(true)}
+              className="h-7 w-7 px-0 text-muted-foreground"
+              aria-label="更多操作"
+              title="更多操作"
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              onClick={() => setActionsOpen((open) => !open)}
             >
-              库存明细
+              <MoreHorizontal className="h-4 w-4" />
             </Button>
-            <Link href={cardCatalogHref}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px] text-muted-foreground"
+            {actionsOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-8 z-50 w-36 rounded-lg border bg-popover p-1.5 text-popover-foreground shadow-lg"
               >
-                商品档案
-              </Button>
-            </Link>
+                <Link
+                  role="menuitem"
+                  href={buildProductInventoryEntryHref(cardProduct, currentHref)}
+                  onClick={() => setActionsOpen(false)}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-2 text-xs hover:bg-accent"
+                >
+                  <PackagePlus className="h-4 w-4 text-muted-foreground" />
+                  录入库存
+                </Link>
+                <Link
+                  role="menuitem"
+                  href={buildProductStocktakeHref(cardProduct, focusLocationId)}
+                  onClick={() => setActionsOpen(false)}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-2 text-xs hover:bg-accent"
+                >
+                  <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+                  调整库存
+                </Link>
+                <div className="my-1 h-px bg-border" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    setDetailsOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent"
+                >
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  查看明细
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActionsOpen(false);
+                    openProductQuickEdit();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-accent"
+                >
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                  {hasVariantChildren ? "编辑商品组" : "编辑商品"}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </article>
@@ -638,105 +862,100 @@ export function ListingCoverageCard({
         ? createPortal(
             <div className="fixed inset-0 z-[900] flex items-end justify-center p-3 sm:items-center sm:p-4">
               <div className="absolute inset-0 bg-black/45" onClick={() => setDetailsOpen(false)} />
-              <div className="relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl">
-                <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{detailProduct.skuName}</p>
-                      <p className="truncate font-mono text-[11px] text-muted-foreground">
-                        {detailProduct.skuCode}
-                      </p>
+              <div className="relative z-10 flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl">
+                <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="truncate text-base font-semibold tracking-tight">
+                        {detailProduct.skuName}
+                      </h2>
+                      <Badge variant="secondary" className="h-5 text-[10px]">
+                        {productKindLabel(kind)}
+                      </Badge>
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => setDetailsOpen(false)}
-                    aria-label="关闭"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="overflow-y-auto px-4 py-3">
-                  <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                    <span>{productKindLabel(kind)}</span>
-                    {product.brand ? (
-                      <>
-                        <span>·</span>
-                        <span>{product.brand}</span>
-                      </>
-                    ) : null}
-                    {product.category ? (
-                      <>
-                        <span>·</span>
-                        <span>{product.category}</span>
-                      </>
-                    ) : null}
-                    {product.referencePrice ? (
-                      <>
-                        <span>·</span>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                      {detailProduct.skuCode && detailProduct.skuCode !== detailProduct.skuName ? (
+                        <span className="font-mono">SKU {detailProduct.skuCode}</span>
+                      ) : null}
+                      {detailProduct.brand ? <span>{detailProduct.brand}</span> : null}
+                      <span className={detailProduct.category ? undefined : "text-amber-700"}>
+                        {detailProduct.category || "品类待补充"}
+                      </span>
+                      {detailProduct.referencePrice ? (
                         <span>
                           参考{" "}
                           {formatCurrency(
-                            product.referencePrice,
-                            product.referenceCurrency ?? "CNY"
+                            detailProduct.referencePrice,
+                            detailProduct.referenceCurrency ?? "CNY"
                           )}
                         </span>
-                      </>
-                    ) : null}
-                    <Link
-                      href={detailCatalogHref}
-                      className="text-foreground underline-offset-2 hover:underline"
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={openProductQuickEdit}
                     >
-                      商品档案
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      {hasVariantChildren ? "编辑商品组" : "编辑信息"}
+                    </Button>
+                    <Link href={detailCatalogHref}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs text-muted-foreground"
+                      >
+                        完整档案
+                      </Button>
                     </Link>
+                    <span className="mx-1 h-4 w-px bg-border" />
+                    <button
+                      type="button"
+                      className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => setDetailsOpen(false)}
+                      aria-label="关闭"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
+                </div>
 
-                  <div className="mb-3 grid gap-2 rounded-lg border bg-muted/20 p-3 sm:grid-cols-[1fr_auto] sm:items-center">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-foreground">
-                        按最终可售仓库判断：{palletLabel}
+                <div className="overflow-y-auto px-5 py-4">
+                  <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-muted/35 px-3 py-2.5">
+                    <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-foreground">
+                        {palletLabel} · {primaryLocationLabel(detailProduct, focusLocationId)}
                       </p>
-                      <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                        {primaryLocationLabel(detailProduct, focusLocationId)}
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        库存按最终可售仓库口径判断
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-                      <StockMetricBadge
-                        label="现货"
-                        value={detailProduct.sellableQty}
-                        tone={detailProduct.sellableQty > 0 ? "green" : "muted"}
-                      />
-                      <StockMetricBadge
-                        label="在途"
-                        value={detailProduct.inTransitQty}
-                        tone={detailProduct.inTransitQty > 0 ? "blue" : "muted"}
-                      />
-                    </div>
+                    {detailRisks.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {detailRisks.map((risk) => (
+                          <Badge
+                            key={`${risk.key}-${risk.label}`}
+                            variant="outline"
+                            className={riskClassName(risk)}
+                          >
+                            <AlertTriangle className="mr-1 h-3 w-3" />
+                            {risk.label}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-
-                  {product.aggregateRisks.length > 0 ? (
-                    <div className="mb-3 flex flex-wrap gap-1">
-                      {product.aggregateRisks.map((risk) => (
-                        <Badge
-                          key={`${risk.key}-${risk.label}`}
-                          variant="outline"
-                          className={riskClassName(risk)}
-                        >
-                          <AlertTriangle className="mr-1 h-3 w-3" />
-                          {risk.label}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : null}
 
                   {variantViews.length > 1 ? (
-                    <div className="mb-3 rounded-lg border bg-background/70 p-2">
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-xs font-semibold text-foreground">规格 SKU / 变体</h3>
+                    <section className="mb-4 border-b pb-4">
+                      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-xs font-semibold text-foreground">选择规格</h3>
                         <span className="text-[10px] text-muted-foreground">
-                          选择规格后，下方明细同步切换
+                          库存与上架明细将同步切换
                         </span>
                       </div>
                       <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -750,8 +969,6 @@ export function ListingCoverageCard({
                             0,
                             variant.scopedPlatforms.length - activeCount
                           );
-                          const lowStock =
-                            variant.scopedSellableQty > 0 && variant.scopedSellableQty <= 2;
                           const isSelected = selectedVariant?.skuId === variant.skuId;
 
                           return (
@@ -760,19 +977,16 @@ export function ListingCoverageCard({
                               type="button"
                               onClick={() => setSelectedVariantSkuId(variant.skuId)}
                               className={cn(
-                                "min-w-0 rounded-md border px-2 py-1.5 text-left text-xs transition-colors",
+                                "min-w-0 rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
                                 isSelected
-                                  ? "border-primary/40 bg-primary/5"
+                                  ? "border-primary/50 bg-primary/5 shadow-sm"
                                   : "bg-background/80 hover:bg-muted/50"
                               )}
                             >
                               <div className="flex min-w-0 items-start justify-between gap-1.5">
-                                <div className="min-w-0">
-                                  <p className="truncate font-medium leading-4">
-                                    {shortVariantName(product.skuName, variant.skuName)}
-                                  </p>
-                                  <SkuCodeLine code={variant.skuCode} />
-                                </div>
+                                <p className="min-w-0 truncate font-medium leading-5">
+                                  {shortVariantName(product.skuName, variant.skuName)}
+                                </p>
                                 {activeCount === 0 ? (
                                   <Badge
                                     variant="outline"
@@ -791,78 +1005,40 @@ export function ListingCoverageCard({
                                   </Badge>
                                 )}
                               </div>
-                              <div className="mt-1 flex flex-wrap gap-1">
-                                <StockMetricBadge
-                                  label="现货"
-                                  value={variant.scopedSellableQty}
-                                  tone={
-                                    lowStock
-                                      ? "amber"
-                                      : variant.scopedSellableQty > 0
-                                        ? "green"
-                                        : "muted"
-                                  }
-                                />
-                                <StockMetricBadge
-                                  label="在途"
-                                  value={variant.scopedInTransitQty}
-                                  tone={variant.scopedInTransitQty > 0 ? "blue" : "muted"}
-                                />
-                              </div>
                             </button>
                           );
                         })}
                       </div>
-                    </div>
+                    </section>
                   ) : null}
 
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <DetailSection title="新品批次">
-                      <div className="grid gap-2 sm:grid-cols-4">
-                        <CompactChannelRow
-                          label="现货"
-                          metrics={[
-                            {
-                              label: "数量",
-                              value: detailProduct.sellableLotQty,
-                              tone: detailProduct.sellableLotQty > 0 ? "green" : "muted",
-                            },
-                          ]}
-                        />
-                        <CompactChannelRow
-                          label="在途"
-                          metrics={[
-                            {
-                              label: "数量",
-                              value: detailLotInTransitQty,
-                              tone: detailLotInTransitQty > 0 ? "blue" : "muted",
-                            },
-                          ]}
-                        />
-                        <CompactChannelRow
-                          label="已上架"
-                          metrics={[
-                            {
-                              label: "Listing",
-                              value: detailNewStockSummary.activeListingCount,
-                              tone:
-                                detailNewStockSummary.activeListingCount > 0 ? "green" : "muted",
-                            },
-                          ]}
-                        />
-                        <CompactChannelRow
-                          label="待平台"
-                          metrics={[
-                            {
-                              label: "平台",
-                              value: detailNewStockSummary.pendingListingCount,
-                              tone:
-                                detailNewStockSummary.pendingListingCount > 0 ? "amber" : "muted",
-                            },
-                          ]}
-                        />
+                  <div className="grid items-start gap-3 lg:grid-cols-2">
+                    <section className="rounded-lg border bg-background px-4 py-3.5">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold">新品库存</h3>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                            批量库存与 SKU 级平台上架
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          按当前规格统计
+                        </span>
                       </div>
-
+                      <div className="mb-3 flex items-end gap-8 border-b pb-3">
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">现货</p>
+                          <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                            {detailProduct.sellableLotQty}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">在途</p>
+                          <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                            {detailLotInTransitQty}
+                          </p>
+                        </div>
+                      </div>
                       {detailProduct.sellableLotQty > 0 || detailLotInTransitQty > 0 ? (
                         <SellableStockBreakdown
                           product={detailProduct}
@@ -870,20 +1046,38 @@ export function ListingCoverageCard({
                           totalQty={detailProduct.sellableLotQty}
                         />
                       ) : (
-                        <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                          暂无新品批次库存
-                        </p>
+                        <p className="text-xs text-muted-foreground">当前规格暂无批量库存</p>
                       )}
 
-                      <div className="space-y-1.5">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          SKU Listing
-                        </p>
-                        {detailSkuListingRecords.length === 0 ? (
-                          <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                            暂无记录
-                          </p>
-                        ) : (
+                      <div className="mt-3 border-t pt-3">
+                        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-semibold">新品上架平台</h4>
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              {detailProduct.platforms.length} 个目标平台，仅统计新品库存
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {detailNewStockSummary.activeListingCount > 0 ? (
+                              <Badge variant="secondary" className="h-5 text-[10px]">
+                                已上架 {detailNewStockSummary.activeListingCount}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="h-5 text-[10px]">
+                                未上架
+                              </Badge>
+                            )}
+                            {detailNewStockSummary.pendingListingCount > 0 ? (
+                              <StockMetricBadge
+                                label="待平台"
+                                value={detailNewStockSummary.pendingListingCount}
+                                tone="amber"
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {detailSkuListingRecords.length > 0 ? (
                           <ul className="space-y-1.5">
                             {detailSkuListingRecords.map((record) => (
                               <li key={record.listingId}>
@@ -891,17 +1085,48 @@ export function ListingCoverageCard({
                               </li>
                             ))}
                           </ul>
+                        ) : (
+                          <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                            当前规格的新品库存尚未建立上架记录
+                          </p>
                         )}
-                      </div>
-                    </DetailSection>
 
-                    <DetailSection title="单件库存">
+                        {detailProduct.sellableLotQty > 0 &&
+                        detailNewStockSummary.pendingListingCount > 0 ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2.5 h-8 text-xs"
+                            onClick={() => openAdd(undefined, { listingScope: "SKU" })}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" />
+                            {detailNewStockSummary.activeListingCount > 0
+                              ? "补充新品平台"
+                              : "添加新品上架"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </section>
+
+                    <section className="rounded-lg border bg-background px-4 py-3.5">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold">单件库存</h3>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">
+                            每一件独立显示库存与平台上架
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          可售 {detailSellableUnits.length}
+                        </span>
+                      </div>
                       {detailProduct.hasItemUnits && detailProduct.itemUnits.length > 0 ? (
                         <SellableItemUnitsList
                           units={detailProduct.itemUnits}
                           anchorId={`units-${detailProduct.skuId}`}
                           product={detailProduct}
                           records={detailProduct.records}
+                          returnTo={currentHref}
                           onAddListing={(unitId) =>
                             openAdd(undefined, {
                               listingScope: "ITEM_UNIT",
@@ -910,63 +1135,27 @@ export function ListingCoverageCard({
                           }
                         />
                       ) : (
-                        <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                          暂无单件库存
+                        <p className="border-t pt-3 text-xs text-muted-foreground">
+                          当前规格暂无单件库存
                         </p>
                       )}
-                    </DetailSection>
+                    </section>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 border-t bg-muted/15 px-4 py-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() => openAdd()}
-                  >
-                    <Plus className="mr-1 h-3.5 w-3.5" />
-                    添加上架
-                  </Button>
-                  <Link href={detailCatalogHref}>
-                    <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
-                      商品档案
+                <div className="flex flex-wrap items-center gap-2 border-t bg-muted/15 px-5 py-3">
+                  <Link href={buildProductInventoryEntryHref(detailProduct, currentHref)}>
+                    <Button variant="outline" size="sm" className="h-8 text-xs">
+                      <PackagePlus className="mr-1 h-3.5 w-3.5" />
+                      录入库存
                     </Button>
                   </Link>
                   <Link href={buildProductStocktakeHref(detailProduct, focusLocationId)}>
-                    <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                    <Button variant="outline" size="sm" className="h-8 text-xs">
                       <ClipboardCheck className="mr-1 h-3.5 w-3.5" />
-                      盘点
+                      调整库存
                     </Button>
                   </Link>
-                  {detailSellableUnits.length === 1 ? (
-                    <Link
-                      href={withReturnTo(
-                        `/inventory/items/${detailSellableUnits[0].id}`,
-                        currentHref
-                      )}
-                    >
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-xs text-muted-foreground"
-                      >
-                        单件
-                      </Button>
-                    </Link>
-                  ) : detailSellableUnits.length > 1 ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 text-xs text-muted-foreground"
-                      onClick={() => {
-                        const el = document.getElementById(`units-${detailProduct.skuId}`);
-                        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                      }}
-                    >
-                      单件列表
-                    </Button>
-                  ) : null}
                 </div>
               </div>
             </div>,
@@ -974,7 +1163,22 @@ export function ListingCoverageCard({
           )
         : null}
 
+      {quickEditTarget ? (
+        <SkuQuickEditDialog
+          open
+          sku={quickEditTarget}
+          targetLabel={
+            quickEditTarget.id === product.skuId && hasVariantChildren ? "商品组" : "SKU"
+          }
+          categoryOptions={categoryOptions}
+          hasVariants={quickEditTarget.id === product.skuId && hasVariantChildren}
+          fullDetailHref={withReturnTo(`/inventory/skus/${quickEditTarget.id}`, currentHref)}
+          onClose={() => setQuickEditTarget(null)}
+        />
+      ) : null}
+
       <QuickAddListingDialog
+        storeId={storeId}
         open={addOpen}
         onClose={() => setAddOpen(false)}
         product={cardProduct}

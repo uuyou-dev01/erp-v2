@@ -3,6 +3,7 @@
 import Decimal from "decimal.js";
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import { calculateAgreement, parseAgreementRule } from "@/lib/application/trading-agreement";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
 
@@ -12,6 +13,10 @@ export type SerializedResaleListing = {
   id: string;
   storeId: string;
   supplyOfferId: string;
+  supplyOfferItemId: string | null;
+  supplyOfferChannelId: string | null;
+  salesChannelAccountId: string | null;
+  sellerOrganizationId: string | null;
   platformId: string;
   listingId: string | null;
   title: string;
@@ -23,6 +28,14 @@ export type SerializedResaleListing = {
   supplyUnitPrice: string | null;
   supplyCurrency: string | null;
   commissionRate: string | null;
+  commissionType: string;
+  commissionFixedAmount: string | null;
+  dropshipFee: string | null;
+  dropshipFeeCurrency: string | null;
+  agreementTermsSnapshot: string | null;
+  agreementRuleSnapshot: unknown;
+  agreementVersion: number | null;
+  agreementAcceptedAt: Date | null;
   platformFeeRate: string | null;
   estimatedPlatformFee: string | null;
   estimatedCommission: string | null;
@@ -50,8 +63,25 @@ export type SerializedResaleListing = {
     currency: string | null;
     unitPrice: string | null;
     commissionRate: string | null;
+    commissionType: string;
+    commissionFixedAmount: string | null;
+    dropshipFee: string | null;
+    dropshipFeeCurrency: string | null;
+    agreementTerms: string | null;
+    agreementRule: unknown;
+    agreementVersion: number;
+    agreementStatus: string;
     fulfillmentMode: string;
     ownerPartner: { id: string; name: string } | null;
+    items: Array<{
+      id: string;
+      title: string;
+      variantCode: string | null;
+      quantityAvailable: string;
+      quantityReserved: string;
+      unitPrice: string | null;
+      currency: string | null;
+    }>;
   };
 };
 
@@ -62,6 +92,8 @@ type RawResaleListing = Omit<
   | "quantitySold"
   | "supplyUnitPrice"
   | "commissionRate"
+  | "commissionFixedAmount"
+  | "dropshipFee"
   | "platformFeeRate"
   | "estimatedPlatformFee"
   | "estimatedCommission"
@@ -73,17 +105,30 @@ type RawResaleListing = Omit<
   quantitySold: StringableDecimal;
   supplyUnitPrice: StringableDecimal | null;
   commissionRate: StringableDecimal | null;
+  commissionFixedAmount: StringableDecimal | null;
+  dropshipFee: StringableDecimal | null;
   platformFeeRate: StringableDecimal | null;
   estimatedPlatformFee: StringableDecimal | null;
   estimatedCommission: StringableDecimal | null;
   estimatedGrossProfit: StringableDecimal | null;
   supplyOffer: Omit<
     SerializedResaleListing["supplyOffer"],
-    "availableQty" | "unitPrice" | "commissionRate"
+    "availableQty" | "unitPrice" | "commissionRate" | "commissionFixedAmount" | "dropshipFee" | "items"
   > & {
     availableQty: StringableDecimal;
     unitPrice: StringableDecimal | null;
     commissionRate: StringableDecimal | null;
+    commissionFixedAmount: StringableDecimal | null;
+    dropshipFee: StringableDecimal | null;
+    items: Array<{
+      id: string;
+      title: string;
+      variantCode: string | null;
+      quantityAvailable: StringableDecimal;
+      quantityReserved: StringableDecimal;
+      unitPrice: StringableDecimal | null;
+      currency: string | null;
+    }>;
   };
 };
 
@@ -105,26 +150,59 @@ function parseRate(value: string | undefined, label: string) {
   return decimal;
 }
 
-function calculateEstimates(input: {
+async function calculateEstimates(input: {
   targetPrice: Decimal;
+  saleCurrency: string;
   quantityPlanned: Decimal;
   supplyUnitPrice: Decimal | null;
+  supplyCurrency: string | null;
   platformFeeRate: Decimal | null;
-  commissionRate: Decimal | null;
+  dropshipFee: Decimal | null;
+  dropshipFeeCurrency: string | null;
+  agreementRule: Parameters<typeof calculateAgreement>[0]["rule"];
 }) {
-  const salesAmount = input.targetPrice.mul(input.quantityPlanned);
-  const supplyCost = input.supplyUnitPrice ? input.supplyUnitPrice.mul(input.quantityPlanned) : new Decimal(0);
-  const estimatedPlatformFee = input.platformFeeRate ? salesAmount.mul(input.platformFeeRate) : null;
-  const commissionBasis = salesAmount.minus(supplyCost);
-  const estimatedCommission = input.commissionRate ? commissionBasis.mul(input.commissionRate) : null;
-  const estimatedGrossProfit = salesAmount
-    .minus(supplyCost)
-    .minus(estimatedPlatformFee ?? 0)
-    .minus(estimatedCommission ?? 0);
+  const calculated = await calculateAgreement({
+    rule: input.agreementRule,
+    quantity: input.quantityPlanned,
+    saleUnitPrice: input.targetPrice,
+    saleCurrency: input.saleCurrency,
+    supplyUnitPrice: input.supplyUnitPrice,
+    supplyCurrency: input.supplyCurrency,
+    platformFeeRate: input.platformFeeRate,
+    fulfillmentFeePerUnit: input.dropshipFee,
+    fulfillmentFeeCurrency: input.dropshipFeeCurrency,
+  });
+
+  if (!calculated.automatic) {
+    return { estimatedPlatformFee: null, estimatedCommission: null, estimatedGrossProfit: null };
+  }
+
+  if (
+    input.agreementRule.kind === "PROFIT_PERCENT" &&
+    (input.agreementRule.profitDeductions ?? []).includes("SHIPPING_FEE")
+  ) {
+    // 本单实际运费只有成交发货时才产生。售前阶段不能用 0 代替并展示一个
+    // 看似精确的分成数字；发货后会用实际费用自动生成结算。
+    return {
+      estimatedPlatformFee: calculated.platformFee,
+      estimatedCommission: null,
+      estimatedGrossProfit: null,
+    };
+  }
+
+  const estimatedGrossProfit =
+    calculated.distributableProfit ??
+    calculated.saleAmount
+      .minus(calculated.supplyCost)
+      .minus(calculated.platformFee)
+      .minus(calculated.fulfillmentFee);
 
   return {
-    estimatedPlatformFee,
-    estimatedCommission,
+    estimatedPlatformFee: calculated.platformFee,
+    estimatedCommission:
+      calculated.resellerCommission && calculated.resellerCommission.gt(0)
+        ? calculated.resellerCommission
+        : null,
     estimatedGrossProfit,
   };
 }
@@ -144,6 +222,7 @@ const resaleInclude = {
   supplyOffer: {
     include: {
       ownerPartner: true,
+      items: true,
     },
   },
 } as const;
@@ -156,6 +235,8 @@ function serializeResaleListing(listing: RawResaleListing): SerializedResaleList
     quantitySold: listing.quantitySold.toString(),
     supplyUnitPrice: listing.supplyUnitPrice?.toString() ?? null,
     commissionRate: listing.commissionRate?.toString() ?? null,
+    commissionFixedAmount: listing.commissionFixedAmount?.toString() ?? null,
+    dropshipFee: listing.dropshipFee?.toString() ?? null,
     platformFeeRate: listing.platformFeeRate?.toString() ?? null,
     estimatedPlatformFee: listing.estimatedPlatformFee?.toString() ?? null,
     estimatedCommission: listing.estimatedCommission?.toString() ?? null,
@@ -165,11 +246,19 @@ function serializeResaleListing(listing: RawResaleListing): SerializedResaleList
       availableQty: listing.supplyOffer.availableQty?.toString() ?? "0",
       unitPrice: listing.supplyOffer.unitPrice?.toString() ?? null,
       commissionRate: listing.supplyOffer.commissionRate?.toString() ?? null,
+      commissionFixedAmount: listing.supplyOffer.commissionFixedAmount?.toString() ?? null,
+      dropshipFee: listing.supplyOffer.dropshipFee?.toString() ?? null,
+      items: listing.supplyOffer.items.map((item) => ({
+        ...item,
+        quantityAvailable: item.quantityAvailable.toString(),
+        quantityReserved: item.quantityReserved.toString(),
+        unitPrice: item.unitPrice?.toString() ?? null,
+      })),
     },
   };
 }
 
-function visibleSupplyOfferWhere(activeStoreId: string, offerId: string) {
+function visibleSupplyOfferWhere(activeStoreId: string, organizationId: string, offerId: string) {
   return {
     id: offerId,
     status: "PUBLISHED",
@@ -179,7 +268,13 @@ function visibleSupplyOfferWhere(activeStoreId: string, offerId: string) {
       {
         visibility: "PARTNER_ONLY",
         visibilityRules: {
-          some: { viewerStoreId: activeStoreId },
+          some: {
+            OR: [
+              { viewerStoreId: activeStoreId },
+              { viewerOrganizationId: organizationId },
+              { partner: { organizationId } },
+            ],
+          },
         },
       },
     ],
@@ -208,6 +303,7 @@ export async function getResaleListingById(id: string, storeId?: string) {
 export async function createResaleListingAction(data: {
   storeId?: string;
   supplyOfferId: string;
+  supplyOfferItemId?: string;
   platformId: string;
   title: string;
   externalListingNo?: string;
@@ -217,6 +313,9 @@ export async function createResaleListingAction(data: {
   supplyUnitPrice?: string;
   supplyCurrency?: string;
   commissionRate?: string;
+  commissionType?: string;
+  commissionFixedAmount?: string;
+  dropshipFee?: string;
   platformFeeRate?: string;
   fulfillmentMode?: string;
   notes?: string;
@@ -225,49 +324,95 @@ export async function createResaleListingAction(data: {
     const context = await requireUserContext(data.storeId ? { storeId: data.storeId } : undefined);
     const [offer, platform] = await Promise.all([
       prisma.supplyOffer.findFirst({
-        where: visibleSupplyOfferWhere(context.activeStoreId, data.supplyOfferId),
+        where: visibleSupplyOfferWhere(context.activeStoreId, context.organizationId, data.supplyOfferId),
+        include: { salesChannels: { where: { status: "ACTIVE" } }, items: true },
       }),
       prisma.platform.findFirst({
         where: { id: data.platformId, storeId: context.activeStoreId },
+        include: { salesChannelAccount: true },
       }),
     ]);
 
     if (!offer) throw new Error("货盘不存在、未发布或当前店铺不可见");
     if (!platform) throw new Error("销售平台不存在或无权访问");
+    const offerItem = data.supplyOfferItemId
+      ? offer.items.find((item) => item.id === data.supplyOfferItemId)
+      : offer.items.length === 1
+        ? offer.items[0]
+        : null;
+    if (!offerItem) throw new Error("请选择当前货盘中要代卖的具体商品");
+    if (offer.agreementStatus !== "CONFIRMED" || !offer.agreementRule || !offer.agreementTerms?.trim()) {
+      throw new Error("货盘合作约定尚未由货主确认，暂不能创建代卖上架");
+    }
 
     const title = data.title.trim();
     if (!title) throw new Error("代卖标题不能为空");
     const targetPrice = parseDecimal(data.targetPrice, "代卖售价", { required: true, min: 0 })!;
     const quantityPlanned = parseDecimal(data.quantityPlanned || "1", "计划代卖数量", { required: true, min: 0 })!;
-    const supplyUnitPrice = parseDecimal(data.supplyUnitPrice ?? offer.unitPrice?.toString(), "供货单价", { min: 0 });
+    const supplyUnitPrice = parseDecimal(
+      offerItem.unitPrice?.toString() ?? offer.unitPrice?.toString(),
+      "供货单价",
+      { min: 0 },
+    );
     const platformFeeRate = parseRate(data.platformFeeRate ?? platform.defaultFeeRate?.toString(), "平台费率");
-    const commissionRate = parseRate(data.commissionRate ?? offer.commissionRate?.toString(), "佣金比例");
-    const estimates = calculateEstimates({
+    const commissionRate = offer.commissionRate;
+    const commissionType = offer.commissionType;
+    const commissionFixedAmount = offer.commissionFixedAmount;
+    const dropshipFee = parseDecimal(offer.dropshipFee?.toString(), "代发服务费", { min: 0 });
+    const saleCurrency = data.currency || platform.defaultCurrency || offer.currency || "CNY";
+    const supplyCurrency = offerItem.currency || offer.currency || null;
+    const dropshipFeeCurrency = offer.dropshipFeeCurrency || offer.settlementCurrency || offer.currency;
+    const agreementRule = parseAgreementRule(offer.agreementRule);
+    const salesChannelAccountId = platform.salesChannelAccount?.id ?? null;
+    const offerChannel = offer.salesChannels.find((channel) =>
+      (salesChannelAccountId && channel.salesChannelAccountId === salesChannelAccountId) ||
+      (!salesChannelAccountId && channel.storeId === context.activeStoreId),
+    );
+    if (offer.salesChannels.length > 0 && !offerChannel && offer.organizationId !== context.organizationId) {
+      throw new Error("当前销售账号未被这个货盘授权");
+    }
+    const estimates = await calculateEstimates({
       targetPrice,
+      saleCurrency,
       quantityPlanned,
       supplyUnitPrice,
+      supplyCurrency,
       platformFeeRate,
-      commissionRate,
+      dropshipFee,
+      dropshipFeeCurrency,
+      agreementRule,
     });
 
     const listing = await prisma.resaleListing.create({
       data: {
         storeId: context.activeStoreId,
+        sellerOrganizationId: context.organizationId,
+        salesChannelAccountId,
+        supplyOfferChannelId: offerChannel?.id ?? null,
         supplyOfferId: offer.id,
+        supplyOfferItemId: offerItem.id,
         platformId: platform.id,
         title,
         externalListingNo: data.externalListingNo || null,
         targetPrice,
-        currency: data.currency || platform.defaultCurrency || offer.currency || "CNY",
+        currency: saleCurrency,
         quantityPlanned,
         supplyUnitPrice,
-        supplyCurrency: data.supplyCurrency || offer.currency || null,
+        supplyCurrency,
         commissionRate,
+        commissionType,
+        commissionFixedAmount,
+        dropshipFee,
+        dropshipFeeCurrency,
+        agreementTermsSnapshot: offer.agreementTerms,
+        agreementRuleSnapshot: offer.agreementRule,
+        agreementVersion: offer.agreementVersion,
+        agreementAcceptedAt: new Date(),
         platformFeeRate,
         estimatedPlatformFee: estimates.estimatedPlatformFee,
         estimatedCommission: estimates.estimatedCommission,
         estimatedGrossProfit: estimates.estimatedGrossProfit,
-        fulfillmentMode: data.fulfillmentMode || offer.fulfillmentMode,
+        fulfillmentMode: offer.fulfillmentMode,
         notes: data.notes || null,
         createdById: context.userId,
         updatedById: context.userId,
@@ -285,6 +430,7 @@ export async function updateResaleListingAction(
   id: string,
   data: {
     storeId?: string;
+    supplyOfferItemId?: string;
     platformId: string;
     title: string;
     externalListingNo?: string;
@@ -294,6 +440,9 @@ export async function updateResaleListingAction(
     supplyUnitPrice?: string;
     supplyCurrency?: string;
     commissionRate?: string;
+    commissionType?: string;
+    commissionFixedAmount?: string;
+    dropshipFee?: string;
     platformFeeRate?: string;
     fulfillmentMode?: string;
     notes?: string;
@@ -302,17 +451,39 @@ export async function updateResaleListingAction(
   try {
     const existing = await prisma.resaleListing.findUnique({
       where: { id },
-      include: { supplyOffer: true },
+      include: { supplyOffer: { include: { items: true } } },
     });
     if (!existing) throw new Error("代卖上架不存在");
     const context = await requireUserContext({ storeId: data.storeId ?? existing.storeId });
     if (existing.storeId !== context.activeStoreId) throw new Error("只能编辑本店代卖上架");
     if (existing.status === "DELISTED") throw new Error("已下架代卖不能继续编辑");
+    const offerItemId = data.supplyOfferItemId ?? existing.supplyOfferItemId;
+    const offerItem = offerItemId
+      ? existing.supplyOffer.items.find((item) => item.id === offerItemId)
+      : existing.supplyOffer.items.length === 1
+        ? existing.supplyOffer.items[0]
+        : null;
+    if (!offerItem) throw new Error("请选择当前货盘中要代卖的具体商品");
+    if (existing.quantitySold.gt(0) && offerItem.id !== existing.supplyOfferItemId) {
+      throw new Error("已有成交记录的代卖不能更换货盘商品");
+    }
 
     const platform = await prisma.platform.findFirst({
       where: { id: data.platformId, storeId: context.activeStoreId },
+      include: { salesChannelAccount: true },
     });
     if (!platform) throw new Error("销售平台不存在或无权访问");
+    const offerChannels = await prisma.supplyOfferChannel.findMany({
+      where: { offerId: existing.supplyOfferId, status: "ACTIVE" },
+    });
+    const salesChannelAccountId = platform.salesChannelAccount?.id ?? null;
+    const offerChannel = offerChannels.find((channel) =>
+      (salesChannelAccountId && channel.salesChannelAccountId === salesChannelAccountId) ||
+      (!salesChannelAccountId && channel.storeId === context.activeStoreId),
+    );
+    if (offerChannels.length > 0 && !offerChannel && existing.supplyOffer.organizationId !== context.organizationId) {
+      throw new Error("当前销售账号未被这个货盘授权");
+    }
 
     const targetPrice = parseDecimal(data.targetPrice, "代卖售价", { required: true, min: 0 })!;
     const quantityPlanned = parseDecimal(data.quantityPlanned || existing.quantityPlanned.toString(), "计划代卖数量", {
@@ -322,34 +493,65 @@ export async function updateResaleListingAction(
     if (quantityPlanned.lt(existing.quantitySold)) {
       throw new Error("计划数量不能小于已售数量");
     }
-    const supplyUnitPrice = parseDecimal(data.supplyUnitPrice ?? existing.supplyUnitPrice?.toString(), "供货单价", { min: 0 });
+    const supplyUnitPrice = parseDecimal(
+      existing.supplyUnitPrice?.toString() ?? offerItem.unitPrice?.toString(),
+      "供货单价",
+      { min: 0 },
+    );
     const platformFeeRate = parseRate(data.platformFeeRate ?? platform.defaultFeeRate?.toString(), "平台费率");
-    const commissionRate = parseRate(data.commissionRate ?? existing.supplyOffer.commissionRate?.toString(), "佣金比例");
-    const estimates = calculateEstimates({
+    const commissionRate = existing.commissionRate;
+    const commissionType = existing.commissionType;
+    const commissionFixedAmount = existing.commissionFixedAmount;
+    const dropshipFee = parseDecimal(
+      existing.dropshipFee?.toString() ?? existing.supplyOffer.dropshipFee?.toString(),
+      "代发服务费",
+      { min: 0 },
+    );
+    const saleCurrency = data.currency || platform.defaultCurrency || existing.currency;
+    const supplyCurrency = existing.supplyCurrency || offerItem.currency;
+    const dropshipFeeCurrency =
+      existing.dropshipFeeCurrency ||
+      existing.supplyOffer.dropshipFeeCurrency ||
+      existing.supplyOffer.settlementCurrency ||
+      existing.currency;
+    const agreementRule = parseAgreementRule(existing.agreementRuleSnapshot);
+    const estimates = await calculateEstimates({
       targetPrice,
+      saleCurrency,
       quantityPlanned,
       supplyUnitPrice,
+      supplyCurrency,
       platformFeeRate,
-      commissionRate,
+      dropshipFee,
+      dropshipFeeCurrency,
+      agreementRule,
     });
 
     const listing = await prisma.resaleListing.update({
       where: { id },
       data: {
         platformId: platform.id,
+        sellerOrganizationId: context.organizationId,
+        salesChannelAccountId,
+        supplyOfferChannelId: offerChannel?.id ?? null,
+        supplyOfferItemId: offerItem.id,
         title: data.title.trim(),
         externalListingNo: data.externalListingNo || null,
         targetPrice,
-        currency: data.currency || platform.defaultCurrency || existing.currency,
+        currency: saleCurrency,
         quantityPlanned,
         supplyUnitPrice,
-        supplyCurrency: data.supplyCurrency || existing.supplyCurrency,
+        supplyCurrency,
         commissionRate,
+        commissionType,
+        commissionFixedAmount,
+        dropshipFee,
+        dropshipFeeCurrency,
         platformFeeRate,
         estimatedPlatformFee: estimates.estimatedPlatformFee,
         estimatedCommission: estimates.estimatedCommission,
         estimatedGrossProfit: estimates.estimatedGrossProfit,
-        fulfillmentMode: data.fulfillmentMode || existing.fulfillmentMode,
+        fulfillmentMode: existing.fulfillmentMode,
         notes: data.notes || null,
         updatedById: context.userId,
       },
@@ -367,7 +569,10 @@ export async function changeResaleListingStatusAction(
   nextStatus: "ACTIVE" | "PAUSED" | "DELISTED" | "DRAFT",
 ) {
   try {
-    const existing = await prisma.resaleListing.findUnique({ where: { id } });
+    const existing = await prisma.resaleListing.findUnique({
+      where: { id },
+      include: { supplyOffer: { select: { items: { select: { id: true } } } } },
+    });
     if (!existing) throw new Error("代卖上架不存在");
     const context = await requireUserContext({ storeId: existing.storeId });
     if (existing.storeId !== context.activeStoreId) throw new Error("只能操作本店代卖上架");
@@ -376,6 +581,12 @@ export async function changeResaleListingStatusAction(
     }
     if (nextStatus === "ACTIVE" && existing.quantityPlanned.lte(existing.quantitySold)) {
       throw new Error("计划数量已售完，不能启用");
+    }
+    if (
+      nextStatus === "ACTIVE" &&
+      (!existing.supplyOfferItemId || !existing.supplyOffer.items.some((item) => item.id === existing.supplyOfferItemId))
+    ) {
+      throw new Error("启用前必须选择明确的货盘商品");
     }
 
     const listing = await prisma.resaleListing.update({

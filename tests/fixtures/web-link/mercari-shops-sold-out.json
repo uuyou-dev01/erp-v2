@@ -1,0 +1,42 @@
+{
+  "requestedUrl": "https://jp.mercari.com/shops/product/PPGnk2WZvc2dY5eViefAJC",
+  "finalUrl": "https://jp.mercari.com/shops/product/PPGnk2WZvc2dY5eViefAJC",
+  "extractionMethod": "BROWSER",
+  "documentTitle": "CHROME HEARTS ブレスレット - メルカリ",
+  "heading": "CHROME HEARTS クロムハーツ BEAD 6mm ターコイズ ブレスレット【中古】",
+  "articleText": "CHROME HEARTS クロムハーツ BEAD 6mm ターコイズ ブレスレット【中古】\nCHROME HEARTS\n¥84,678\n送料込み(出品者負担)\n売り切れ\n商品の説明\n■商品情報 [カラー]ライトブルー系 [サイズ]腕周り：約18.5cm\n1か月前\n商品の情報\n商品の状態\n傷や汚れあり\n多くの人が見てわかるような傷や汚れがある",
+  "links": [
+    {
+      "text": "ファッション",
+      "href": "https://jp.mercari.com/search?category_id=3088"
+    },
+    {
+      "text": "メンズ",
+      "href": "https://jp.mercari.com/search?category_id=2"
+    },
+    {
+      "text": "アクセサリー",
+      "href": "https://jp.mercari.com/search?category_id=37"
+    },
+    {
+      "text": "ブレスレット",
+      "href": "https://jp.mercari.com/search?category_id=377"
+    },
+    {
+      "text": "CHROME HEARTS",
+      "href": "https://jp.mercari.com/search?brand_id=1551"
+    },
+    {
+      "text": "LIFE\n10061\n優良ショップ",
+      "href": "https://jp.mercari.com/shops/profile/shop"
+    }
+  ],
+  "images": [
+    "https://assets.mercari-shops-static.com/-/large/plain/image-0.jpg@jpg",
+    "https://assets.mercari-shops-static.com/-/large/plain/image-1.jpg@jpg",
+    "https://assets.mercari-shops-static.com/-/large/plain/image-2.jpg@jpg",
+    "https://assets.mercari-shops-static.com/-/large/plain/image-3.jpg@jpg",
+    "https://assets.mercari-shops-static.com/-/large/plain/image-4.jpg@jpg",
+    "https://assets.mercari-shops-static.com/-/large/plain/image-5.jpg@jpg"
+  ]
+}

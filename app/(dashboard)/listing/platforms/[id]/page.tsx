@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getPlatformById } from "@/app/actions/platforms";
 import { PlatformForm } from "@/components/listing/platform-form";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,6 @@ import { PlatformDeleteButton } from "@/components/listing/platform-delete-butto
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 
 const countryMap = Object.fromEntries(COUNTRIES.map((c) => [c.value, c.label]));
 const currencyMap = Object.fromEntries(CURRENCIES.map((c) => [c.value, c.label]));
@@ -27,6 +27,7 @@ export default async function PlatformDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const { id } = await params;
   const platform = await getPlatformById(id);
 
@@ -81,7 +82,7 @@ export default async function PlatformDetailPage({
           <PlatformDeleteButton
             id={platform.id}
             name={platform.name}
-            storeId={STORE_ID}
+            storeId={storeId}
           />
         </div>
       </div>
@@ -211,7 +212,7 @@ export default async function PlatformDetailPage({
         </CardHeader>
         <CardContent>
           <PlatformForm
-            storeId={STORE_ID}
+            storeId={storeId}
             initialData={{
               id: platform.id,
               code: platform.code,

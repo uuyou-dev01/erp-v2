@@ -28,4 +28,19 @@ describe("bulk action result descriptions", () => {
       shouldClearSelection: false,
     });
   });
+
+  it("surfaces the first concrete bulk failure reason", () => {
+    expect(
+      describeBulkActionResult({
+        success: 0,
+        failed: 2,
+        errors: ["PO-001: 到货仓与集运起点不一致", "PO-002: 库存不足"],
+      })
+    ).toEqual({
+      tone: "error",
+      message: "2 项未能处理：PO-001: 到货仓与集运起点不一致",
+      shouldRefresh: false,
+      shouldClearSelection: false,
+    });
+  });
 });

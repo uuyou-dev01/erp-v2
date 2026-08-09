@@ -2,12 +2,26 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import {
+  normalizeItemConditionType,
+  normalizeItemFunctionStatus,
+  normalizeUsedItemGrade,
+  validateItemCondition,
+} from "@/lib/inventory/item-condition";
 import type { EntityType } from "@/lib/application/next-actions";
 import { retryQuickEntry } from "@/app/actions/quick-entries";
-import { confirmOrder, cancelCustomerOrder, markOrderDelivered, markOrderReturned, markOrderShipped, saveOrderShippingProof, settleCustomerOrder } from "@/app/actions/customer-orders";
+import {
+  confirmOrder,
+  cancelCustomerOrder,
+  markOrderDelivered,
+  markOrderReturned,
+  markOrderShipped,
+  saveOrderShippingProof,
+  settleCustomerOrder,
+} from "@/app/actions/customer-orders";
 import { approveReturnInspection } from "@/app/actions/item-units";
 import { shippingProofToJson, type ShippingProof } from "@/lib/application/shipping-proof";
-import { confirmInboundShipmentDelivered } from "@/app/actions/logistics";
+import { confirmInboundShipmentDelivered, dispatchPurchaseTransfer } from "@/app/actions/logistics";
 import { createListing } from "@/app/actions/listings";
 import {
   addPurchaseOrderToConsolidation,
@@ -17,6 +31,7 @@ import {
   markPurchaseAsShipped,
   markPurchaseOrderArrived,
   receivePurchaseOrder,
+  returnPurchaseOrder,
 } from "@/app/actions/purchase-orders";
 
 export interface FillLogisticsPayload {
@@ -80,6 +95,7 @@ export interface InspectionPayload {
   packageComplete?: boolean;
   missingParts?: string;
   conditionGrade?: string;
+  functionStatus?: string;
   scratchNote?: string;
   serialNo?: string;
   note?: string;
@@ -142,11 +158,50 @@ function inspectionNote(payload: InspectionPayload) {
     payload.packageComplete ? "包装完整" : null,
     payload.missingParts ? `缺件:${payload.missingParts}` : null,
     payload.conditionGrade ? `成色:${payload.conditionGrade}` : null,
+    payload.functionStatus ? `功能:${payload.functionStatus}` : null,
     payload.scratchNote,
     payload.serialNo ? `编号:${payload.serialNo}` : null,
   ]
     .filter(Boolean)
     .join(" / ");
+}
+
+async function updateQuickEntryConditionFromInspection(
+  purchaseOrderId: string,
+  payload: InspectionPayload
+) {
+  if (!payload.conditionType) return;
+  const conditionType = normalizeItemConditionType(payload.conditionType);
+  const conditionGrade =
+    conditionType === "USED"
+      ? (normalizeUsedItemGrade(payload.conditionGrade) ?? "UNASSESSED")
+      : null;
+  const functionStatus = normalizeItemFunctionStatus(payload.functionStatus, conditionType);
+  const notes = [payload.scratchNote, payload.missingParts, payload.note]
+    .filter(Boolean)
+    .join(" / ");
+  const conditionError = validateItemCondition({
+    conditionType,
+    conditionGrade,
+    functionStatus,
+    notes,
+  });
+  if (conditionError) throw new Error(conditionError);
+
+  const lines = await prisma.purchaseLine.findMany({
+    where: { purchaseOrderId },
+    select: { id: true },
+  });
+  if (lines.length === 0) return;
+  await prisma.quickEntry.updateMany({
+    where: { generatedPurchaseLineId: { in: lines.map((line) => line.id) } },
+    data: {
+      conditionType,
+      conditionGrade,
+      functionStatus,
+      batchNote: notes || undefined,
+    },
+  });
 }
 
 async function createPurchaseLineInspections(
@@ -214,7 +269,11 @@ async function resolveOrCreateLocation(storeId: string, locationText?: string) {
   return created.id;
 }
 
-async function resolveSelectedLocation(storeId: string, locationId?: string, locationText?: string) {
+async function resolveSelectedLocation(
+  storeId: string,
+  locationId?: string,
+  locationText?: string
+) {
   const id = clean(locationId);
   if (!id) return resolveOrCreateLocation(storeId, locationText);
 
@@ -232,6 +291,9 @@ export async function submitFillLogistics(
   payload: FillLogisticsPayload
 ) {
   if (entityType === "purchaseOrder") {
+    if (!clean(payload.purchaseTrackingNo)) {
+      throw new Error("请填写采购物流单号");
+    }
     if (!clean(payload.destinationLocationId)) {
       throw new Error("请选择预计到货位置");
     }
@@ -265,19 +327,19 @@ export async function submitConfirmArrival(
       include: { purchaseOrder: true },
     });
     if (!shipment) throw new Error("物流段不存在");
+    const locationId = await resolveSelectedLocation(
+      shipment.storeId,
+      payload.arrivalLocationId || shipment.toLocationId || undefined,
+      payload.arrivalLocation
+    );
     if (shipment.purchaseOrderId && shipment.purchaseOrder?.status !== "RECEIVED") {
-      const locationId = await resolveSelectedLocation(
-        shipment.storeId,
-        payload.arrivalLocationId,
-        payload.arrivalLocation
-      );
       await markPurchaseOrderArrived({
         purchaseOrderId: shipment.purchaseOrderId,
         locationId,
         receivedAt: arrivedAt,
       });
     }
-    await confirmInboundShipmentDelivered(entityId, arrivedAt, payload.note);
+    await confirmInboundShipmentDelivered(entityId, arrivedAt, payload.note, locationId);
     revalidatePath("/workbench");
     return { success: true };
   }
@@ -314,18 +376,36 @@ export async function submitShipmentArrivalProcessing(
   const arrivedAt = todayInputDate(payload.arrivedAt);
   const shipment = await prisma.inboundShipment.findUnique({
     where: { id: entityId },
-    include: { purchaseOrder: true },
+    include: { purchaseOrder: true, inventoryLines: { select: { id: true } } },
   });
   if (!shipment) throw new Error("物流段不存在");
-  if (!shipment.purchaseOrderId || !shipment.purchaseOrder) {
-    throw new Error("该物流段没有关联采购单，无法入库");
-  }
 
   const locationId = await resolveSelectedLocation(
     shipment.storeId,
-    payload.inboundLocationId || payload.arrivalLocationId,
+    payload.inboundLocationId || payload.arrivalLocationId || shipment.toLocationId || undefined,
     payload.arrivalLocation
   );
+
+  if (!shipment.purchaseOrderId || !shipment.purchaseOrder) {
+    if (shipment.inventoryLines.length === 0) {
+      throw new Error("该物流段没有关联库存，无法确认到货");
+    }
+    if (payload.result === "FAILED") {
+      await prisma.inboundShipment.update({
+        where: { id: shipment.id },
+        data: {
+          status: "EXCEPTION",
+          shipmentNote: inspectionNote(payload) || "目标仓检查未通过",
+        },
+      });
+      revalidatePath("/workbench");
+      return { success: true };
+    }
+    await confirmInboundShipmentDelivered(entityId, arrivedAt, payload.note, locationId);
+    revalidatePath("/workbench");
+    revalidatePath("/inventory/sellable");
+    return { success: true };
+  }
 
   if (shipment.purchaseOrder.status !== "RECEIVED") {
     await markPurchaseOrderArrived({
@@ -334,7 +414,7 @@ export async function submitShipmentArrivalProcessing(
       receivedAt: arrivedAt,
     });
   }
-  await confirmInboundShipmentDelivered(entityId, arrivedAt, payload.note);
+  await confirmInboundShipmentDelivered(entityId, arrivedAt, payload.note, locationId);
   await createPurchaseLineInspections(shipment.purchaseOrderId, locationId, payload);
 
   if (payload.result === "FAILED") {
@@ -347,6 +427,8 @@ export async function submitShipmentArrivalProcessing(
     revalidatePath("/workbench");
     return { success: true };
   }
+
+  await updateQuickEntryConditionFromInspection(shipment.purchaseOrderId, payload);
 
   await receivePurchaseOrder({
     purchaseOrderId: shipment.purchaseOrderId,
@@ -368,15 +450,19 @@ export async function submitInbound(
   }
   const order = await prisma.purchaseOrder.findUnique({ where: { id: entityId } });
   if (!order) throw new Error("采购单不存在");
-  const locationId = await resolveSelectedLocation(order.storeId, payload.locationId, payload.location);
-  await createPurchaseLineInspections(entityId, locationId, {
-    result: "PASSED",
-    note: payload.note || "待分流确认入库",
-  });
+  const locationId = await resolveSelectedLocation(
+    order.storeId,
+    payload.locationId,
+    payload.location
+  );
   await receivePurchaseOrder({
     purchaseOrderId: entityId,
     locationId,
     receivedAt: order.receivedAt ?? new Date(),
+  });
+  await createPurchaseLineInspections(entityId, locationId, {
+    result: "PASSED",
+    note: payload.note || "待分流确认入库",
   });
   revalidatePath("/workbench");
   revalidatePath("/inventory/sellable");
@@ -431,37 +517,43 @@ export async function submitTransferPurchase(
   }
   const order = await prisma.purchaseOrder.findUnique({
     where: { id: entityId },
-    include: { inboundShipments: { select: { legIndex: true } } },
+    select: {
+      id: true,
+      storeId: true,
+      status: true,
+      destinationLocationId: true,
+      receivedAt: true,
+      lines: { select: { id: true } },
+    },
   });
   if (!order) throw new Error("采购单不存在");
   if (order.status !== "RECEIVED") throw new Error("只有待分流采购单可以发往其他位置");
+  if (!order.destinationLocationId) throw new Error("采购单没有记录当前到货位置");
   if (!clean(payload.toLocationId)) throw new Error("请选择目标位置");
 
   const toLocationId = await resolveSelectedLocation(order.storeId, payload.toLocationId);
-  const maxLegIndex = order.inboundShipments.reduce(
-    (max, shipment) => Math.max(max, shipment.legIndex),
-    1
-  );
-
-  await prisma.inboundShipment.create({
-    data: {
-      storeId: order.storeId,
-      purchaseOrderId: order.id,
-      legIndex: maxLegIndex + 1,
-      fromLocationId: order.destinationLocationId,
-      toLocationId,
-      trackingNo: clean(payload.trackingNo) ?? null,
-      carrier: clean(payload.carrier) ?? null,
-      etaDate: optionalInputDate(payload.etaDate),
-      shippedAt: new Date(),
-      status: "IN_TRANSIT",
-      shipmentNote: clean(payload.note) ?? null,
-    },
+  await createPurchaseLineInspections(order.id, order.destinationLocationId, {
+    result: "PASSED",
+    note: payload.note || "分流检查通过，立即发起转仓",
+  });
+  const shipment = await dispatchPurchaseTransfer({
+    purchaseOrderId: order.id,
+    toLocationId,
+    trackingNo: clean(payload.trackingNo),
+    carrier: clean(payload.carrier),
+    etaDate: optionalInputDate(payload.etaDate),
+    note: clean(payload.note),
   });
 
   revalidatePath("/workbench");
   revalidatePath("/logistics/consolidations");
-  return { success: true };
+  revalidatePath("/inventory/lots");
+  revalidatePath("/inventory/items");
+  return {
+    success: true,
+    shipmentId: shipment.id,
+    inventoryPageHref: "/inventory/lots",
+  };
 }
 
 export async function submitReturnPurchase(
@@ -472,31 +564,19 @@ export async function submitReturnPurchase(
   if (entityType !== "purchaseOrder") {
     throw new Error("当前对象不支持退货终止");
   }
-  const order = await prisma.purchaseOrder.findUnique({
-    where: { id: entityId },
-    select: { id: true, status: true, shipmentNote: true },
-  });
-  if (!order) throw new Error("采购单不存在");
-  if (order.status !== "RECEIVED") throw new Error("只有待分流采购单可以退货终止");
-
   const returnNote = [
     payload.reason ? `退货原因:${payload.reason}` : "退货终止",
     payload.trackingNo ? `退货单号:${payload.trackingNo}` : null,
     payload.carrier ? `承运商:${payload.carrier}` : null,
     payload.note,
-  ].filter(Boolean).join(" / ");
+  ]
+    .filter(Boolean)
+    .join(" / ");
 
-  await prisma.purchaseOrder.update({
-    where: { id: order.id },
-    data: {
-      status: "RETURNED",
-      shipmentNote: [order.shipmentNote, returnNote].filter(Boolean).join("\n"),
-    },
+  await returnPurchaseOrder({
+    purchaseOrderId: entityId,
+    note: returnNote,
   });
-
-  revalidatePath("/workbench");
-  revalidatePath("/procurement");
-  revalidatePath(`/procurement/${order.id}`);
   return { success: true };
 }
 
@@ -507,6 +587,59 @@ export async function submitCreateListing(
 ) {
   const platformIds = [...new Set(payload.platformIds.filter(Boolean))];
   if (platformIds.length === 0) throw new Error("请至少选择一个平台");
+
+  if (entityType === "sku") {
+    const sku = await prisma.sKU.findUnique({
+      where: { id: entityId },
+      select: { id: true, code: true, storeId: true },
+    });
+    if (!sku) throw new Error("SKU 不存在");
+
+    const platforms = await prisma.platform.findMany({
+      where: { storeId: sku.storeId, id: { in: platformIds } },
+      select: { id: true },
+    });
+    if (platforms.length !== platformIds.length) throw new Error("包含无效的平台");
+
+    const existing = await prisma.listing.findMany({
+      where: {
+        storeId: sku.storeId,
+        skuId: sku.id,
+        platformId: { in: platformIds },
+        status: "ACTIVE",
+      },
+      select: { platformId: true },
+    });
+    const existingIds = new Set(existing.map((row) => row.platformId));
+    const toCreate = platformIds.filter((id) => !existingIds.has(id));
+    if (toCreate.length === 0) throw new Error("所选平台均已有 Listing");
+
+    const results = [];
+    for (const platformId of toCreate) {
+      const result = await createListing({
+        storeId: sku.storeId,
+        platformId,
+        listingType: "SKU",
+        skuId: sku.id,
+      });
+      if (!result.success) throw new Error(result.error);
+      results.push(result);
+    }
+
+    revalidatePath("/workbench");
+    revalidatePath("/inventory/skus");
+    revalidatePath(`/inventory/skus/${sku.id}`);
+    revalidatePath("/inventory/coverage");
+    revalidatePath("/inventory/coverage/pending");
+    revalidatePath("/inventory/sellable");
+    return {
+      ids: results.map((row) => row.id),
+      skuId: sku.id,
+      skuCode: sku.code,
+      listingPageHref: "/inventory/sellable",
+      skuPageHref: `/inventory/skus/${sku.id}`,
+    };
+  }
 
   if (entityType === "itemUnit") {
     const item = await prisma.itemUnit.findUnique({ where: { id: entityId } });

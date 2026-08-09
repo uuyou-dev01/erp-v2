@@ -5,13 +5,14 @@ import {
   settingsNavigation,
   type NavItem,
 } from "@/config/navigation";
+import { canUseQuickEntry, isNavigationHrefAllowed } from "@/lib/auth/permissions";
 
 function flatten(items: NavItem[]): NavItem[] {
   return items.flatMap((item) => [item, ...(item.submenu ? flatten(item.submenu) : [])]);
 }
 
 const operationNavigationItems = operationsNavigation.flatMap((group) => flatten(group.items));
-const allNavigationItems = [...operationNavigationItems, ...settingsNavigation];
+const allNavigationItems = [...operationNavigationItems, ...flatten(settingsNavigation)];
 
 describe("navigation structure", () => {
   it("groups routes around the current operating model", () => {
@@ -21,21 +22,19 @@ describe("navigation structure", () => {
       "商品与库存",
       "上架与订单",
       "货盘与代卖",
-      "财务与报表",
+      "收益与报表",
     ]);
   });
 
   it("keeps dense product and inventory routes under sidebar submenus", () => {
     const productGroup = operationsNavigation.find((group) => group.title === "商品与库存");
-    expect(productGroup?.items.map((item) => item.name)).toEqual([
-      "商品档案",
-      "库存管理",
-    ]);
+    expect(productGroup?.items.map((item) => item.name)).toEqual(["商品档案", "库存管理"]);
 
     const catalogItem = productGroup?.items.find((item) => item.name === "商品档案");
     expect(catalogItem?.submenu?.map((item) => item.name)).toEqual([
       "商品主档",
       "商品情报",
+      "情报采集箱",
     ]);
 
     const inventoryItem = productGroup?.items.find((item) => item.name === "库存管理");
@@ -43,7 +42,8 @@ describe("navigation structure", () => {
       "库存看板",
       "单件库存",
       "库存批次",
-      "库存盘点",
+      "期初库存",
+      "库存调整",
     ]);
   });
 
@@ -53,14 +53,14 @@ describe("navigation structure", () => {
     expect(operationNames).not.toContain("仓库位置");
     expect(operationNames).not.toContain("团队成员");
     expect(operationNames).not.toContain("店铺管理");
+    expect(operationNames).not.toContain("费用子账");
+    expect(operationNames).not.toContain("平台账单");
+    expect(operationNames).not.toContain("结算单");
 
     expect(settingsNavigation.map((item) => item.name)).toEqual([
-      "销售平台",
-      "合作方",
-      "仓库位置",
-      "团队成员",
-      "店铺管理",
-      "切换操作人",
+      "个人设置",
+      "企业设置",
+      "系统设置",
     ]);
   });
 
@@ -86,11 +86,9 @@ describe("navigation structure", () => {
     expect(hrefs).toContain("/finance/settlements");
     expect(hrefs).toContain("/reports");
     expect(hrefs).toContain("/reports/team");
-    expect(hrefs).toContain("/listing/platforms");
-    expect(hrefs).toContain("/settings/partners");
-    expect(hrefs).toContain("/inventory/locations");
-    expect(hrefs).toContain("/settings/team");
-    expect(hrefs).toContain("/settings/stores");
+    expect(hrefs).toContain("/settings/personal");
+    expect(hrefs).toContain("/settings/company");
+    expect(hrefs).toContain("/settings/system");
   });
 
   it("removes the old dashboard entry from sidebar and command shortcuts", () => {
@@ -99,5 +97,15 @@ describe("navigation structure", () => {
 
     expect(navigationHrefs).not.toContain("/dashboard");
     expect(commandHrefs).not.toContain("/dashboard");
+  });
+
+  it("limits warehouse operators to fulfillment-related navigation", () => {
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/fulfillment/requests")).toBe(true);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/logistics/consolidations")).toBe(true);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/inventory/items")).toBe(true);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/procurement")).toBe(false);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/marketplace/my-offers")).toBe(false);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/reports/team")).toBe(false);
+    expect(canUseQuickEntry("FULFILLMENT")).toBe(false);
   });
 });

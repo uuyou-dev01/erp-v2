@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ImageIcon, Store } from "lucide-react";
+import { ArrowLeft, ImageIcon, Workflow } from "lucide-react";
 import { getProductIntelligenceItemById } from "@/app/actions/product-intelligence";
 import { ProductIntelligenceActions } from "@/components/product-intelligence/product-intelligence-actions";
 import { VisibilityBadge } from "@/components/product-intelligence/product-intelligence-status";
 import { VariantMarketPanel } from "@/components/product-intelligence/variant-market-panel";
+import {
+  IntelligenceBusinessActions,
+  type IntelligenceBusinessSku,
+} from "@/components/product-intelligence/intelligence-business-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -30,6 +34,19 @@ type ObservationRow = {
 function buildMarketGroups(
   item: NonNullable<Awaited<ReturnType<typeof getProductIntelligenceItemById>>>,
 ) {
+  if (item.parentItem) {
+    return {
+      variants: [
+        {
+          id: item.id,
+          title: item.title,
+          subtitle: [item.brand, item.category].filter(Boolean).join(" · "),
+          visibility: item.visibility,
+          observations: item.observations as unknown as ObservationRow[],
+        },
+      ],
+    };
+  }
   return {
     variants: item.childItems.map((child) => ({
       id: child.id,
@@ -50,6 +67,23 @@ export default async function ProductIntelligenceDetailPage({
   const item = await getProductIntelligenceItemById(id);
   if (!item) notFound();
   const marketGroups = buildMarketGroups(item);
+  const operationalSkuRows = item.parentItem
+    ? item.sku && item.sku.catalogRole !== "GROUP"
+      ? [{ itemTitle: item.title, sku: item.sku }]
+      : []
+    : item.childItems.length > 0
+      ? item.childItems
+          .filter((child) => child.sku && child.sku.catalogRole !== "GROUP")
+          .map((child) => ({ itemTitle: child.title, sku: child.sku! }))
+      : item.sku && item.sku.catalogRole !== "GROUP"
+        ? [{ itemTitle: item.title, sku: item.sku }]
+        : [];
+  const linkedSkus: IntelligenceBusinessSku[] = operationalSkuRows.map(({ itemTitle, sku }) => ({
+    id: sku.id,
+    code: sku.code,
+    name: sku.name,
+    label: itemTitle || sku.name,
+  }));
 
   return (
     <div className="space-y-4">
@@ -154,24 +188,27 @@ export default async function ProductIntelligenceDetailPage({
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
-                <Store className="h-4 w-4" />
-                后续业务关联
+                <Workflow className="h-4 w-4" />
+                业务入口
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm leading-6 text-muted-foreground">
-                这一版只做数据展示。后续可以在这里接入“相关货盘”“引用为我的 SKU”“从货盘上架”等动作。
-              </p>
+              <IntelligenceBusinessActions
+                itemId={item.id}
+                linkedSkus={linkedSkus}
+                catalogSkuId={item.skuId}
+              />
             </CardContent>
           </Card>
         </div>
 
-        {!item.parentItem ? (
+        {marketGroups.variants.length > 0 ? (
           <VariantMarketPanel
-            parentItemId={item.id}
+            parentItemId={item.parentItem?.id ?? item.id}
             activeStoreId={item.activeStoreId}
             defaultVisibility={item.visibility}
             variants={marketGroups.variants}
+            allowVariantCreation={!item.parentItem}
           />
         ) : null}
       </div>

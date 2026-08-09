@@ -13,11 +13,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ProductCategoryPicker } from "@/components/inventory/product-category-picker";
 
 type ParentOption = {
   id: string;
   title: string;
   brand: string | null;
+  categoryId: string | null;
   category: string | null;
   _count: { childItems: number };
 };
@@ -29,6 +31,7 @@ interface ProductIntelligenceFormProps {
     parentItemId: string | null;
     title: string;
     brand: string | null;
+    categoryId: string | null;
     category: string | null;
     model: string | null;
     productKind: string;
@@ -40,8 +43,19 @@ interface ProductIntelligenceFormProps {
   };
 }
 
-const CATEGORY_OPTIONS = ["球鞋", "相机", "手办", "潮玩", "中古包", "服饰", "玩具", "数码", "家居", "其他"];
-const PLATFORM_OPTIONS = ["Mercari", "Yahoo Auction", "SNKRDUNK", "得物", "闲鱼", "淘宝", "1688", "eBay", "线下店", "朋友报价", "其他"];
+const PLATFORM_OPTIONS = [
+  "Mercari",
+  "Yahoo Auction",
+  "SNKRDUNK",
+  "得物",
+  "闲鱼",
+  "淘宝",
+  "1688",
+  "eBay",
+  "线下店",
+  "朋友报价",
+  "其他",
+];
 const CURRENCY_OPTIONS = ["JPY", "CNY", "USD", "EUR"];
 const CONDITION_OPTIONS = ["全新", "二手 S", "二手 A", "二手 B", "未标注"];
 
@@ -64,12 +78,13 @@ export function ProductIntelligenceForm({
   const [error, setError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [itemType, setItemType] = useState<"GROUP" | "VARIANT">(
-    initialData?.parentItemId ? "VARIANT" : "GROUP",
+    initialData?.parentItemId ? "VARIANT" : "GROUP"
   );
   const [formData, setFormData] = useState({
     parentItemId: initialData?.parentItemId ?? "",
     title: initialData?.title ?? "",
     brand: initialData?.brand ?? "",
+    categoryId: initialData?.categoryId ?? "",
     category: initialData?.category ?? "",
     model: initialData?.model ?? "",
     productKind: initialData?.productKind ?? "MIXED",
@@ -94,7 +109,7 @@ export function ProductIntelligenceForm({
 
   const selectedParent = useMemo(
     () => parentOptions.find((item) => item.id === formData.parentItemId),
-    [formData.parentItemId, parentOptions],
+    [formData.parentItemId, parentOptions]
   );
   const skuTitle = itemType === "GROUP" ? firstSku.title.trim() : formData.title.trim();
   const canRecordSale = !isEditing && skuTitle.length > 0;
@@ -107,7 +122,7 @@ export function ProductIntelligenceForm({
 
   const handleImageUpload = async (
     event: React.ChangeEvent<HTMLInputElement>,
-    target: "group" | "sku" = "group",
+    target: "group" | "sku" = "group"
   ) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -157,6 +172,7 @@ export function ProductIntelligenceForm({
     updateForm({
       parentItemId,
       brand: formData.brand || parent?.brand || "",
+      categoryId: formData.categoryId || parent?.categoryId || "",
       category: formData.category || parent?.category || "",
     });
   };
@@ -302,7 +318,8 @@ export function ProductIntelligenceForm({
               </div>
             ) : (
               <div className="rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                商品组只负责聚合同一个系列或款式，例如 AJ1 芝加哥 2015。尺码、角色、长度、颜色尺码组合放到 SKU。
+                商品组只负责聚合同一个系列或款式，例如 AJ1 芝加哥
+                2015。尺码、角色、长度、颜色尺码组合放到 SKU。
               </div>
             )}
           </div>
@@ -313,7 +330,11 @@ export function ProductIntelligenceForm({
               <div className="flex aspect-square items-center justify-center overflow-hidden rounded-md border bg-muted/20 text-xs text-muted-foreground">
                 {formData.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={formData.imageUrl} alt="商品图片预览" className="h-full w-full object-cover" />
+                  <img
+                    src={formData.imageUrl}
+                    alt="商品图片预览"
+                    className="h-full w-full object-cover"
+                  />
                 ) : (
                   "暂无图片"
                 )}
@@ -326,10 +347,16 @@ export function ProductIntelligenceForm({
                   <Input
                     value={formData.title}
                     onChange={(event) => updateForm({ title: event.target.value })}
-                    placeholder={itemType === "GROUP" ? "例如：Nike AJ1 芝加哥 2015" : "例如：42码 / 小南 / 10cm / 黑色 S"}
+                    placeholder={
+                      itemType === "GROUP"
+                        ? "例如：Nike AJ1 芝加哥 2015"
+                        : "例如：42码 / 小南 / 10cm / 黑色 S"
+                    }
                   />
                   {selectedParent ? (
-                    <p className="text-xs text-muted-foreground">当前 SKU 归属：{selectedParent.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      当前 SKU 归属：{selectedParent.title}
+                    </p>
                   ) : null}
                 </div>
                 <div className="space-y-2">
@@ -342,17 +369,22 @@ export function ProductIntelligenceForm({
                 </div>
                 <div className="space-y-2">
                   <Label>品类{itemType === "GROUP" ? " *" : ""}</Label>
-                  <Input
-                    list="product-intelligence-categories"
-                    value={formData.category}
-                    onChange={(event) => updateForm({ category: event.target.value })}
-                    placeholder="选择或输入品类"
+                  <ProductCategoryPicker
+                    value={formData.categoryId}
+                    legacyValue={formData.category}
+                    onChange={(categoryId, category) =>
+                      updateForm({
+                        categoryId: categoryId ?? "",
+                        category,
+                      })
+                    }
+                    placeholder="搜索或选择商品品类"
+                    inheritedHint={
+                      itemType === "VARIANT" && selectedParent?.categoryId === formData.categoryId
+                        ? "已从商品组继承"
+                        : undefined
+                    }
                   />
-                  <datalist id="product-intelligence-categories">
-                    {CATEGORY_OPTIONS.map((category) => (
-                      <option key={category} value={category} />
-                    ))}
-                  </datalist>
                 </div>
                 {itemType === "GROUP" ? (
                   <div className="space-y-2">
@@ -399,7 +431,9 @@ export function ProductIntelligenceForm({
                 <Label>首个 SKU</Label>
                 <Input
                   value={firstSku.title}
-                  onChange={(event) => setFirstSku((prev) => ({ ...prev, title: event.target.value }))}
+                  onChange={(event) =>
+                    setFirstSku((prev) => ({ ...prev, title: event.target.value }))
+                  }
                   placeholder="可空，例如：42码 / 小南 / 10cm / 黑色 S"
                 />
               </div>
@@ -413,11 +447,7 @@ export function ProductIntelligenceForm({
                 />
               </div>
             </div>
-            <PriceObservationFields
-              disabled={!canRecordSale}
-              sale={sale}
-              onChange={setSale}
-            />
+            <PriceObservationFields disabled={!canRecordSale} sale={sale} onChange={setSale} />
             <p className="text-xs text-muted-foreground">
               只想先建商品组可以不填 SKU；填写 SKU 后可以顺手记录一条看到的售价。
             </p>
@@ -432,7 +462,9 @@ export function ProductIntelligenceForm({
           </CardHeader>
           <CardContent className="space-y-4">
             <PriceObservationFields sale={sale} onChange={setSale} />
-            <p className="text-xs text-muted-foreground">可先只建 SKU，稍后在详情页补充售价；看到时间默认今天。</p>
+            <p className="text-xs text-muted-foreground">
+              可先只建 SKU，稍后在详情页补充售价；看到时间默认今天。
+            </p>
           </CardContent>
         </Card>
       ) : null}
@@ -507,12 +539,12 @@ export function ProductIntelligenceForm({
       <div className="sticky bottom-0 z-30 -mx-1 flex items-center justify-between gap-3 border-t bg-background/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/85">
         {error ? <p className="min-w-0 text-sm text-destructive">{error}</p> : <span />}
         <div className="flex shrink-0 justify-end gap-2">
-        <Button type="button" variant="outline" onClick={() => router.back()}>
-          取消
-        </Button>
-        <Button type="submit" disabled={loading}>
-          {loading ? "保存中..." : "保存"}
-        </Button>
+          <Button type="button" variant="outline" onClick={() => router.back()}>
+            取消
+          </Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? "保存中..." : "保存"}
+          </Button>
         </div>
       </div>
     </form>
@@ -533,14 +565,16 @@ function PriceObservationFields({
     note: string;
   };
   disabled?: boolean;
-  onChange: React.Dispatch<React.SetStateAction<{
-    amount: string;
-    currency: string;
-    conditionGrade: string;
-    platformName: string;
-    observedAt: string;
-    note: string;
-  }>>;
+  onChange: React.Dispatch<
+    React.SetStateAction<{
+      amount: string;
+      currency: string;
+      conditionGrade: string;
+      platformName: string;
+      observedAt: string;
+      note: string;
+    }>
+  >;
 }) {
   return (
     <div className="grid gap-3 rounded-md border p-3 md:grid-cols-[1fr_110px_130px_150px_150px_1fr]">
@@ -565,7 +599,9 @@ function PriceObservationFields({
           onChange={(event) => onChange((prev) => ({ ...prev, currency: event.target.value }))}
         >
           {CURRENCY_OPTIONS.map((currency) => (
-            <option key={currency} value={currency}>{currency}</option>
+            <option key={currency} value={currency}>
+              {currency}
+            </option>
           ))}
         </select>
       </div>
@@ -575,10 +611,14 @@ function PriceObservationFields({
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           value={sale.conditionGrade}
           disabled={disabled}
-          onChange={(event) => onChange((prev) => ({ ...prev, conditionGrade: event.target.value }))}
+          onChange={(event) =>
+            onChange((prev) => ({ ...prev, conditionGrade: event.target.value }))
+          }
         >
           {CONDITION_OPTIONS.map((condition) => (
-            <option key={condition} value={condition}>{condition}</option>
+            <option key={condition} value={condition}>
+              {condition}
+            </option>
           ))}
         </select>
       </div>
@@ -591,7 +631,9 @@ function PriceObservationFields({
           onChange={(event) => onChange((prev) => ({ ...prev, platformName: event.target.value }))}
         >
           {PLATFORM_OPTIONS.map((platform) => (
-            <option key={platform} value={platform}>{platform}</option>
+            <option key={platform} value={platform}>
+              {platform}
+            </option>
           ))}
         </select>
       </div>

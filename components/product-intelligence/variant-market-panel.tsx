@@ -83,11 +83,13 @@ export function VariantMarketPanel({
   activeStoreId,
   defaultVisibility,
   variants,
+  allowVariantCreation = true,
 }: {
   parentItemId: string;
   activeStoreId: string;
   defaultVisibility: string;
   variants: MarketGroup[];
+  allowVariantCreation?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState("all");
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
@@ -138,14 +140,16 @@ export function VariantMarketPanel({
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowVariantForm(true)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-white px-3 text-xs font-medium transition-colors hover:bg-muted"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    添加 SKU
-                  </button>
+                  {allowVariantCreation ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowVariantForm(true)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-white px-3 text-xs font-medium transition-colors hover:bg-muted"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      添加 SKU
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => setShowObservationForm((value) => !value)}
@@ -355,7 +359,7 @@ export function VariantMarketPanel({
         </div>
       ) : null}
 
-      {showVariantForm ? (
+      {showVariantForm && allowVariantCreation ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowVariantForm(false)} />
           <Card className="relative z-10 w-full max-w-lg">

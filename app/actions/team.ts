@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { hashPassword } from "@/lib/auth/password";
 
 const TEAM_ROLES = [
   ROLES.ADMIN,
@@ -97,6 +98,7 @@ export async function createTeamMember(formData: FormData) {
   const email = cleanString(formData.get("email")).toLowerCase();
   const name = cleanString(formData.get("name"));
   const role = cleanRole(formData.get("role"));
+  const password = cleanString(formData.get("password"));
   const storeIds = selectedStoreIds(formData, context.storeIds);
 
   if (!email || !email.includes("@")) {
@@ -105,18 +107,23 @@ export async function createTeamMember(formData: FormData) {
   if (storeIds.length === 0) {
     throw new Error("请至少选择一个可访问店铺");
   }
+  if (password.length < 8) {
+    throw new Error("初始密码至少需要 8 位");
+  }
+  const passwordHash = await hashPassword(password);
 
   const user = await prisma.user.upsert({
     where: { email },
     update: {
       name: name || undefined,
+      password: passwordHash,
       role,
       storeId: storeIds[0],
     },
     create: {
       email,
       name: name || null,
-      password: "pending_invite",
+      password: passwordHash,
       role,
       storeId: storeIds[0],
     },

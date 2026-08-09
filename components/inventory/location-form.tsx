@@ -14,7 +14,14 @@ import {
   type LocationType,
 } from "@/app/actions/locations";
 import { LOCATION_REGIONS, formatLocationRegion } from "@/lib/inventory/location-regions";
-import { inferMarketFromLocation, marketLabel } from "@/lib/application/sellable-market";
+import {
+  FULFILLMENT_DESTINATIONS,
+  LOCATION_CAPABILITIES,
+  defaultCapabilitiesForLocationType,
+  fulfillmentDestinationLabel,
+  type FulfillmentDestinationCode,
+  type LocationCapabilityCode,
+} from "@/lib/inventory/location-fulfillment";
 import { t } from "@/lib/i18n";
 import { AlertCircle, Info } from "lucide-react";
 
@@ -30,6 +37,12 @@ interface LocationFormProps {
     type: LocationType;
     region: string | null;
     isSellableDefault: boolean;
+    capabilities: Array<{ code: string; enabled: boolean }>;
+    shippingLanesFrom: Array<{
+      laneType: string;
+      destinationCountry: string | null;
+      active: boolean;
+    }>;
   };
 }
 
@@ -61,13 +74,22 @@ export function LocationForm({
     type: (initialData?.type || "WAREHOUSE") as LocationType,
     region: initialData?.region ?? (isCreateMode ? "CN_SHANGHAI" : ""),
     isSellableDefault: initialData?.isSellableDefault ?? true,
+    capabilities: (initialData?.capabilities
+      .filter((capability) => capability.enabled)
+      .map((capability) => capability.code) ??
+      defaultCapabilitiesForLocationType(
+        initialData?.type ?? "WAREHOUSE"
+      )) as LocationCapabilityCode[],
+    fulfillmentMarkets: (initialData?.shippingLanesFrom
+      .filter(
+        (lane) => lane.active && lane.laneType === "CUSTOMER_DELIVERY" && lane.destinationCountry
+      )
+      .map((lane) => lane.destinationCountry) ?? ["CN"]) as FulfillmentDestinationCode[],
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const generatedCodeHint = useMemo(() => generateLocationCode(formData.type), [formData.type]);
-  const marketPreview = marketLabel(
-    inferMarketFromLocation({ region: formData.region, code: formData.code, name: formData.name })
-  );
+  const canDirectFulfill = formData.capabilities.includes("DIRECT_FULFILLMENT");
 
   useEffect(() => {
     if (!isCreateMode || codeEditedManually) return;
@@ -100,6 +122,28 @@ export function LocationForm({
   const updateFormData = (updates: Partial<typeof formData>) => {
     setSubmitError(null);
     setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
+  const toggleCapability = (code: LocationCapabilityCode, checked: boolean) => {
+    const capabilities = checked
+      ? [...new Set([...formData.capabilities, code])]
+      : formData.capabilities.filter((value) => value !== code);
+    updateFormData({
+      capabilities,
+      ...(!checked && code === "DIRECT_FULFILLMENT" ? { fulfillmentMarkets: [] } : {}),
+    });
+  };
+
+  const toggleFulfillmentMarket = (code: FulfillmentDestinationCode, checked: boolean) => {
+    const fulfillmentMarkets = checked
+      ? [...new Set([...formData.fulfillmentMarkets, code])]
+      : formData.fulfillmentMarkets.filter((value) => value !== code);
+    updateFormData({
+      fulfillmentMarkets,
+      ...(checked && !canDirectFulfill
+        ? { capabilities: [...formData.capabilities, "DIRECT_FULFILLMENT"] }
+        : {}),
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -169,7 +213,7 @@ export function LocationForm({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="region">地区 *</Label>
+        <Label htmlFor="region">实际所在地区 *</Label>
         <Select
           id="region"
           value={formData.region}
@@ -184,7 +228,7 @@ export function LocationForm({
           ))}
         </Select>
         <p className="text-xs text-muted-foreground">
-          决定库存看板归属的货盘市场，例如日本地区会进入日本货盘。
+          只表示库存的物理位置，不再限制商品可以服务哪个销售市场。
         </p>
       </div>
 
@@ -193,7 +237,19 @@ export function LocationForm({
         <Select
           id="type"
           value={formData.type}
-          onChange={(e) => updateFormData({ type: e.target.value as LocationType })}
+          onChange={(e) => {
+            const type = e.target.value as LocationType;
+            updateFormData({
+              type,
+              ...(isCreateMode
+                ? {
+                    capabilities: defaultCapabilitiesForLocationType(type),
+                    fulfillmentMarkets: type === "WAREHOUSE" ? formData.fulfillmentMarkets : [],
+                    isSellableDefault: type !== "TRANSIT",
+                  }
+                : {}),
+            });
+          }}
           required
         >
           <option value="WAREHOUSE">仓库</option>
@@ -206,23 +262,76 @@ export function LocationForm({
         </p>
       </div>
 
+      <div className="space-y-3 rounded-lg border p-4">
+        <div>
+          <Label>节点运营能力</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            位置类型用于归类，实际能执行的动作由这里决定。
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {LOCATION_CAPABILITIES.map((capability) => (
+            <Checkbox
+              key={capability.code}
+              id={`capability-${capability.code}`}
+              checked={formData.capabilities.includes(capability.code)}
+              onChange={(event) => toggleCapability(capability.code, event.currentTarget.checked)}
+              label={capability.label}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border p-4">
+        <div>
+          <Label>客户配送线路</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            选择该节点可以直接履约的订单目的地；可同时支持本地发货和跨境直发。
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {FULFILLMENT_DESTINATIONS.map((destination) => (
+            <Checkbox
+              key={destination.code}
+              id={`destination-${destination.code}`}
+              checked={formData.fulfillmentMarkets.includes(destination.code)}
+              disabled={!canDirectFulfill}
+              onChange={(event) =>
+                toggleFulfillmentMarket(destination.code, event.currentTarget.checked)
+              }
+              label={`可发往${destination.label}`}
+            />
+          ))}
+        </div>
+        {!canDirectFulfill ? (
+          <p className="text-xs text-amber-700">开启“订单发货”能力后才能配置客户配送线路。</p>
+        ) : null}
+      </div>
+
       <div className="space-y-2">
         <Checkbox
           id="isSellableDefault"
           checked={formData.isSellableDefault}
           onChange={(e) => updateFormData({ isSellableDefault: e.currentTarget.checked })}
-          label="计入可售库存"
+          label="库存到达后可分配"
         />
         <p className="text-xs text-muted-foreground">
-          开启后，该仓库存会进入库存看板的可售层；关闭后会作为在途/暂存层展示。
+          开启后库存进入可分配层；关闭后作为在途、隔离或暂存库存。是否能向客户发货由上面的能力与线路决定。
         </p>
       </div>
 
       <div className="flex gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          当前配置预览：{formatLocationRegion(formData.region)} · {marketPreview} ·{" "}
-          {formData.isSellableDefault ? "库存到达后可直接出现在可售货盘" : "库存到达后先作为在途/暂存显示"}
+          当前配置预览：位于 {formatLocationRegion(formData.region)} ·{" "}
+          {formData.isSellableDefault ? "库存可分配" : "库存仅作在途/暂存"}
+          {canDirectFulfill
+            ? ` · 可履约：${
+                formData.fulfillmentMarkets.length > 0
+                  ? formData.fulfillmentMarkets.map(fulfillmentDestinationLabel).join("、")
+                  : "尚未配置目的地"
+              }`
+            : " · 不直接向客户发货"}
         </p>
       </div>
 
@@ -261,9 +370,7 @@ export function LocationForm({
         <CardHeader>
           <CardTitle>{initialData ? "编辑仓库位置" : "新建仓库位置"}</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {formFields}
-        </CardContent>
+        <CardContent className="space-y-4">{formFields}</CardContent>
       </Card>
     </form>
   );

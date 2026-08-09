@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import Link from "next/link";
 import { getItemUnits } from "@/app/actions/item-units";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,20 +9,22 @@ import { Plus, Package, CheckCircle, Clock, XCircle } from "lucide-react";
 import { ResponsiveTable, Column } from "@/components/shared/responsive-table";
 import { EntityId } from "@/components/shared/entity-id";
 import { ItemUnitRowActions } from "@/components/inventory/item-unit-row-actions";
+import { canViewInventoryCost, hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
+import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
 import {
-  formatItemUnitCondition,
-  itemUnitStatusLabels,
-} from "@/lib/inventory/item-unit-display";
+  itemConditionTypeLabel,
+  itemFunctionStatusLabel,
+  normalizeItemConditionType,
+} from "@/lib/inventory/item-condition";
 
 export const dynamic = "force-dynamic";
-
-const STORE_ID = "store_1";
 
 const statusColors = {
   AVAILABLE: "default",
   ALLOCATED: "secondary",
   CONSUMED: "outline",
   RETURN_CHECK: "secondary",
+  RETURN_TO_SUPPLIER: "destructive",
 } as const;
 
 const labelStatusLabels: Record<string, string> = {
@@ -33,14 +36,16 @@ const labelStatusLabels: Record<string, string> = {
 type ItemRow = Awaited<ReturnType<typeof getItemUnits>>[number];
 
 export default async function ItemUnitsPage() {
-  const items = await getItemUnits(STORE_ID);
+  const context = await requireUserContext();
+  const storeId = context.activeStoreId;
+  const showCost = canViewInventoryCost(context.role);
+  const canManage = hasRoleAtLeast(context.role, ROLES.MANAGER);
+  const items = await getItemUnits(storeId);
 
   const stats = {
     pendingLabel: items.filter((i) => i.labelStatus !== "ATTACHED").length,
     pendingPhoto: items.filter((i) => i.photoCount === 0).length,
-    sellable: items.filter(
-      (i) => i.status === "AVAILABLE" && i.location.isSellableDefault
-    ).length,
+    sellable: items.filter((i) => i.status === "AVAILABLE" && i.location.isSellableDefault).length,
     activeListingUnits: items.filter((i) => i.activeListingCount > 0).length,
     activeListings: items.reduce((sum, i) => sum + i.activeListingCount, 0),
   };
@@ -52,9 +57,7 @@ export default async function ItemUnitsPage() {
       cell: (row) => (
         <div className="space-y-1">
           <p className="font-medium">{row.unitCode || <EntityId id={row.id} />}</p>
-          <p className="text-xs text-muted-foreground">
-            标签：{row.labelCode || "未生成"}
-          </p>
+          <p className="text-xs text-muted-foreground">标签：{row.labelCode || "未生成"}</p>
         </div>
       ),
     },
@@ -67,11 +70,15 @@ export default async function ItemUnitsPage() {
             <p className="text-xs text-muted-foreground">
               {row.sku.parentSku.code} · {row.sku.parentSku.name}
             </p>
-            <p className="font-medium">{row.sku.code} · {row.sku.name}</p>
+            <p className="font-medium">
+              {row.sku.code} · {row.sku.name}
+            </p>
           </div>
         ) : (
           <div className="space-y-1">
-            <p className="font-medium">{row.sku.code} · {row.sku.name}</p>
+            <p className="font-medium">
+              {row.sku.code} · {row.sku.name}
+            </p>
             <p className="text-xs text-muted-foreground">独立 SKU</p>
           </div>
         ),
@@ -109,7 +116,7 @@ export default async function ItemUnitsPage() {
         <div className="space-y-1">
           <p>{row.location.code}</p>
           <p className="text-xs text-muted-foreground">
-            {row.location.isSellableDefault ? "可售库位" : "非可售库位"}
+            {row.operationalState.physicalLabel} · {row.operationalState.availabilityLabel}
           </p>
         </div>
       ),
@@ -117,25 +124,38 @@ export default async function ItemUnitsPage() {
     {
       key: "conditionStatus",
       header: "状态",
-      cell: (row) =>
-        (
-          <div className="space-y-1">
-            <Badge variant={statusColors[row.status as keyof typeof statusColors]}>
-              {itemUnitStatusLabels[row.status] || row.status}
-            </Badge>
-            <p className="text-xs text-muted-foreground">
-              {row.conditionGrade
-                ? formatItemUnitCondition(row.conditionGrade)
-                : "未记录成色"}
+      cell: (row) => (
+        <div className="space-y-1">
+          <Badge variant={statusColors[row.status as keyof typeof statusColors]}>
+            {row.operationalState.statusLabel}
+          </Badge>
+          <p className="text-xs text-muted-foreground">
+            {itemConditionTypeLabel(row.conditionType)}
+            {normalizeItemConditionType(row.conditionType) === "USED"
+              ? ` · ${formatItemUnitCondition(row.conditionGrade)}`
+              : ""}
+            {` · 功能${itemFunctionStatusLabel(row.functionStatus)}`}
+          </p>
+          {row.operationalState.workflowReason !== "NONE" ? (
+            <p className="max-w-xs text-xs text-muted-foreground">
+              {row.operationalState.explanation}
             </p>
-          </div>
-        ),
+          ) : null}
+        </div>
+      ),
     },
-    {
-      key: "cost",
-      header: "成本",
-      cell: (row) => formatCurrency(row.unitCost.toString(), row.costCurrency),
-    },
+    ...(showCost
+      ? [
+          {
+            key: "cost",
+            header: "成本",
+            cell: (row: ItemRow) =>
+              row.unitCost && row.costCurrency
+                ? formatCurrency(row.unitCost, row.costCurrency)
+                : "—",
+          } satisfies Column<ItemRow>,
+        ]
+      : []),
     {
       key: "listings",
       header: "上架",
@@ -147,14 +167,31 @@ export default async function ItemUnitsPage() {
           <span className="text-muted-foreground">未上架</span>
         ),
     },
-    {
-      key: "actions",
-      header: "操作",
-      className: "text-right",
-      cell: (row) => (
-        <ItemUnitRowActions id={row.id} skuCode={row.sku.code} storeId={STORE_ID} />
-      ),
-    },
+    ...(canManage
+      ? [
+          {
+            key: "actions",
+            header: "操作",
+            className: "text-right",
+            cell: (row) => (
+              <ItemUnitRowActions id={row.id} skuCode={row.sku.code} storeId={storeId} />
+            ),
+          } satisfies Column<ItemRow>,
+        ]
+      : [
+          {
+            key: "actions",
+            header: "操作",
+            className: "text-right",
+            cell: (row: ItemRow) => (
+              <Link href={`/inventory/items/${row.id}`}>
+                <Button variant="ghost" size="sm">
+                  查看
+                </Button>
+              </Link>
+            ),
+          } satisfies Column<ItemRow>,
+        ]),
   ];
 
   return (
@@ -166,12 +203,14 @@ export default async function ItemUnitsPage() {
             单件库存工作台用于核对 SKU 层级、标签、图片、库位和上架状态。
           </p>
         </div>
-        <Link href="/inventory/items/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            添加单件库存
-          </Button>
-        </Link>
+        {canManage ? (
+          <Link href="/inventory/items/new">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              添加单件库存
+            </Button>
+          </Link>
+        ) : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -215,9 +254,7 @@ export default async function ItemUnitsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.activeListingUnits}</div>
-            <p className="text-xs text-muted-foreground">
-              {stats.activeListings} 条有效上架
-            </p>
+            <p className="text-xs text-muted-foreground">{stats.activeListings} 条有效上架</p>
           </CardContent>
         </Card>
       </div>
@@ -238,12 +275,14 @@ export default async function ItemUnitsPage() {
                 <p className="mb-4 text-sm text-muted-foreground">
                   添加第一件库存后开始核对标签、图片和上架状态。
                 </p>
-                <Link href="/inventory/items/new">
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    添加单件库存
-                  </Button>
-                </Link>
+                {canManage ? (
+                  <Link href="/inventory/items/new">
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      添加单件库存
+                    </Button>
+                  </Link>
+                ) : null}
               </div>
             }
           />

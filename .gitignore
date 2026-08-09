@@ -37,3 +37,8 @@ next-env.d.ts
 
 # uploads
 /public/uploads
+/.data/mobile-assets
+
+# local Codex work and generated OCR artifacts
+/.codex/
+/eng.traineddata

@@ -18,4 +18,20 @@ describe("listing interaction source hygiene", () => {
       expect(source, file).not.toMatch(/\bconsole\.error\(/);
     }
   });
+
+  it("links sellable item rows to the individual item detail and preserves the board return path", () => {
+    const itemListSource = readFileSync(
+      join(process.cwd(), "components/listing/sellable-item-units-list.tsx"),
+      "utf8"
+    );
+    const coverageCardSource = readFileSync(
+      join(process.cwd(), "components/listing/listing-coverage-card.tsx"),
+      "utf8"
+    );
+
+    expect(itemListSource).toContain("`/inventory/items/${unit.id}${");
+    expect(itemListSource).toContain("encodeURIComponent(returnTo)");
+    expect(itemListSource).toContain("查看单件详情");
+    expect(coverageCardSource).toContain("returnTo={currentHref}");
+  });
 });

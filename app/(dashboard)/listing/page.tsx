@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { getPlatforms } from "@/app/actions/platforms";
@@ -12,37 +13,29 @@ import { Button } from "@/components/ui/button";
 import {
   getListingCoverageProducts,
   type ListingCoverageProduct,
-  type ListingRecord,
 } from "@/lib/application/listing-coverage";
+import { sortListingOpsItems } from "@/lib/application/listing-ops";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 const PAGE_SIZE = 30;
 
-function itemUnitSellable(product: ListingCoverageProduct, record: ListingRecord) {
-  return product.itemUnits.some(
-    (unit) => unit.id === record.itemUnitId && unit.sellable
-  );
-}
-
-function flattenListingRecords(
-  products: ListingCoverageProduct[]
-): ListingOpsItem[] {
+function flattenListingRecords(products: ListingCoverageProduct[]): ListingOpsItem[] {
   return products.flatMap((product) =>
     product.records.map((record) => ({
       id: record.listingId,
       listingType: record.listingScope,
       status: record.status,
-      skuId: product.skuId,
+      skuId: record.skuId,
       itemUnitId: record.itemUnitId,
-      skuCode: product.skuCode,
-      skuName: product.skuName,
-      imageUrl: product.imageUrl,
+      skuCode: record.skuCode || product.skuCode,
+      skuName: record.skuName || product.skuName,
+      imageUrl: record.imageUrl || product.imageUrl,
       platform: {
         id: record.platformId,
         name: record.platformName,
         code: record.platformCode,
+        country: record.platformCountry,
       },
       listedPrice: record.listedPrice,
       currency: record.currency,
@@ -51,14 +44,8 @@ function flattenListingRecords(
       estimatedNet: record.estimatedNet,
       listedAt: record.listedAt,
       updatedAt: record.updatedAt,
-      sellableQty:
-        record.listingScope === "ITEM_UNIT"
-          ? itemUnitSellable(product, record)
-            ? 1
-            : 0
-          : product.sellableQty,
-      sellableLocations:
-        record.listingScope === "SKU" ? product.sellableLocations : [],
+      sellableQty: record.sellableQty,
+      sellableLocations: record.sellableLocations,
       risks: record.risks,
     }))
   );
@@ -67,19 +54,16 @@ function flattenListingRecords(
 function computeStats(listings: ListingOpsItem[]): ListingOpsStatsType {
   return {
     activeCount: listings.filter((listing) => listing.status === "ACTIVE").length,
-    delistedCount: listings.filter((listing) => listing.status === "DELISTED")
-      .length,
-    soldOutCount: listings.filter((listing) => listing.status === "SOLD_OUT")
-      .length,
+    delistedCount: listings.filter((listing) => listing.status === "DELISTED").length,
+    soldOutCount: listings.filter((listing) => listing.status === "SOLD_OUT").length,
     lowStockCount: listings.filter((listing) =>
       listing.risks.some((risk) => risk.key === "lowStock")
     ).length,
     unpricedCount: listings.filter((listing) =>
       listing.risks.some((risk) => risk.key === "unpriced")
     ).length,
-    staleCount: listings.filter((listing) =>
-      listing.risks.some((risk) => risk.key === "stale")
-    ).length,
+    staleCount: listings.filter((listing) => listing.risks.some((risk) => risk.key === "stale"))
+      .length,
   };
 }
 
@@ -93,21 +77,6 @@ function matchesQuery(listing: ListingOpsItem, query?: string) {
     listing.platform.name,
     listing.platform.code,
   ].some((value) => value.toLowerCase().includes(keyword));
-}
-
-function sortListings(listings: ListingOpsItem[], sort?: string) {
-  return [...listings].sort((a, b) => {
-    if (sort === "updatedAt") {
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-    }
-    if (sort === "priceAsc") {
-      return Number(a.listedPrice ?? 0) - Number(b.listedPrice ?? 0);
-    }
-    if (sort === "priceDesc") {
-      return Number(b.listedPrice ?? 0) - Number(a.listedPrice ?? 0);
-    }
-    return new Date(b.listedAt).getTime() - new Date(a.listedAt).getTime();
-  });
 }
 
 function paginationHref(params: Record<string, string | undefined>, page: number) {
@@ -146,23 +115,21 @@ export default async function ListingPage({
     page?: string;
   }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const params = await searchParams;
   const [products, platforms] = await Promise.all([
-    getListingCoverageProducts(STORE_ID),
-    getPlatforms(STORE_ID),
+    getListingCoverageProducts(storeId),
+    getPlatforms(storeId),
   ]);
 
   const listings = flattenListingRecords(products);
-  const filteredListings = sortListings(
+  const filteredListings = sortListingOpsItems(
     listings.filter((listing) => {
       if (params.platformId && listing.platform.id !== params.platformId) {
         return false;
       }
       if (params.status && listing.status !== params.status) return false;
-      if (
-        params.risk &&
-        !listing.risks.some((risk) => risk.key === params.risk)
-      ) {
+      if (params.risk && !listing.risks.some((risk) => risk.key === params.risk)) {
         return false;
       }
       return matchesQuery(listing, params.q);
@@ -172,10 +139,7 @@ export default async function ListingPage({
   const currentPage = Math.max(Number(params.page ?? "1") || 1, 1);
   const totalPages = Math.max(Math.ceil(filteredListings.length / PAGE_SIZE), 1);
   const safePage = Math.min(currentPage, totalPages);
-  const pageListings = filteredListings.slice(
-    (safePage - 1) * PAGE_SIZE,
-    safePage * PAGE_SIZE
-  );
+  const pageListings = filteredListings.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   const stats = computeStats(listings);
   const returnTo = currentHref(params);
 

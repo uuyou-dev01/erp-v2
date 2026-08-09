@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getCustomerOrders } from "@/app/actions/customer-orders";
 import { getPlatforms } from "@/app/actions/platforms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import Link from "next/link";
 import { formatCurrency } from "@/lib/decimal";
 import { summarizeSalesOrders } from "@/lib/application/sales-metrics";
 import {
+  inferMarketFromPlatform,
   marketLabel,
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
@@ -27,7 +29,6 @@ import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 
 const statusColors = {
   DRAFT: "secondary",
@@ -52,27 +53,14 @@ const statusLabels: Record<string, string> = {
 };
 
 type OrderRow = Awaited<ReturnType<typeof getCustomerOrders>>[number];
-type PlatformRow = Awaited<ReturnType<typeof getPlatforms>>[number];
+type OrderPlatform = NonNullable<OrderRow["platform"]>;
 
-const marketOrder: SellableMarketCode[] = ["CN", "JP", "US", "GLOBAL", "UNKNOWN"];
+const marketOrder: SellableMarketCode[] = ["CN", "JP", "US", "EU", "GLOBAL", "UNKNOWN"];
 
-function marketFromPlatform(platform?: Pick<PlatformRow, "country" | "code"> | null): SellableMarketCode {
-  const country = platform?.country?.toUpperCase();
-  if (country === "CN" || country === "JP" || country === "US" || country === "GLOBAL") {
-    return country;
-  }
-
-  const code = platform?.code?.toUpperCase() ?? "";
-  if (["XIAN_YU", "TAOBAO", "TMALL", "JD", "PINDUODUO", "DOUYIN", "XIAOHONGSHU", "ALIBABA_1688"].includes(code)) {
-    return "CN";
-  }
-  if (["MERCARI", "YAHOO_AUCTION", "YAHOO_SHOPPING", "SNKRDUNK", "RAKUTEN", "AMAZON_JP", "ZOZOTOWN"].includes(code)) {
-    return "JP";
-  }
-  if (["EBAY", "AMAZON", "SHOPIFY"].includes(code)) {
-    return "US";
-  }
-  return "UNKNOWN";
+function marketFromPlatform(
+  platform?: Pick<OrderPlatform, "country" | "code"> | null
+): SellableMarketCode {
+  return platform ? inferMarketFromPlatform(platform) : "UNKNOWN";
 }
 
 function parseMarket(value?: string): SellableMarketCode | undefined {
@@ -127,11 +115,12 @@ export default async function SalesPage({
 }: {
   searchParams: Promise<{ platform?: string; market?: string }>;
 }) {
+  const { activeStoreId: storeId } = await requireUserContext();
   const { platform: platformFilter, market } = await searchParams;
   const marketFilter = parseMarket(market);
   const [allOrders, platforms] = await Promise.all([
-    getCustomerOrders(STORE_ID),
-    getPlatforms(STORE_ID),
+    getCustomerOrders(storeId),
+    getPlatforms(storeId),
   ]);
 
   const marketOrders = marketFilter
@@ -159,7 +148,8 @@ export default async function SalesPage({
     .filter((p) => !marketFilter || marketFromPlatform(p) === marketFilter)
     .map((p) => {
       const total =
-        platformSummaryForMarket.platformSales.find((row) => row.platformId === p.id)?.total ?? "0.00";
+        platformSummaryForMarket.platformSales.find((row) => row.platformId === p.id)?.total ??
+        "0.00";
       return {
         id: p.id,
         name: p.name,
@@ -196,15 +186,12 @@ export default async function SalesPage({
     {
       key: "id",
       header: "订单ID",
-      cell: (row) => (
-        <span className="font-medium font-mono text-xs">{row.id.slice(0, 8)}</span>
-      ),
+      cell: (row) => <span className="font-medium font-mono text-xs">{row.id.slice(0, 8)}</span>,
     },
     {
       key: "external",
       header: "外部订单号",
-      cell: (row) =>
-        row.externalOrderNo || <span className="text-muted-foreground">-</span>,
+      cell: (row) => row.externalOrderNo || <span className="text-muted-foreground">-</span>,
       hideOnMobile: true,
     },
     {
@@ -235,9 +222,7 @@ export default async function SalesPage({
       key: "status",
       header: "状态",
       cell: (row) => (
-        <Badge
-          variant={statusColors[row.orderStatus as keyof typeof statusColors]}
-        >
+        <Badge variant={statusColors[row.orderStatus as keyof typeof statusColors]}>
           {statusLabels[row.orderStatus] || row.orderStatus}
         </Badge>
       ),
@@ -272,7 +257,7 @@ export default async function SalesPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <SalesImportButton storeId={STORE_ID} />
+          <SalesImportButton storeId={storeId} />
           <Link href="/sales/new">
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -397,9 +382,7 @@ export default async function SalesPage({
                     />
                   ))
                 ) : (
-                  <p className="py-5 text-center text-xs text-muted-foreground">
-                    当前市场暂无平台
-                  </p>
+                  <p className="py-5 text-center text-xs text-muted-foreground">当前市场暂无平台</p>
                 )}
               </div>
             </div>
@@ -435,10 +418,7 @@ export default async function SalesPage({
 
       <div className="flex flex-wrap items-center gap-2">
         <Link href={salesHref({ market: marketFilter })}>
-          <Button
-            variant={!platformFilter ? "default" : "outline"}
-            size="sm"
-          >
+          <Button variant={!platformFilter ? "default" : "outline"} size="sm">
             全部
             <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
               {marketOrders.length}
@@ -447,15 +427,10 @@ export default async function SalesPage({
         </Link>
         {platformSales.map((p) => (
           <Link key={p.id} href={salesHref({ market: marketFilter, platform: p.id })}>
-            <Button
-              variant={platformFilter === p.id ? "default" : "outline"}
-              size="sm"
-            >
+            <Button variant={platformFilter === p.id ? "default" : "outline"} size="sm">
               {p.name}
               {Number(p.total) > 0 && (
-                <span className="ml-2 text-[10px] opacity-70">
-                  ¥{Number(p.total).toFixed(0)}
-                </span>
+                <span className="ml-2 text-[10px] opacity-70">¥{Number(p.total).toFixed(0)}</span>
               )}
             </Button>
           </Link>
@@ -475,9 +450,7 @@ export default async function SalesPage({
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Package className="mb-4 h-12 w-12 text-muted-foreground" />
                 <h3 className="mb-2 text-lg font-semibold">暂无订单</h3>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  创建第一个客户订单
-                </p>
+                <p className="mb-4 text-sm text-muted-foreground">创建第一个客户订单</p>
                 <Link href="/sales/new">
                   <Button>
                     <Plus className="mr-2 h-4 w-4" />

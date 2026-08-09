@@ -1,3 +1,4 @@
+import { requireUserContext } from "@/lib/auth/user-context";
 import { getPlatforms } from "@/app/actions/platforms";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,6 @@ import { PlatformRowActions } from "@/components/listing/platform-row-actions";
 
 export const dynamic = "force-dynamic";
 
-const STORE_ID = "store_1";
 
 type PlatformRow = Awaited<ReturnType<typeof getPlatforms>>[number];
 
@@ -21,7 +21,8 @@ function formatRate(value: unknown): string {
   return `${(Number(value) * 100).toFixed(1)}%`;
 }
 
-const columns: Column<PlatformRow>[] = [
+function getColumns(storeId: string): Column<PlatformRow>[] {
+  return [
   {
     key: "code",
     header: "平台代码",
@@ -93,13 +94,15 @@ const columns: Column<PlatformRow>[] = [
     header: "操作",
     className: "text-right",
     cell: (row) => (
-      <PlatformRowActions id={row.id} name={row.name} storeId={STORE_ID} />
+      <PlatformRowActions id={row.id} name={row.name} storeId={storeId} />
     ),
   },
-];
+  ];
+}
 
 export default async function PlatformsPage() {
-  const platforms = await getPlatforms(STORE_ID);
+  const { activeStoreId: storeId } = await requireUserContext();
+  const platforms = await getPlatforms(storeId);
 
   return (
     <div className="space-y-6">
@@ -122,7 +125,7 @@ export default async function PlatformsPage() {
         </CardHeader>
         <CardContent>
           <ResponsiveTable
-            columns={columns}
+            columns={getColumns(storeId)}
             data={platforms}
             keyExtractor={(row) => row.id}
             emptyState={

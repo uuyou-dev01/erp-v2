@@ -5,16 +5,11 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProductImage } from "@/components/ui/product-image";
-import {
-  ResponsiveTable,
-  type Column,
-} from "@/components/shared/responsive-table";
+import { ResponsiveTable, type Column } from "@/components/shared/responsive-table";
 import { BatchListingDialog } from "@/components/listing/batch-listing-dialog";
-import type {
-  ListingPendingItem,
-  ListingPendingPlatform,
-} from "@/lib/application/listing-pending";
+import type { ListingPendingItem, ListingPendingPlatform } from "@/lib/application/listing-pending";
 import { CheckCircle, PackageOpen, Plus, Truck } from "lucide-react";
+import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
 
 interface ListingPendingTableProps {
   storeId: string;
@@ -42,19 +37,13 @@ function listingCreateHref(item: ListingPendingItem, platformId?: string) {
   return `/listing/new?${params.toString()}`;
 }
 
-export function ListingPendingTable({
-  storeId,
-  items,
-  platforms,
-}: ListingPendingTableProps) {
+export function ListingPendingTable({ storeId, items, platforms }: ListingPendingTableProps) {
   const [tab, setTab] = useState<PendingTab>("sellable");
 
   const { sellableItems, inTransitItems } = useMemo(() => {
     return {
       sellableItems: items.filter((item) => item.sellableQty > 0),
-      inTransitItems: items.filter(
-        (item) => item.sellableQty === 0 && item.inTransitQty > 0
-      ),
+      inTransitItems: items.filter((item) => item.sellableQty === 0 && item.inTransitQty > 0),
     };
   }, [items]);
 
@@ -86,7 +75,9 @@ export function ListingPendingTable({
             <p className="truncate text-xs text-muted-foreground">{item.skuName}</p>
             {item.conditionGrade || item.locationName ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                {[item.conditionGrade, item.locationName].filter(Boolean).join(" · ")}
+                {[formatItemUnitCondition(item.conditionGrade), item.locationName]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             ) : null}
           </div>
@@ -104,21 +95,17 @@ export function ListingPendingTable({
               可发 {item.sellableQty}
             </Badge>
           ) : (
-            <Badge
-              variant="outline"
-              className="border-amber-500/40 bg-amber-500/10 text-amber-700"
-            >
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700">
               <Truck className="mr-1 h-3 w-3" />
               转运 {item.inTransitQty}
             </Badge>
           )}
           <p className="text-xs text-muted-foreground">
-            {(item.sellableQty > 0
-              ? item.sellableLocations
-              : item.inTransitLocations
-            )
+            {(item.sellableQty > 0 ? item.sellableLocations : item.inTransitLocations)
               .map((location) => `${location.code} ${location.qty}`)
-              .join(" · ") || item.locationName || stockLabel(item)}
+              .join(" · ") ||
+              item.locationName ||
+              stockLabel(item)}
           </p>
         </div>
       ),
@@ -209,11 +196,7 @@ export function ListingPendingTable({
             仅转运 {inTransitItems.length}
           </button>
         </div>
-        <BatchListingDialog
-          storeId={storeId}
-          platforms={platforms}
-          skus={batchSkus}
-        />
+        <BatchListingDialog storeId={storeId} platforms={platforms} skus={batchSkus} />
       </div>
 
       <ResponsiveTable
@@ -224,9 +207,7 @@ export function ListingPendingTable({
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <PackageOpen className="mb-4 h-12 w-12 text-muted-foreground" />
             <h3 className="mb-2 text-lg font-semibold">暂无待上架检查</h3>
-            <p className="text-sm text-muted-foreground">
-              当前筛选下没有需要补充平台覆盖的商品。
-            </p>
+            <p className="text-sm text-muted-foreground">当前筛选下没有需要补充平台覆盖的商品。</p>
           </div>
         }
       />

@@ -1,13 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import {
-  buildVariantView,
-  getListingCoverageProducts,
-} from "@/lib/application/listing-coverage";
-import {
-  getSkuCatalogDetail,
-  getSkuCatalogList,
-} from "@/lib/application/sku-catalog";
+import { buildVariantView, getListingCoverageProducts } from "@/lib/application/listing-coverage";
+import { getSkuCatalogDetail, getSkuCatalogList } from "@/lib/application/sku-catalog";
 
 const runId = `sku_stock_${Date.now()}`;
 const organizationCode = `org_${runId}`;
@@ -299,6 +293,20 @@ describe("SKU stock consistency", () => {
     });
     expect(parentProduct?.sellableQty).toBe(5);
     expect(parentProduct?.itemUnits.map((item) => item.id)).toContain(itemUnit.id);
+    expect(parentProduct?.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          skuId: childWithLot.id,
+          skuCode: childWithLot.code,
+          skuName: childWithLot.name,
+        }),
+        expect.objectContaining({
+          skuId: childWithUnit.id,
+          skuCode: childWithUnit.code,
+          skuName: childWithUnit.name,
+        }),
+      ])
+    );
     expect(products.some((item) => item.skuId === childWithLot.id)).toBe(false);
     expect(products.some((item) => item.skuId === childWithUnit.id)).toBe(false);
   });
@@ -398,13 +406,13 @@ describe("SKU stock consistency", () => {
     });
 
     expect(jpView.scopedSellableQty).toBe(5);
-    expect(jpView.scopedSellableLocations.every((location) => location.region?.startsWith("JP"))).toBe(
-      true
-    );
+    expect(
+      jpView.scopedSellableLocations.every((location) => location.region?.startsWith("JP"))
+    ).toBe(true);
     expect(cnView.scopedSellableQty).toBe(3);
-    expect(cnView.scopedSellableLocations.every((location) => location.region?.startsWith("CN"))).toBe(
-      true
-    );
+    expect(
+      cnView.scopedSellableLocations.every((location) => location.region?.startsWith("CN"))
+    ).toBe(true);
   });
 
   it("counts duplicate active SKU listings on one core platform once for new-stock coverage", async () => {
@@ -492,7 +500,7 @@ describe("SKU stock consistency", () => {
     expect(product?.itemUnitSummary.pendingListingCount).toBe(1);
   });
 
-  it("keeps in-transit stock out of SKU detail sellable quantity", async () => {
+  it("keeps arrived stock at a non-sellable node in held inventory", async () => {
     const sku = await createSku("TRANSIT_ONLY");
     const lot = await prisma.inventoryLot.create({
       data: {
@@ -525,7 +533,11 @@ describe("SKU stock consistency", () => {
 
     expect(detail?.reference.sellableLotQty).toBe("0");
     expect(detail?.reference.availableItemUnits).toBe(0);
-    expect(detail?.reference.inTransitQty).toBe("2");
+    expect(detail?.reference.inTransitQty).toBe("0");
+    expect(detail?.reference.heldQty).toBe("2");
+    expect(detail?.analysis.inventoryDistribution.heldLocations[0]?.locationId).toBe(
+      transitLocationId,
+    );
   });
 
   it("shows SKU catalog business metrics for stock, listings, sales, and top platform", async () => {
@@ -667,7 +679,13 @@ describe("SKU stock consistency", () => {
         },
       ],
     });
-    await createOrderWithLine(childA.id, platform.id, "CONFIRMED", "120", "2026-06-24T03:00:00.000Z");
+    await createOrderWithLine(
+      childA.id,
+      platform.id,
+      "CONFIRMED",
+      "120",
+      "2026-06-24T03:00:00.000Z"
+    );
     await createOrderWithLine(childB.id, platform.id, "SHIPPED", "180", "2026-06-25T03:00:00.000Z");
 
     const list = await getSkuCatalogList(storeId);
@@ -712,7 +730,7 @@ async function createOrderWithLine(
   platformId: string,
   status: string,
   amount: string,
-  orderDate: string,
+  orderDate: string
 ) {
   const order = await prisma.customerOrder.create({
     data: {

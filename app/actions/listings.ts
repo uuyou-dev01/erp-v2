@@ -4,16 +4,10 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { computeOrderFees, feeResultToStrings } from "@/lib/application/order-fees";
+import { actionFailure, actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import {
-  computeOrderFees,
-  feeResultToStrings,
-} from "@/lib/application/order-fees";
-import {
-  actionFailure,
-  actionSuccess,
-  toActionFailure,
-} from "@/lib/application/action-result";
-import {
+  getEffectiveSellableQuantity,
   getSkuStockBreakdown,
   resolveFifoShipFromLocation,
 } from "@/lib/application/inventory";
@@ -21,12 +15,14 @@ import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
 import { requiresSellableStockForListing } from "@/lib/core-platforms";
 import { requireUserContext } from "@/lib/auth/user-context";
-import {
-  completeTasksForRef,
-  createTaskIfMissing,
-  TASK_TYPE,
-} from "@/lib/application/tasks";
+import { completeTasksForRef, createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
+import {
+  inferMarketFromPlatform,
+  locationMatchesMarket,
+  locationMatchesPlatformMarket,
+  marketLabel,
+} from "@/lib/application/sellable-market";
 
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
@@ -50,9 +46,7 @@ function parseDecimalInput(
     nonNegative?: boolean;
     max?: Decimal.Value;
   } = {}
-):
-  | { success: true; value: Decimal }
-  | { success: false; error: string } {
+): { success: true; value: Decimal } | { success: false; error: string } {
   const raw = value?.trim() || options.fallback;
   if (!raw) {
     return { success: false, error: `${fieldLabel}必须是有效数字` };
@@ -89,9 +83,7 @@ function parseOptionalDecimalInput(
     nonNegative?: boolean;
     max?: Decimal.Value;
   } = {}
-):
-  | { success: true; value: Decimal | null }
-  | { success: false; error: string } {
+): { success: true; value: Decimal | null } | { success: false; error: string } {
   if (value == null || value.trim() === "") {
     return { success: true, value: null };
   }
@@ -183,6 +175,7 @@ async function getSkuReferencePrice(skuId: string) {
 async function assertListingHasSellableStock(input: {
   storeId: string;
   platformCode: string;
+  platformCountry?: string | null;
   platformName: string;
   listingType: "SKU" | "ITEM_UNIT";
   skuId?: string;
@@ -197,8 +190,15 @@ async function assertListingHasSellableStock(input: {
     });
     if (!requiresSellableStockForListing(input.platformCode)) return;
     const breakdown = await getSkuStockBreakdown(input.storeId, input.skuId);
-    if (breakdown.sellableQty <= 0) {
-      throw new Error(`${input.platformName} 上架需要可售库存，请先到日本可售仓或代发仓入库`);
+    const platform = { code: input.platformCode, country: input.platformCountry ?? null };
+    const regionalSellableQty = breakdown.sellableLocations
+      .filter((location) => locationMatchesPlatformMarket(location, platform))
+      .reduce((sum, location) => sum + location.qty, 0);
+    if (regionalSellableQty <= 0) {
+      const market = marketLabel(inferMarketFromPlatform(platform));
+      throw new Error(
+        `${input.platformName} 上架需要可履约${market}的可售库存，请为库存节点配置订单发货能力和有效配送线路`
+      );
     }
     return;
   }
@@ -210,16 +210,38 @@ async function assertListingHasSellableStock(input: {
     where: {
       id: input.itemUnitId,
       storeId: input.storeId,
+      allocations: {
+        none: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+      },
     },
     include: {
       location: {
-        select: { isSellableDefault: true },
+        select: {
+          code: true,
+          name: true,
+          region: true,
+          isSellableDefault: true,
+          capabilities: { where: { enabled: true }, select: { code: true, enabled: true } },
+          shippingLanesFrom: {
+            where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+            select: { laneType: true, destinationCountry: true, active: true },
+          },
+        },
       },
     },
   });
 
-  if (!itemUnit || itemUnit.status !== "AVAILABLE" || !itemUnit.location.isSellableDefault) {
-    throw new Error(`${input.platformName} 上架需要可售库存，请先到日本可售仓或代发仓入库`);
+  const platform = { code: input.platformCode, country: input.platformCountry ?? null };
+  if (
+    !itemUnit ||
+    itemUnit.status !== "AVAILABLE" ||
+    !itemUnit.location.isSellableDefault ||
+    !locationMatchesPlatformMarket(itemUnit.location, platform)
+  ) {
+    const market = marketLabel(inferMarketFromPlatform(platform));
+    throw new Error(
+      `${input.platformName} 上架需要可履约${market}的可售库存，请为库存节点配置订单发货能力和有效配送线路`
+    );
   }
 }
 
@@ -281,6 +303,7 @@ export async function createListing(data: {
       select: {
         code: true,
         name: true,
+        country: true,
         defaultFeeRate: true,
         defaultCurrency: true,
         defaultShippingFee: true,
@@ -317,6 +340,7 @@ export async function createListing(data: {
     await assertListingHasSellableStock({
       storeId: context.activeStoreId,
       platformCode: platform.code,
+      platformCountry: platform.country,
       platformName: platform.name,
       listingType: data.listingType,
       skuId: data.skuId,
@@ -336,7 +360,9 @@ export async function createListing(data: {
       select: { id: true },
     });
     if (duplicateActiveListing) {
-      return actionFailure(`该${data.listingType === "ITEM_UNIT" ? "单件" : "SKU"}已在 ${platform.name} 上架`);
+      return actionFailure(
+        `该${data.listingType === "ITEM_UNIT" ? "单件" : "SKU"}已在 ${platform.name} 上架`
+      );
     }
 
     const platformDefaults = platform ? resolvePlatformListingDefaults(platform) : null;
@@ -351,15 +377,10 @@ export async function createListing(data: {
     }
 
     const referencePrice =
-      !data.listedPrice && pricingSkuId
-        ? await getSkuReferencePrice(pricingSkuId)
-        : null;
+      !data.listedPrice && pricingSkuId ? await getSkuReferencePrice(pricingSkuId) : null;
     const listedPriceDecimal = listedPriceInput.value ?? referencePrice?.price ?? null;
     const resolvedCurrency =
-      data.currency ||
-      referencePrice?.currency ||
-      platformDefaults?.currency ||
-      null;
+      data.currency || referencePrice?.currency || platformDefaults?.currency || null;
     const feeRateDecimal = feeRateInput.value
       ? feeRateInput.value
       : platformDefaults?.feeRate
@@ -410,7 +431,7 @@ export async function createListing(data: {
 export async function getListingFifoShipFromLocation(listingId: string) {
   const listing = await prisma.listing.findUnique({
     where: { id: listingId },
-    include: { sku: true },
+    include: { sku: true, platform: true },
   });
 
   if (!listing || listing.listingType !== "SKU" || !listing.sku) {
@@ -419,7 +440,8 @@ export async function getListingFifoShipFromLocation(listingId: string) {
 
   const locationId = await resolveFifoShipFromLocation(
     listing.storeId,
-    listing.sku.id
+    listing.sku.id,
+    inferMarketFromPlatform(listing.platform)
   );
   return { locationId };
 }
@@ -436,6 +458,7 @@ export async function quickSellListing(data: {
   customerEmail?: string;
   customerPhone?: string;
   shippingAddress?: string;
+  shippingCountry?: string;
   externalOrderNo?: string;
 }) {
   try {
@@ -455,20 +478,16 @@ export async function quickSellListing(data: {
       return actionFailure(unitPriceInput.error);
     }
 
-    const platformFeeRateInput = parseOptionalDecimalInput(
-      data.platformFeeRate,
-      "平台费率",
-      { nonNegative: true },
-    );
+    const platformFeeRateInput = parseOptionalDecimalInput(data.platformFeeRate, "平台费率", {
+      nonNegative: true,
+    });
     if (!platformFeeRateInput.success) {
       return actionFailure(platformFeeRateInput.error);
     }
 
-    const platformFeeAmountInput = parseOptionalDecimalInput(
-      data.platformFeeAmount,
-      "平台手续费",
-      { nonNegative: true },
-    );
+    const platformFeeAmountInput = parseOptionalDecimalInput(data.platformFeeAmount, "平台手续费", {
+      nonNegative: true,
+    });
     if (!platformFeeAmountInput.success) {
       return actionFailure(platformFeeAmountInput.error);
     }
@@ -481,252 +500,331 @@ export async function quickSellListing(data: {
     }
 
     const saleResult = await prisma.$transaction(async (tx) => {
-    const listing = await tx.listing.findUnique({
-      where: { id: data.listingId },
-      include: {
-        platform: true,
-        sku: true,
-        itemUnit: {
-          include: {
-            sku: true,
+      const listing = await tx.listing.findUnique({
+        where: { id: data.listingId },
+        include: {
+          platform: true,
+          sku: true,
+          itemUnit: {
+            include: {
+              sku: true,
+              location: {
+                include: {
+                  capabilities: { where: { enabled: true } },
+                  shippingLanesFrom: {
+                    where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+                  },
+                },
+              },
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!listing) {
-      throw new Error("上架记录不存在");
-    }
+      if (!listing) {
+        throw new Error("上架记录不存在");
+      }
 
-    if (listing.status !== "ACTIVE") {
-      throw new Error("只有在售 Listing 可以登记售出");
-    }
+      if (listing.status !== "ACTIVE") {
+        throw new Error("只有在售 Listing 可以登记售出");
+      }
 
-    const sku = listing.sku || listing.itemUnit?.sku;
-    if (!sku) {
-      throw new Error("上架记录没有关联 SKU");
-    }
+      const sku = listing.sku || listing.itemUnit?.sku;
+      if (!sku) {
+        throw new Error("上架记录没有关联 SKU");
+      }
+      const platformMarket = inferMarketFromPlatform(listing.platform);
+      const requestedDestination = data.shippingCountry?.trim().toUpperCase();
+      const destinationMarket =
+        requestedDestination && ["CN", "JP", "US", "EU", "GLOBAL"].includes(requestedDestination)
+          ? (requestedDestination as typeof platformMarket)
+          : platformMarket;
 
-    const quantity =
-      listing.listingType === "ITEM_UNIT" ? new Decimal(1) : requestedQuantity;
-    const unitPrice = unitPriceInput.value
-      ? unitPriceInput.value
-      : listing.listedPrice
-        ? new Decimal(listing.listedPrice.toString())
-        : new Decimal(0);
-    if (unitPrice.lte(0)) {
-      throw new Error("售出单价必须大于 0");
-    }
-    const currency =
-      listing.currency || listing.platform.defaultCurrency || "CNY";
-    const subtotal = quantity.mul(unitPrice);
-    const feeRate = listing.feeRateOverride
-      ? new Decimal(listing.feeRateOverride.toString())
-      : listing.platform.defaultFeeRate
-        ? new Decimal(listing.platform.defaultFeeRate.toString())
-        : new Decimal(0);
-    const effectiveFeeRate = platformFeeRateInput.value ?? feeRate;
-    const platformFeeAmount = platformFeeAmountInput.value;
-    const shippingFee = shippingFeeInput.value
-      ? shippingFeeInput.value
-      : listing.shippingFeeOverride
-        ? new Decimal(listing.shippingFeeOverride.toString())
-        : listing.platform.defaultShippingFee
-          ? new Decimal(listing.platform.defaultShippingFee.toString())
+      const quantity = listing.listingType === "ITEM_UNIT" ? new Decimal(1) : requestedQuantity;
+      const unitPrice = unitPriceInput.value
+        ? unitPriceInput.value
+        : listing.listedPrice
+          ? new Decimal(listing.listedPrice.toString())
           : new Decimal(0);
-
-    let inventoryCost = new Decimal(0);
-
-    const customerOrder = await tx.customerOrder.create({
-      data: {
-        storeId: listing.storeId,
-        orderNumber: `SALE-${Date.now()}-${randomUUID().slice(0, 8)}`,
-        platformId: listing.platformId,
-        externalOrderNo: data.externalOrderNo || undefined,
-        customerName: data.customerName || "散客",
-        customerEmail: data.customerEmail || undefined,
-        customerPhone: data.customerPhone || undefined,
-        shippingAddress: data.shippingAddress || undefined,
-        orderDate: new Date(),
-        currency,
-        subtotal: subtotal.toFixed(4),
-        totalPaid: subtotal.toFixed(4),
-        platformFee: (platformFeeAmount ?? subtotal.mul(effectiveFeeRate)).toFixed(4),
-        shippingFee: shippingFee.toFixed(4),
-        orderStatus: "CONFIRMED",
-        confirmedAt: new Date(),
-      },
-    });
-
-    const orderLine = await tx.orderLine.create({
-      data: {
-        orderId: customerOrder.id,
-        skuId: sku.id,
-        quantity: quantity.toFixed(4),
-        unitPrice: unitPrice.toFixed(4),
-        lineAmount: subtotal.toFixed(4),
-        supplyType: "FROM_STOCK",
-        supplyStatus: "READY_TO_SHIP",
-      },
-    });
-
-    if (listing.listingType === "ITEM_UNIT") {
-      if (!listing.itemUnit || listing.itemUnit.status !== "AVAILABLE") {
-        throw new Error("关联单品已不可售");
+      if (unitPrice.lte(0)) {
+        throw new Error("售出单价必须大于 0");
       }
-      const reservedItemUnit = await tx.orderAllocation.findFirst({
-        where: {
-          itemUnitId: listing.itemUnit.id,
-          status: { in: [...RESERVING_ALLOCATION_STATUSES] },
-        },
-        select: { id: true },
-      });
-      if (reservedItemUnit) {
-        throw new Error("关联单品已被预留");
+      const currency = listing.currency || listing.platform.defaultCurrency || "CNY";
+      const subtotal = quantity.mul(unitPrice);
+      const feeRate = listing.feeRateOverride
+        ? new Decimal(listing.feeRateOverride.toString())
+        : listing.platform.defaultFeeRate
+          ? new Decimal(listing.platform.defaultFeeRate.toString())
+          : new Decimal(0);
+      const effectiveFeeRate = platformFeeRateInput.value ?? feeRate;
+      const platformFeeAmount = platformFeeAmountInput.value;
+      const shippingFee = shippingFeeInput.value
+        ? shippingFeeInput.value
+        : listing.shippingFeeOverride
+          ? new Decimal(listing.shippingFeeOverride.toString())
+          : listing.platform.defaultShippingFee
+            ? new Decimal(listing.platform.defaultShippingFee.toString())
+            : new Decimal(0);
+
+      let inventoryCost = new Decimal(0);
+
+      // Direct sales and supply-offer orders draw from the same physical pool.
+      // Lock the SKU row so they cannot both pass availability checks concurrently.
+      await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${sku.id} FOR UPDATE`;
+      const effectiveSellable = await getEffectiveSellableQuantity(
+        tx,
+        listing.storeId,
+        sku.id,
+        destinationMarket
+      );
+      if (quantity.gt(effectiveSellable)) {
+        throw new Error("可售库存不足（部分库存可能已被货盘保证配额保护）");
       }
 
-      const unitCost = new Decimal(listing.itemUnit.unitCost.toString());
-      inventoryCost = unitCost;
-
-      await tx.orderAllocation.create({
+      const customerOrder = await tx.customerOrder.create({
         data: {
-          orderLineId: orderLine.id,
-          allocationType: "ITEM_UNIT",
-          itemUnitId: listing.itemUnit.id,
-          quantity: "1.0000",
-          unitCost: unitCost.toFixed(4),
-          costAmount: unitCost.toFixed(4),
-          status: "PENDING",
-        },
-      });
-
-      await tx.listing.update({
-        where: { id: listing.id },
-        data: { status: "SOLD_OUT", delistedAt: new Date() },
-      });
-    } else {
-      let remainingToAllocate = quantity;
-      const lots = await tx.inventoryLot.findMany({
-        where: {
           storeId: listing.storeId,
-          skuId: sku.id,
-          status: "ACTIVE",
-          ...(data.shipFromLocationId
-            ? { locationId: data.shipFromLocationId }
-            : {}),
+          orderNumber: `SALE-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          platformId: listing.platformId,
+          externalOrderNo: data.externalOrderNo || undefined,
+          customerName: data.customerName || "散客",
+          customerEmail: data.customerEmail || undefined,
+          customerPhone: data.customerPhone || undefined,
+          shippingAddress: data.shippingAddress || undefined,
+          shippingCountry: destinationMarket === "UNKNOWN" ? undefined : destinationMarket,
+          orderDate: new Date(),
+          currency,
+          subtotal: subtotal.toFixed(4),
+          totalPaid: subtotal.toFixed(4),
+          platformFee: (platformFeeAmount ?? subtotal.mul(effectiveFeeRate)).toFixed(4),
+          shippingFee: shippingFee.toFixed(4),
+          orderStatus: "CONFIRMED",
+          confirmedAt: new Date(),
         },
-        orderBy: { receivedAt: "asc" },
       });
 
-      for (const lot of lots) {
-        const ledgers = await tx.stockLedger.findMany({
-          where: { entityType: "LOT", entityId: lot.id },
-        });
-        const available = ledgers.reduce(
-          (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
-          new Decimal(0)
-        );
-        const activeAllocations = await tx.orderAllocation.findMany({
+      const orderLine = await tx.orderLine.create({
+        data: {
+          orderId: customerOrder.id,
+          skuId: sku.id,
+          quantity: quantity.toFixed(4),
+          unitPrice: unitPrice.toFixed(4),
+          lineAmount: subtotal.toFixed(4),
+          supplyType: "FROM_STOCK",
+          supplyStatus: "READY_TO_SHIP",
+        },
+      });
+
+      if (listing.listingType === "ITEM_UNIT") {
+        if (
+          !listing.itemUnit ||
+          listing.itemUnit.status !== "AVAILABLE" ||
+          listing.itemUnit.costStatus !== "CONFIRMED" ||
+          !locationMatchesMarket(listing.itemUnit.location, destinationMarket)
+        ) {
+          throw new Error("关联单品已不可售");
+        }
+        const reservedItemUnit = await tx.orderAllocation.findFirst({
           where: {
-            lotId: lot.id,
+            itemUnitId: listing.itemUnit.id,
             status: { in: [...RESERVING_ALLOCATION_STATUSES] },
           },
-          select: { quantity: true },
+          select: { id: true },
         });
-        const reserved = activeAllocations.reduce(
-          (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
-          new Decimal(0)
-        );
-        const availableAfterReservations = available.minus(reserved);
+        if (reservedItemUnit) {
+          throw new Error("关联单品已被预留");
+        }
 
-        if (availableAfterReservations.lte(0) || remainingToAllocate.lte(0)) continue;
-
-        const allocatedQty = Decimal.min(availableAfterReservations, remainingToAllocate);
-        const unitCost = new Decimal(lot.unitCost.toString());
-        inventoryCost = inventoryCost.plus(allocatedQty.mul(unitCost));
+        const unitCost = new Decimal(listing.itemUnit.unitCost.toString());
+        inventoryCost = unitCost;
 
         await tx.orderAllocation.create({
           data: {
             orderLineId: orderLine.id,
-            allocationType: "LOT",
-            lotId: lot.id,
-            quantity: allocatedQty.toFixed(4),
+            allocationType: "ITEM_UNIT",
+            itemUnitId: listing.itemUnit.id,
+            quantity: "1.0000",
             unitCost: unitCost.toFixed(4),
-            costAmount: allocatedQty.mul(unitCost).toFixed(4),
+            costAmount: unitCost.toFixed(4),
+            costCurrency: listing.itemUnit.costCurrency,
+            costSourceType: listing.itemUnit.sourceType,
+            costSourceId: listing.itemUnit.sourceId,
             status: "PENDING",
           },
         });
 
-        remainingToAllocate = remainingToAllocate.minus(allocatedQty);
-      }
-
-      if (remainingToAllocate.gt(0)) {
-        const itemUnits = await tx.itemUnit.findMany({
+        await tx.listing.update({
+          where: { id: listing.id },
+          data: { status: "SOLD_OUT", delistedAt: new Date() },
+        });
+      } else {
+        let remainingToAllocate = quantity;
+        const lots = await tx.inventoryLot.findMany({
           where: {
             storeId: listing.storeId,
             skuId: sku.id,
-            status: "AVAILABLE",
-            allocations: {
-              none: {
-                status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+            status: "ACTIVE",
+            costStatus: "CONFIRMED",
+            location: { isSellableDefault: true },
+            ...(data.shipFromLocationId ? { locationId: data.shipFromLocationId } : {}),
+          },
+          include: {
+            location: {
+              include: {
+                capabilities: { where: { enabled: true } },
+                shippingLanesFrom: {
+                  where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+                },
               },
             },
-            ...(data.shipFromLocationId
-              ? { locationId: data.shipFromLocationId }
-              : {}),
           },
-          orderBy: { createdAt: "asc" },
+          orderBy: { receivedAt: "asc" },
         });
 
-        for (const itemUnit of itemUnits) {
-          if (remainingToAllocate.lt(1)) break;
-          const unitCost = new Decimal(itemUnit.unitCost.toString());
-          inventoryCost = inventoryCost.plus(unitCost);
+        for (const lot of lots) {
+          if (!locationMatchesMarket(lot.location, destinationMarket)) continue;
+          const ledgers = await tx.stockLedger.findMany({
+            where: { entityType: "LOT", entityId: lot.id },
+          });
+          const available = ledgers.reduce(
+            (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
+            new Decimal(0)
+          );
+          const [activeAllocations, fulfillmentAllocations] = await Promise.all([
+            tx.orderAllocation.findMany({
+              where: {
+                lotId: lot.id,
+                status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+              },
+              select: { quantity: true },
+            }),
+            tx.fulfillmentInventoryAllocation.findMany({
+              where: { lotId: lot.id, status: "ALLOCATED" },
+              select: { quantity: true },
+            }),
+          ]);
+          const reserved = [...activeAllocations, ...fulfillmentAllocations].reduce(
+            (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
+            new Decimal(0)
+          );
+          const availableAfterReservations = available.minus(reserved);
+
+          if (availableAfterReservations.lte(0) || remainingToAllocate.lte(0)) continue;
+
+          const allocatedQty = Decimal.min(availableAfterReservations, remainingToAllocate);
+          const unitCost = new Decimal(lot.unitCost.toString());
+          inventoryCost = inventoryCost.plus(allocatedQty.mul(unitCost));
 
           await tx.orderAllocation.create({
             data: {
               orderLineId: orderLine.id,
-              allocationType: "ITEM_UNIT",
-              itemUnitId: itemUnit.id,
-              quantity: "1.0000",
+              allocationType: "LOT",
+              lotId: lot.id,
+              quantity: allocatedQty.toFixed(4),
               unitCost: unitCost.toFixed(4),
-              costAmount: unitCost.toFixed(4),
+              costAmount: allocatedQty.mul(unitCost).toFixed(4),
+              costCurrency: lot.costCurrency,
+              costSourceType: lot.sourceType,
+              costSourceId: lot.sourceId,
               status: "PENDING",
             },
           });
 
-          remainingToAllocate = remainingToAllocate.minus(1);
+          remainingToAllocate = remainingToAllocate.minus(allocatedQty);
+        }
+
+        if (remainingToAllocate.gt(0)) {
+          const itemUnits = await tx.itemUnit.findMany({
+            where: {
+              storeId: listing.storeId,
+              skuId: sku.id,
+              status: "AVAILABLE",
+              costStatus: "CONFIRMED",
+              location: { isSellableDefault: true },
+              allocations: {
+                none: {
+                  status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+                },
+              },
+              ...(data.shipFromLocationId ? { locationId: data.shipFromLocationId } : {}),
+            },
+            include: {
+              location: {
+                include: {
+                  capabilities: { where: { enabled: true } },
+                  shippingLanesFrom: {
+                    where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+                  },
+                },
+              },
+            },
+            orderBy: { createdAt: "asc" },
+          });
+
+          for (const itemUnit of itemUnits) {
+            if (!locationMatchesMarket(itemUnit.location, destinationMarket)) continue;
+            if (remainingToAllocate.lt(1)) break;
+            const unitCost = new Decimal(itemUnit.unitCost.toString());
+            inventoryCost = inventoryCost.plus(unitCost);
+
+            await tx.orderAllocation.create({
+              data: {
+                orderLineId: orderLine.id,
+                allocationType: "ITEM_UNIT",
+                itemUnitId: itemUnit.id,
+                quantity: "1.0000",
+                unitCost: unitCost.toFixed(4),
+                costAmount: unitCost.toFixed(4),
+                costCurrency: itemUnit.costCurrency,
+                costSourceType: itemUnit.sourceType,
+                costSourceId: itemUnit.sourceId,
+                status: "PENDING",
+              },
+            });
+
+            remainingToAllocate = remainingToAllocate.minus(1);
+          }
+        }
+
+        if (remainingToAllocate.gt(0)) {
+          throw new Error(
+            data.shipFromLocationId ? "所选发货仓库存不足，无法完成售出" : "库存不足，无法完成售出"
+          );
+        }
+
+        const remainingSellable = await getEffectiveSellableQuantity(
+          tx,
+          listing.storeId,
+          sku.id,
+          destinationMarket
+        );
+        if (remainingSellable.lte(0)) {
+          await tx.listing.update({
+            where: { id: listing.id },
+            data: { status: "SOLD_OUT", delistedAt: new Date() },
+          });
         }
       }
 
-      if (remainingToAllocate.gt(0)) {
-        throw new Error(
-          data.shipFromLocationId
-            ? "所选发货仓库存不足，无法完成售出"
-            : "库存不足，无法完成售出"
-        );
-      }
-    }
+      const fees = computeOrderFees({
+        subtotal,
+        platformFeeRate: effectiveFeeRate,
+        platformFeeAmount,
+        shippingFee,
+        inventoryCost,
+      });
+      const feeStrings = feeResultToStrings(fees);
 
-    const fees = computeOrderFees({
-      subtotal,
-      platformFeeRate: effectiveFeeRate,
-      platformFeeAmount,
-      shippingFee,
-      inventoryCost,
-    });
-    const feeStrings = feeResultToStrings(fees);
+      await tx.customerOrder.update({
+        where: { id: customerOrder.id },
+        data: { netRevenue: feeStrings.netRevenue },
+      });
 
-    await tx.customerOrder.update({
-      where: { id: customerOrder.id },
-      data: { netRevenue: feeStrings.netRevenue },
-    });
-
-    return {
-      orderId: customerOrder.id,
-      orderNumber: customerOrder.orderNumber,
-      storeId: customerOrder.storeId,
-    };
+      return {
+        orderId: customerOrder.id,
+        orderNumber: customerOrder.orderNumber,
+        storeId: customerOrder.storeId,
+      };
     });
 
     const context = await requireUserContext({ storeId: saleResult.storeId });
@@ -779,11 +877,12 @@ export async function batchCreateListings(data: {
         assertListingHasSellableStock({
           storeId: context.activeStoreId,
           platformCode: platform.code,
+          platformCountry: platform.country,
           platformName: platform.name,
           listingType: "SKU",
           skuId,
-        }),
-      ),
+        })
+      )
     );
 
     const existingActiveListings = await prisma.listing.findMany({
@@ -800,10 +899,7 @@ export async function batchCreateListings(data: {
       return actionFailure(`已有 ${existingActiveListings.length} 个 SKU 在 ${platform.name} 上架`);
     }
 
-    const referenceBySku = new Map<
-      string,
-      { price: Decimal; currency: string | null } | null
-    >();
+    const referenceBySku = new Map<string, { price: Decimal; currency: string | null } | null>();
     if (!data.listedPrice) {
       const references = await Promise.all(
         data.skuIds.map(async (skuId) => ({
@@ -818,13 +914,15 @@ export async function batchCreateListings(data: {
 
     const listings = await prisma.$transaction(
       data.skuIds.map((skuId) => {
-      const reference = referenceBySku.get(skuId) || null;
+        const reference = referenceBySku.get(skuId) || null;
         const resolvedPrice = listedPriceInput.value ?? reference?.price ?? null;
         const resolvedCurrency =
           data.currency || reference?.currency || platform?.defaultCurrency || null;
         let estimatedNet: Decimal | null = null;
         if (resolvedPrice && platform) {
-          const feeRate = platform.defaultFeeRate ? new Decimal(platform.defaultFeeRate) : new Decimal(0);
+          const feeRate = platform.defaultFeeRate
+            ? new Decimal(platform.defaultFeeRate)
+            : new Decimal(0);
           estimatedNet = resolvedPrice.mul(new Decimal(1).minus(feeRate));
         }
 

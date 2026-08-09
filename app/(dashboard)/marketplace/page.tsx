@@ -7,13 +7,9 @@ import {
 } from "@/components/marketplace/supply-offer-status";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatSupplyOfferPrice } from "@/lib/supply-offer-display";
 
 export const dynamic = "force-dynamic";
-
-function formatMoney(currency: string | null, amount: string | null) {
-  if (!amount) return "-";
-  return `${currency ?? ""} ${amount}`.trim();
-}
 
 export default async function MarketplacePage() {
   const offers = await getMarketplaceOffers();
@@ -23,7 +19,9 @@ export default async function MarketplacePage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold">货盘市场</h1>
-          <p className="text-muted-foreground">查看公开或授权可见的供给货盘，后续可从这里创建代卖上架。</p>
+          <p className="text-muted-foreground">
+            查看经营主体发布的共享货盘；多个账号可以同时上架，成交时统一锁货。
+          </p>
         </div>
         <div className="flex gap-2">
           <Link href="/marketplace/my-offers">
@@ -60,30 +58,45 @@ export default async function MarketplacePage() {
           ) : (
             <div className="divide-y divide-border">
               {offers.map((offer) => (
-                <div key={offer.id} className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between">
+                <div
+                  key={offer.id}
+                  className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
+                >
                   <div className="min-w-0 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Link href={`/marketplace/${offer.id}`} className="font-semibold hover:underline">
+                      <Link
+                        href={`/marketplace/${offer.id}`}
+                        className="font-semibold hover:underline"
+                      >
                         {offer.title}
                       </Link>
                       <SupplyOfferStatusBadge status={offer.status} />
                       <SupplyOfferVisibilityBadge visibility={offer.visibility} />
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      供给方：{offer.ownerPartner?.name ?? "本店自有"} · 发货地：{offer.shipFromLocation ?? "-"} · 履约：{offer.fulfillmentMode}
+                      经营主体：{offer.organization?.name ?? offer.ownerPartner?.name ?? "供给方"} ·{" "}
+                      {offer.inventoryPolicy === "SHARED_POOL" ? "多账号共享库存" : "独占库存"} ·
+                      在售渠道{" "}
+                      {offer.salesChannels.filter((channel) => channel.status === "ACTIVE").length}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 text-sm">
                     <div>
-                      <div className="text-muted-foreground">可供数量</div>
-                      <div className="font-medium">{offer.availableQty}</div>
+                      <div className="text-muted-foreground">当前可接单</div>
+                      <div className="font-medium">
+                        {Math.max(Number(offer.availableQty) - Number(offer.reservedQty), 0)}
+                      </div>
                     </div>
                     <div>
                       <div className="text-muted-foreground">供货价</div>
-                      <div className="font-medium">{formatMoney(offer.currency, offer.unitPrice)}</div>
+                      <div className="font-medium">
+                        {formatSupplyOfferPrice(offer.currency, offer.unitPrice, offer.items)}
+                      </div>
                     </div>
                     <Link href={`/marketplace/${offer.id}`}>
-                      <Button variant="outline" size="sm">查看</Button>
+                      <Button variant="outline" size="sm">
+                        查看
+                      </Button>
                     </Link>
                   </div>
                 </div>

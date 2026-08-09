@@ -1,0 +1,27 @@
+{
+  "requestedUrl": "https://www.atmos-tokyo.com/item/atmos/mabsu-ac049",
+  "finalUrl": "https://www.atmos-tokyo.com/item/atmos/mabsu-ac049",
+  "extractionMethod": "BROWSER",
+  "heading": "Monchhichi x atmos 【TENKYU】 キーチェーン BLUE",
+  "articleText": "Monchhichi x atmos 【TENKYU】 キーチェーン BLUE\n¥2,640\nサイズを選択\n店頭在庫を見る",
+  "jsonLd": [
+    {
+      "@type": "Product",
+      "name": "Monchhichi x atmos 【TENKYU】 キーチェーン BLUE",
+      "description": "Monchhichi と atmos のコラボレーションキーチェーン。",
+      "brand": { "name": "atmos" },
+      "offers": {
+        "price": "2640",
+        "priceCurrency": "JPY",
+        "availability": "https://schema.org/InStock"
+      }
+    }
+  ],
+  "images": [
+    "https://assets.atmos-tokyo.com/_assets/img/share/logo.svg",
+    "https://assets.atmos-tokyo.com/_assets/img/icon/cart1.svg",
+    "https://assets.atmos-tokyo.com/items/L/mabsu-ac049-1.jpg",
+    "https://assets.atmos-tokyo.com/items/1/mabsu-ac049-2.jpg",
+    "https://assets.atmos-tokyo.com/items/2/mabsu-ac049-3.jpg"
+  ]
+}

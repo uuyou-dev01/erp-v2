@@ -12,6 +12,7 @@ import { createCustomerOrderAction } from "@/app/actions/customer-orders";
 import { getPlatforms } from "@/app/actions/platforms";
 import { AlertCircle } from "lucide-react";
 import { t, CURRENCIES, COUNTRY_FLOWS } from "@/lib/i18n";
+import { FULFILLMENT_DESTINATIONS } from "@/lib/inventory/location-fulfillment";
 
 interface Platform {
   id: string;
@@ -36,6 +37,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
     customerEmail: "",
     customerPhone: "",
     shippingAddress: "",
+    shippingCountry: "JP",
     orderDate: new Date().toISOString().split("T")[0],
     externalOrderNo: "",
     currency: "JPY",
@@ -58,6 +60,10 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
     updateFormData({
       platformId,
       currency: platform?.defaultCurrency || formData.currency,
+      shippingCountry:
+        platform?.country && ["CN", "JP", "US", "EU"].includes(platform.country)
+          ? platform.country
+          : formData.shippingCountry,
     });
   };
 
@@ -81,6 +87,7 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
         customerEmail: formData.customerEmail || undefined,
         customerPhone: formData.customerPhone || undefined,
         shippingAddress: formData.shippingAddress || undefined,
+        shippingCountry: formData.shippingCountry || undefined,
         orderDate: new Date(formData.orderDate),
         externalOrderNo: formData.externalOrderNo || undefined,
         currency: formData.currency,
@@ -172,6 +179,27 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
           </div>
 
           <div className="space-y-2">
+            <Label htmlFor="shippingCountry">收货国家/地区 *</Label>
+            <Select
+              id="shippingCountry"
+              value={formData.shippingCountry}
+              onChange={(e) => updateFormData({ shippingCountry: e.target.value })}
+              required
+            >
+              {FULFILLMENT_DESTINATIONS.filter((destination) => destination.code !== "GLOBAL").map(
+                (destination) => (
+                  <option key={destination.code} value={destination.code}>
+                    {destination.label}
+                  </option>
+                )
+              )}
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              系统根据实际收货地选择可履约仓库，销售平台不再决定发货国家。
+            </p>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="shippingAddress">{t("sales.shipping_address")}</Label>
             <Textarea
               id="shippingAddress"
@@ -210,7 +238,9 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
                 required
               >
                 {CURRENCIES.map((c) => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
                 ))}
               </Select>
             </div>
@@ -225,7 +255,9 @@ export function CustomerOrderForm({ storeId }: CustomerOrderFormProps) {
                 onChange={(e) => updateFormData({ countryFlow: e.target.value })}
               >
                 {COUNTRY_FLOWS.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
                 ))}
               </Select>
             </div>

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import Decimal from "decimal.js";
 import {
   ACTION_LABELS,
   buildLifecycleEvents,
@@ -18,6 +19,9 @@ import {
   type WorkItemLine,
   type WorkQueue,
 } from "@/lib/application/next-actions";
+import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
+import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
+import { deriveItemUnitOperationalState } from "@/lib/application/item-unit-operational-state";
 
 const ACTIVE_QUEUES: WorkQueue[] = [
   "missingLogistics",
@@ -57,12 +61,10 @@ function derivePurchaseOrderItem(order: {
     consolidation?: ConsolidationSignal;
   }>;
   inboundShipments?: Array<{ status: string; receivedAt?: Date | null }>;
+  destinationLocation?: { name: string; isSellableDefault: boolean } | null;
 }): WorkItem | null {
   const waitingSince = order.updatedAt ?? order.createdAt;
-  const totalQty = order.lines.reduce(
-    (sum, line) => sum + Number(line.quantity.toString()),
-    0
-  );
+  const totalQty = order.lines.reduce((sum, line) => sum + Number(line.quantity.toString()), 0);
   const itemCount = order.lines.length;
   const lineItems: WorkItemLine[] = order.lines.map((line) => ({
     id: line.id,
@@ -87,6 +89,7 @@ function derivePurchaseOrderItem(order: {
       totalQty,
       currency: order.currency,
       totalAmount: order.totalAmount.toString(),
+      trackingNo: order.trackingNo,
     },
   };
 
@@ -103,11 +106,12 @@ function derivePurchaseOrderItem(order: {
     };
   }
 
-  const hasShipmentTask = order.inboundShipments?.some((shipment) =>
-    shipment.status === "PENDING" ||
-    shipment.status === "IN_TRANSIT" ||
-    shipment.status === "EXCEPTION" ||
-    (shipment.status === "DELIVERED" && !shipment.receivedAt)
+  const hasShipmentTask = order.inboundShipments?.some(
+    (shipment) =>
+      shipment.status === "PENDING" ||
+      shipment.status === "IN_TRANSIT" ||
+      shipment.status === "EXCEPTION" ||
+      (shipment.status === "DELIVERED" && !shipment.receivedAt)
   );
 
   if (
@@ -129,25 +133,8 @@ function derivePurchaseOrderItem(order: {
     };
   }
 
-  if (
-    order.status === "RECEIVED" &&
-    !hasShipmentTask &&
-    order.lines.some((line) => !line.hasInboundInventory && !line.hasRoutedToConsolidation)
-  ) {
-    return {
-      ...base,
-      id: `po-${order.id}-disposition`,
-      queue: "pendingDisposition",
-      currentStatus: order.status,
-      currentStatusLabel: "待分流",
-      primaryAction: "disposition",
-      primaryActionLabel: ACTION_LABELS.disposition,
-      priority: "normal",
-    };
-  }
-
   const activeConsolidation = order.lines.find(
-    (line) => !line.hasInboundInventory && line.hasRoutedToConsolidation && line.consolidation
+    (line) => line.hasRoutedToConsolidation && line.consolidation
   )?.consolidation;
   if (order.status === "RECEIVED" && !hasShipmentTask && activeConsolidation) {
     const statusLabel: Record<string, string> = {
@@ -170,6 +157,32 @@ function derivePurchaseOrderItem(order: {
         ...base.metadata,
         consolidationBatchId: activeConsolidation.batchId,
         consolidationBatchLabel: activeConsolidation.label,
+        outboundTrackingNo: activeConsolidation.outboundTrackingNo,
+      },
+    };
+  }
+
+  const hasUnroutedPurchaseInventory = order.lines.some(
+    (line) => !line.hasInboundInventory && !line.hasRoutedToConsolidation
+  );
+  const arrivedAtTransitNode = order.destinationLocation?.isSellableDefault === false;
+  if (
+    order.status === "RECEIVED" &&
+    !hasShipmentTask &&
+    (hasUnroutedPurchaseInventory || arrivedAtTransitNode)
+  ) {
+    return {
+      ...base,
+      id: `po-${order.id}-disposition`,
+      queue: "pendingDisposition",
+      currentStatus: order.status,
+      currentStatusLabel: arrivedAtTransitNode ? "转运仓待分流" : "待分流",
+      primaryAction: "disposition",
+      primaryActionLabel: ACTION_LABELS.disposition,
+      priority: "normal",
+      metadata: {
+        ...base.metadata,
+        currentLocation: order.destinationLocation?.name ?? null,
       },
     };
   }
@@ -187,6 +200,7 @@ interface ConsolidationSignal {
   batchId: string;
   status: string;
   label: string;
+  outboundTrackingNo: string | null;
   updatedAt: Date;
 }
 
@@ -200,10 +214,32 @@ function deriveCustomerOrderItem(order: {
   updatedAt: Date;
   createdAt: Date;
   platform: { name: string } | null;
-  lines: Array<{ sku: { code: string; name: string }; allocations: unknown[] }>;
+  lines: Array<{
+    quantity: { toString(): string };
+    sku: { code: string; name: string };
+    allocations: Array<{
+      quantity: { toString(): string };
+      status: string;
+    }>;
+  }>;
 }): WorkItem | null {
   const sku = order.lines[0]?.sku;
   const waitingSince = order.updatedAt ?? order.createdAt;
+  const hasCompleteReservations =
+    order.lines.length > 0 &&
+    order.lines.every((line) => {
+      const reservedQuantity = line.allocations
+        .filter((allocation) =>
+          RESERVING_ALLOCATION_STATUSES.includes(
+            allocation.status as (typeof RESERVING_ALLOCATION_STATUSES)[number]
+          )
+        )
+        .reduce(
+          (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
+          new Decimal(0)
+        );
+      return reservedQuantity.eq(new Decimal(line.quantity.toString()));
+    });
   const base = {
     entityType: "customerOrder" as const,
     entityId: order.id,
@@ -214,7 +250,7 @@ function deriveCustomerOrderItem(order: {
     detailHref: `/sales/${order.id}`,
   };
 
-  if (order.orderStatus === "DRAFT" && order.lines.every((l) => l.allocations.length > 0)) {
+  if (order.orderStatus === "DRAFT" && hasCompleteReservations) {
     return {
       ...base,
       id: `co-${order.id}-confirm`,
@@ -227,7 +263,7 @@ function deriveCustomerOrderItem(order: {
     };
   }
 
-  if (order.orderStatus === "CONFIRMED") {
+  if (order.orderStatus === "CONFIRMED" && hasCompleteReservations) {
     return {
       ...base,
       id: `co-${order.id}-ship`,
@@ -268,10 +304,7 @@ function deriveCustomerOrderItem(order: {
     };
   }
 
-  if (
-    (order.orderStatus === "DELIVERED" || order.orderStatus === "SHIPPED") &&
-    order.settledAt
-  ) {
+  if ((order.orderStatus === "DELIVERED" || order.orderStatus === "SHIPPED") && order.settledAt) {
     return {
       ...base,
       id: `co-${order.id}-done`,
@@ -321,22 +354,36 @@ function deriveShipmentItem(shipment: {
   receivedAt?: Date | null;
   updatedAt: Date;
   createdAt: Date;
-  purchaseOrder: { orderNo: string; status?: string } | null;
+  purchaseOrder: {
+    orderNo: string;
+    status?: string;
+    lines?: Array<{ quantity: { toString(): string } }>;
+  } | null;
   fromLocation: { name: string } | null;
   toLocation: { name: string } | null;
 }): WorkItem | null {
   const waitingSince = shipment.updatedAt ?? shipment.createdAt;
-  const legLabel = shipment.legIndex <= 1 ? "购买地在途" : "集运在途";
+  const legLabel = shipment.legIndex <= 1 ? "购买地在途" : "转运在途";
   const isPurchaseLeg = shipment.legIndex <= 1;
   if (isPurchaseLeg && shipment.purchaseOrder?.status === "RECEIVED") return null;
   if (shipment.status === "DELIVERED" && shipment.receivedAt) return null;
-  const routeLabel = [shipment.fromLocation?.name, shipment.toLocation?.name].filter(Boolean).join(" → ");
+  const routeLabel = [shipment.fromLocation?.name, shipment.toLocation?.name]
+    .filter(Boolean)
+    .join(" → ");
   const base = {
     entityType: "shipment" as const,
     entityId: shipment.id,
     title: shipment.trackingNo ?? shipment.purchaseOrder?.orderNo ?? "物流段",
     subtitle: [legLabel, routeLabel].filter(Boolean).join(" · "),
     waitingSince: waitingSince.toISOString(),
+    metadata: {
+      trackingNo: shipment.trackingNo,
+      totalQty:
+        shipment.purchaseOrder?.lines?.reduce(
+          (sum, line) => sum + Number(line.quantity.toString()),
+          0
+        ) ?? 0,
+    },
   };
 
   if (shipment.status === "IN_TRANSIT") {
@@ -399,7 +446,7 @@ function deriveItemUnitListingItem(item: {
     entityType: "itemUnit" as const,
     entityId: item.id,
     title: `${item.sku.code} · ${item.sku.name}`,
-    subtitle: `${item.conditionGrade ?? "单品"} · ${item.location.name}`,
+    subtitle: `${formatItemUnitCondition(item.conditionGrade)} · ${item.location.name}`,
     skuCode: item.sku.code,
     waitingSince: (item.updatedAt ?? item.createdAt).toISOString(),
     detailHref: `/inventory/items/${item.id}`,
@@ -442,29 +489,76 @@ function deriveReturnInspectionItem(item: {
   status: string;
   updatedAt: Date;
   createdAt: Date;
+  sourceType: string;
+  conditionType: string;
   conditionGrade: string | null;
+  functionStatus: string;
+  photos: unknown;
   notes: string | null;
   sku: { code: string; name: string };
-  location: { name: string };
+  location: { name: string; isSellableDefault?: boolean };
+  inspection?: InspectionSignal | null;
+  hasAfterSalesReceipt?: boolean;
 }): WorkItem | null {
   if (item.status !== "RETURN_CHECK") return null;
+
+  const operationalState = deriveItemUnitOperationalState({
+    status: item.status,
+    sourceType: item.sourceType,
+    conditionType: item.conditionType,
+    conditionGrade: item.conditionGrade,
+    functionStatus: item.functionStatus,
+    notes: item.notes,
+    photoCount: Array.isArray(item.photos) ? item.photos.length : 0,
+    locationName: item.location.name,
+    locationSellable: item.location.isSellableDefault,
+    latestInspectionResult: item.inspection?.result,
+    latestInspectionFailureReason: item.inspection?.failureReason,
+    hasAfterSalesReceipt: item.hasAfterSalesReceipt,
+  });
+  const failedInspection = operationalState.workflowReason === "INSPECTION_FAILED";
+  const canReleaseDirectly =
+    operationalState.canReleaseToSale &&
+    ["CUSTOMER_RETURN_QC", "PURCHASE_QC", "INVENTORY_QC"].includes(
+      operationalState.workflowReason
+    );
 
   return {
     id: `iu-${item.id}-return-check`,
     entityType: "itemUnit",
     entityId: item.id,
-    queue: "returnInspection",
+    queue: failedInspection ? "inspectionException" : "returnInspection",
     title: `${item.sku.code} · ${item.sku.name}`,
-    subtitle: `${item.conditionGrade ?? "单品"} · ${item.location.name}`,
+    subtitle: `${formatItemUnitCondition(item.conditionGrade)} · ${operationalState.physicalLabel}`,
     skuCode: item.sku.code,
     currentStatus: item.status,
-    currentStatusLabel: "退货待检",
-    primaryAction: "approveReturnInspection",
-    primaryActionLabel: ACTION_LABELS.approveReturnInspection,
-    priority: "warning",
+    currentStatusLabel: operationalState.statusLabel,
+    primaryAction: failedInspection
+      ? "resolveException"
+      : canReleaseDirectly
+        ? "approveReturnInspection"
+        : "viewDetails",
+    primaryActionLabel: failedInspection
+      ? ACTION_LABELS.resolveException
+      : canReleaseDirectly
+        ? "检验并放行"
+        : operationalState.nextActionLabel ?? ACTION_LABELS.viewDetails,
+    priority: failedInspection ? "critical" : "warning",
     waitingSince: (item.updatedAt ?? item.createdAt).toISOString(),
     detailHref: `/inventory/items/${item.id}`,
-    metadata: { conditionGrade: item.conditionGrade },
+    exceptionType: failedInspection ? "inspection_failed" : undefined,
+    exceptionMessage: failedInspection ? operationalState.explanation : undefined,
+    metadata: {
+      conditionGrade: item.conditionGrade,
+      physicalState: operationalState.physicalState,
+      physicalStateLabel: operationalState.physicalLabel,
+      availabilityState: operationalState.availabilityState,
+      availabilityStateLabel: operationalState.availabilityLabel,
+      qualityState: operationalState.qualityState,
+      qualityStateLabel: operationalState.qualityLabel,
+      workflowReason: operationalState.workflowReason,
+      statusExplanation: operationalState.explanation,
+    },
   };
 }
 
@@ -516,7 +610,11 @@ function deriveInventoryLotItem(lot: {
     };
   }
 
-  if (lot.inspection.result === "PASSED" && lot.location.isSellableDefault && !lot.hasActiveListing) {
+  if (
+    lot.inspection.result === "PASSED" &&
+    lot.location.isSellableDefault &&
+    !lot.hasActiveListing
+  ) {
     return {
       ...base,
       id: `lot-${lot.id}-listing`,
@@ -546,7 +644,12 @@ function sourceInspectionRef(sourceType: string, sourceId: string) {
 
 async function getInspectionSignalForEntity(
   storeId: string,
-  entity: { id: string; refType: "INVENTORY_LOT" | "ITEM_UNIT"; sourceType: string; sourceId: string }
+  entity: {
+    id: string;
+    refType: "INVENTORY_LOT" | "ITEM_UNIT";
+    sourceType: string;
+    sourceId: string;
+  }
 ): Promise<InspectionSignal | null> {
   const sourceRef = sourceInspectionRef(entity.sourceType, entity.sourceId);
   const inspection = await prisma.inspectionEvent.findFirst({
@@ -581,7 +684,7 @@ function withRiskSignals(item: WorkItem): WorkItem {
     pendingDisposition: { days: 2, message: "收货后待分流" },
     pendingListing: { days: 7, message: "长期未上架" },
     pendingShipment: { days: 1, message: "已售未发" },
-    returnInspection: { days: 2, message: "退货待检超时" },
+    returnInspection: { days: 2, message: "待检查或补资料超时" },
     pendingSettlement: { days: 7, message: "待结算超时" },
     inStock: { days: 30, message: "长期库存" },
   };
@@ -601,7 +704,11 @@ function withRiskSignals(item: WorkItem): WorkItem {
   };
 }
 
-export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit = 100): Promise<WorkItem[]> {
+export async function collectWorkItems(
+  storeId: string,
+  queue?: WorkQueue,
+  limit = 100
+): Promise<WorkItem[]> {
   const [
     quickEntries,
     purchaseOrders,
@@ -625,6 +732,7 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
       include: {
         lines: { include: { sku: true }, orderBy: { createdAt: "asc" } },
         inboundShipments: { select: { status: true, receivedAt: true } },
+        destinationLocation: { select: { name: true, isSellableDefault: true } },
       },
       orderBy: { updatedAt: "asc" },
       take: 40,
@@ -649,7 +757,13 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
     prisma.inboundShipment.findMany({
       where: { storeId, status: { in: ["IN_TRANSIT", "DELIVERED", "EXCEPTION"] } },
       include: {
-        purchaseOrder: { select: { orderNo: true, status: true } },
+        purchaseOrder: {
+          select: {
+            orderNo: true,
+            status: true,
+            lines: { select: { quantity: true } },
+          },
+        },
         fromLocation: { select: { name: true } },
         toLocation: { select: { name: true } },
       },
@@ -683,7 +797,7 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
       where: { storeId, status: "RETURN_CHECK" },
       include: {
         sku: { select: { code: true, name: true } },
-        location: { select: { name: true } },
+        location: { select: { name: true, isSellableDefault: true } },
       },
       orderBy: { updatedAt: "asc" },
       take: 40,
@@ -713,6 +827,7 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
               select: {
                 id: true,
                 status: true,
+                outboundTrackingNo: true,
                 updatedAt: true,
                 fromLocation: { select: { name: true } },
                 toLocation: { select: { name: true } },
@@ -726,20 +841,18 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
     ...inboundLotRefs.map((lot) => lot.sourceId),
     ...inboundUnitRefs.map((unit) => unit.sourceId),
   ]);
-  const consolidatedPurchaseLineIds = new Set(
-    consolidationLineRefs.map((line) => line.sourceId)
-  );
+  const consolidatedPurchaseLineIds = new Set(consolidationLineRefs.map((line) => line.sourceId));
   const consolidationByLineId = new Map<string, ConsolidationSignal>();
   for (const line of consolidationLineRefs) {
     if (consolidationByLineId.has(line.sourceId)) continue;
-    const routeLabel = [
-      line.batch.fromLocation?.name,
-      line.batch.toLocation?.name,
-    ].filter(Boolean).join(" → ");
+    const routeLabel = [line.batch.fromLocation?.name, line.batch.toLocation?.name]
+      .filter(Boolean)
+      .join(" → ");
     consolidationByLineId.set(line.sourceId, {
       batchId: line.batch.id,
       status: line.batch.status,
       label: routeLabel || line.batch.id.slice(-6),
+      outboundTrackingNo: line.batch.outboundTrackingNo,
       updatedAt: line.batch.updatedAt,
     });
   }
@@ -759,6 +872,18 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
       },
     ]),
     ...pendingListingUnits.flatMap((unit) => [
+      { refType: "ITEM_UNIT", refId: unit.id },
+      {
+        refType:
+          unit.sourceType === "PURCHASE"
+            ? "PURCHASE_LINE"
+            : unit.sourceType === "QUICK_ENTRY"
+              ? "QUICK_ENTRY"
+              : unit.sourceType,
+        refId: unit.sourceId,
+      },
+    ]),
+    ...returnInspectionUnits.flatMap((unit) => [
       { refType: "ITEM_UNIT", refId: unit.id },
       {
         refType:
@@ -808,12 +933,20 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
           .filter((id): id is string => Boolean(id))
       : []
   );
+  const afterSalesReceiptItemIds = new Set(
+    returnInspectionUnits.length > 0
+      ? (
+          await prisma.afterSalesReceipt.findMany({
+            where: { itemUnitId: { in: returnInspectionUnits.map((unit) => unit.id) } },
+            select: { itemUnitId: true },
+          })
+        )
+          .map((receipt) => receipt.itemUnitId)
+          .filter((id): id is string => Boolean(id))
+      : []
+  );
 
-  const resolveInspection = (entity: {
-    id: string;
-    sourceType: string;
-    sourceId: string;
-  }) => {
+  const resolveInspection = (entity: { id: string; sourceType: string; sourceId: string }) => {
     const sourceRefType =
       entity.sourceType === "PURCHASE"
         ? "PURCHASE_LINE"
@@ -869,11 +1002,17 @@ export async function collectWorkItems(storeId: string, queue?: WorkQueue, limit
     if (item) items.push(withRiskSignals(item));
   }
   for (const unit of returnInspectionUnits) {
-    const item = deriveReturnInspectionItem(unit);
+    const item = deriveReturnInspectionItem({
+      ...unit,
+      inspection: resolveInspection(unit),
+      hasAfterSalesReceipt: afterSalesReceiptItemIds.has(unit.id),
+    });
     if (item) items.push(withRiskSignals(item));
   }
 
-  const filtered = queue ? items.filter((i) => i.queue === queue) : items.filter((i) => ACTIVE_QUEUES.includes(i.queue));
+  const filtered = queue
+    ? items.filter((i) => i.queue === queue)
+    : items.filter((i) => ACTIVE_QUEUES.includes(i.queue));
 
   filtered.sort((a, b) => {
     const priorityWeight = { critical: 0, warning: 1, normal: 2 };
@@ -898,7 +1037,10 @@ export interface RecentActivityItem {
   href?: string;
 }
 
-export async function getRecentActivity(storeId: string, limit = 20): Promise<RecentActivityItem[]> {
+export async function getRecentActivity(
+  storeId: string,
+  limit = 20
+): Promise<RecentActivityItem[]> {
   const [entries, orders, sales] = await Promise.all([
     prisma.quickEntry.findMany({
       where: { storeId },
@@ -1039,6 +1181,10 @@ export async function getWorkItemDetail(
         receivedAt: iso(s.receivedAt),
       })),
       actionContext: {
+        purchasePrice: entry.purchasePrice?.toString() ?? null,
+        purchaseCurrency: entry.purchaseCurrency,
+        salePrice: entry.salePrice?.toString() ?? null,
+        saleCurrency: entry.saleCurrency,
         purchaseTrackingNo: entry.purchaseTrackingNo,
         transitTrackingNo: entry.transitTrackingNo,
         currentLocationText: entry.currentLocationText,
@@ -1072,9 +1218,7 @@ export async function getWorkItemDetail(
         platformFee: order.platformFee.toString(),
         shippingFee: order.shippingFee.toString(),
         shippedAt: order.shippedAt?.toISOString() ?? null,
-        shippingProofJson: order.shippingProof
-          ? JSON.stringify(order.shippingProof)
-          : null,
+        shippingProofJson: order.shippingProof ? JSON.stringify(order.shippingProof) : null,
       },
     };
   }
@@ -1084,7 +1228,10 @@ export async function getWorkItemDetail(
       where: { id: entityId },
       include: {
         lines: { include: { sku: true }, orderBy: { createdAt: "asc" } },
-        inboundShipments: { include: { fromLocation: true, toLocation: true }, orderBy: { legIndex: "asc" } },
+        inboundShipments: {
+          include: { fromLocation: true, toLocation: true },
+          orderBy: { legIndex: "asc" },
+        },
         destinationLocation: true,
       },
     });
@@ -1112,6 +1259,7 @@ export async function getWorkItemDetail(
                 select: {
                   id: true,
                   status: true,
+                  outboundTrackingNo: true,
                   updatedAt: true,
                   fromLocation: { select: { name: true } },
                   toLocation: { select: { name: true } },
@@ -1129,14 +1277,14 @@ export async function getWorkItemDetail(
     const consolidationByLineId = new Map<string, ConsolidationSignal>();
     for (const line of consolidationLines) {
       if (consolidationByLineId.has(line.sourceId)) continue;
-      const routeLabel = [
-        line.batch.fromLocation?.name,
-        line.batch.toLocation?.name,
-      ].filter(Boolean).join(" → ");
+      const routeLabel = [line.batch.fromLocation?.name, line.batch.toLocation?.name]
+        .filter(Boolean)
+        .join(" → ");
       consolidationByLineId.set(line.sourceId, {
         batchId: line.batch.id,
         status: line.batch.status,
         label: routeLabel || line.batch.id.slice(-6),
+        outboundTrackingNo: line.batch.outboundTrackingNo,
         updatedAt: line.batch.updatedAt,
       });
     }
@@ -1231,23 +1379,66 @@ export async function getWorkItemDetail(
         arrivedAt: iso(shipment.receivedAt),
         currentQueue: item.queue,
       }),
-      shipments: [{
-        id: shipment.id,
-        legIndex: shipment.legIndex,
-        trackingNo: shipment.trackingNo,
-        carrier: shipment.carrier,
-        status: shipment.status,
-        statusLabel: shipmentStatusLabel(shipment.status),
-        fromLocation: shipment.fromLocation?.name,
-        toLocation: shipment.toLocation?.name,
-        shippedAt: iso(shipment.shippedAt),
-        etaDate: iso(shipment.etaDate),
-        receivedAt: iso(shipment.receivedAt),
-      }],
+      shipments: [
+        {
+          id: shipment.id,
+          legIndex: shipment.legIndex,
+          trackingNo: shipment.trackingNo,
+          carrier: shipment.carrier,
+          status: shipment.status,
+          statusLabel: shipmentStatusLabel(shipment.status),
+          fromLocation: shipment.fromLocation?.name,
+          toLocation: shipment.toLocation?.name,
+          shippedAt: iso(shipment.shippedAt),
+          etaDate: iso(shipment.etaDate),
+          receivedAt: iso(shipment.receivedAt),
+        },
+      ],
       actionContext: {
         trackingNo: shipment.trackingNo,
         carrier: shipment.carrier,
         purchaseOrderId: shipment.purchaseOrderId,
+        currentLocationText: shipment.toLocation?.name ?? null,
+        location: shipment.toLocation?.name ?? null,
+      },
+    };
+  }
+
+  if (entityType === "sku") {
+    const sku = await prisma.sKU.findUnique({
+      where: { id: entityId },
+      include: {
+        listings: {
+          where: { status: "ACTIVE" },
+          include: { platform: true },
+          orderBy: { listedAt: "desc" },
+        },
+      },
+    });
+    if (!sku) return null;
+
+    return {
+      id: `sku-${sku.id}-listing`,
+      entityType: "sku",
+      entityId: sku.id,
+      queue: "pendingListing",
+      lifecycleStage: "IN_STOCK",
+      title: `${sku.code} · ${sku.name}`,
+      subtitle: `${sku.listings.length} 个平台已有上架记录`,
+      skuCode: sku.code,
+      currentStatus: "PENDING_LISTING",
+      currentStatusLabel: "待上架检查",
+      primaryAction: "createListing",
+      primaryActionLabel: ACTION_LABELS.createListing,
+      priority: "normal",
+      waitingSince: sku.updatedAt.toISOString(),
+      detailHref: `/inventory/skus/${sku.id}`,
+      lifecycle: buildLifecycleEvents({ currentQueue: "pendingListing" }),
+      shipments: [],
+      actionContext: {
+        skuId: sku.id,
+        platform: sku.listings.map((listing) => listing.platform.name).join(", ") || null,
+        status: "PENDING_LISTING",
       },
     };
   }
@@ -1333,21 +1524,33 @@ export async function getWorkItemDetail(
       },
     });
     if (!unit) return null;
-    const inspection = await getInspectionSignalForEntity(unit.storeId, {
-      id: unit.id,
-      refType: "ITEM_UNIT",
-      sourceType: unit.sourceType,
-      sourceId: unit.sourceId,
-    });
+    const [inspection, afterSalesReceipt] = await Promise.all([
+      getInspectionSignalForEntity(unit.storeId, {
+        id: unit.id,
+        refType: "ITEM_UNIT",
+        sourceType: unit.sourceType,
+        sourceId: unit.sourceId,
+      }),
+      prisma.afterSalesReceipt.findFirst({
+        where: { itemUnitId: unit.id },
+        select: { id: true },
+      }),
+    ]);
     const returnInspectionItem = deriveReturnInspectionItem({
       id: unit.id,
       status: unit.status,
       updatedAt: unit.updatedAt,
       createdAt: unit.createdAt,
+      sourceType: unit.sourceType,
+      conditionType: unit.conditionType,
       conditionGrade: unit.conditionGrade,
+      functionStatus: unit.functionStatus,
+      photos: unit.photos,
       notes: unit.notes,
       sku: unit.sku,
       location: unit.location,
+      inspection,
+      hasAfterSalesReceipt: Boolean(afterSalesReceipt),
     });
     if (returnInspectionItem) {
       return {
@@ -1380,12 +1583,13 @@ export async function getWorkItemDetail(
       id: `iu-${unit.id}-detail`,
       entityType: "itemUnit" as const,
       entityId: unit.id,
-      queue: unit.status === "CONSUMED" ? "completed" as const : "inStock" as const,
+      queue: unit.status === "CONSUMED" ? ("completed" as const) : ("inStock" as const),
       title: `${unit.sku.code} · ${unit.sku.name}`,
-      subtitle: `${unit.conditionGrade ?? "单品"} · ${unit.location.name}`,
+      subtitle: `${formatItemUnitCondition(unit.conditionGrade)} · ${unit.location.name}`,
       skuCode: unit.sku.code,
       currentStatus: unit.status,
-      currentStatusLabel: unit.status === "CONSUMED" ? "已售出" : hasActiveListing ? "已上架" : "库存中",
+      currentStatusLabel:
+        unit.status === "CONSUMED" ? "已售出" : hasActiveListing ? "已上架" : "库存中",
       primaryAction: hasActiveListing ? ("viewDetails" as const) : ("createListing" as const),
       primaryActionLabel: hasActiveListing
         ? ACTION_LABELS.viewDetails
@@ -1394,7 +1598,9 @@ export async function getWorkItemDetail(
           : "查看详情",
       priority: "normal" as const,
       waitingSince: unit.updatedAt.toISOString(),
-      detailHref: hasActiveListing ? `/inventory/skus/${unit.skuId}` : `/inventory/items/${unit.id}`,
+      detailHref: hasActiveListing
+        ? `/inventory/skus/${unit.skuId}`
+        : `/inventory/items/${unit.id}`,
       metadata: { conditionGrade: unit.conditionGrade },
     };
     const soldAt = unit.allocations[0]?.orderLine.order.orderDate;
@@ -1448,9 +1654,7 @@ export async function getProductTicketByEntity(
     detail.shipments[0]?.toLocation ??
     null;
   const platformText =
-    detail.actionContext.listingPlatformsText ??
-    detail.actionContext.platform ??
-    null;
+    detail.actionContext.listingPlatformsText ?? detail.actionContext.platform ?? null;
   const lifecycleStage = deriveLifecycleStageFromQueue(detail.queue, detail.priority);
 
   return {
@@ -1462,14 +1666,19 @@ export async function getProductTicketByEntity(
     skuCode: detail.skuCode,
     currentStatusLabel: detail.currentStatusLabel,
     lifecycleStage,
-    lifecycleStageLabel: LIFECYCLE_LABELS[lifecycleStage],
+    lifecycleStageLabel:
+      typeof detail.metadata?.physicalStateLabel === "string"
+        ? detail.metadata.physicalStateLabel
+        : LIFECYCLE_LABELS[lifecycleStage],
     primaryActionLabel: detail.primaryActionLabel,
     priority: detail.priority,
     queue: detail.queue,
     locationText,
     platformText,
     inventoryStatus: detail.currentStatusLabel,
-    profitStatus: detail.actionContext.netRevenue ? `净收入 ${detail.actionContext.netRevenue}` : "待结算",
+    profitStatus: detail.actionContext.netRevenue
+      ? `净收入 ${detail.actionContext.netRevenue}`
+      : "待结算",
     assigneeName: detail.assigneeId ?? "未分配",
     exceptionMessage: detail.exceptionMessage,
     detailHref: detail.detailHref,

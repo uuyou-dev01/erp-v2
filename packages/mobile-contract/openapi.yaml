@@ -1,0 +1,89 @@
+openapi: 3.1.0
+info:
+  title: ERP Mobile Companion API
+  version: 1.0.0
+servers:
+  - url: /api/v1/mobile
+paths:
+  /home:
+    get:
+      operationId: getMobileHome
+      responses:
+        "200": { description: Mobile home summary }
+  /tasks:
+    get:
+      operationId: listMobileTasks
+      parameters:
+        - { in: query, name: scope, schema: { enum: [today, mine, open, delegated, completed] } }
+        - { in: query, name: cursor, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 80 } }
+      responses:
+        "200": { description: Cursor-paginated tasks }
+  /tasks/{id}:
+    get:
+      operationId: getMobileTask
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Task detail and action schema }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /tasks/{id}/actions/{action}:
+    post:
+      operationId: executeMobileAction
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: action, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion, fields]
+              properties:
+                expectedVersion: { type: string }
+                fields: { type: object, additionalProperties: true }
+                confirmation:
+                  type: object
+                  properties: { acceptedImpact: { type: boolean } }
+      responses:
+        "200": { description: Action receipt }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /tasks/batch:
+    post:
+      operationId: executeMobileBatch
+      responses:
+        "200": { description: Per-item batch receipts, including partial failures }
+  /metrics:
+    get:
+      operationId: getMobileMetrics
+      responses:
+        "200": { description: 30-day mobile SLA metrics }
+  /notification-preferences:
+    get:
+      operationId: getNotificationPreferences
+      responses:
+        "200": { description: Push, digest and quiet-hours settings }
+    put:
+      operationId: updateNotificationPreferences
+      responses:
+        "200": { description: Updated notification preferences }
+  /skus/search:
+    get:
+      operationId: searchOperationalSkus
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: barcode, schema: { type: string } }
+        - { in: query, name: manufacturerCode, schema: { type: string } }
+      responses:
+        "200": { description: Scored formal SKU candidates with reasons }
+components:
+  responses:
+    NotFound:
+      description: Resource not found
+    Conflict:
+      description: Version or idempotency conflict
+    RateLimited:
+      description: Per-device request limit exceeded

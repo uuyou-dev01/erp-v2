@@ -5,6 +5,7 @@ import Decimal from "decimal.js";
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { resolveProductCategory } from "@/lib/application/product-category-service";
 import { prisma } from "@/lib/prisma";
 
 const VISIBILITY_VALUES = new Set(["PUBLIC", "ORGANIZATION", "PRIVATE"]);
@@ -37,6 +38,7 @@ export interface ProductIntelligenceItemInput {
   parentItemId?: string | null;
   title: string;
   brand?: string;
+  categoryId?: string | null;
   category?: string;
   model?: string;
   productKind?: string;
@@ -149,12 +151,14 @@ function serializeItem<
       title: string;
       brand: string | null;
       category: string | null;
+      categoryId?: string | null;
     } | null;
     childItems?: Array<{
       id: string;
       title: string;
       brand: string | null;
       category: string | null;
+      categoryId?: string | null;
       model: string | null;
       imageUrl: string | null;
       visibility: string;
@@ -299,9 +303,20 @@ async function resolveParentItemId(parentItemId: string | null | undefined, stor
 function compactVisibleItemSelect(storeId: string, observationTake = 10) {
   return {
     id: true,
+    skuId: true,
+    sku: {
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        catalogRole: true,
+        parentSkuId: true,
+      },
+    },
     title: true,
     brand: true,
     category: true,
+    categoryId: true,
     model: true,
     imageUrl: true,
     visibility: true,
@@ -421,6 +436,15 @@ export async function getProductIntelligenceItems(filters: ProductIntelligenceFi
     },
     include: {
       store: { select: { id: true, name: true, code: true } },
+      sku: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          catalogRole: true,
+          parentSkuId: true,
+        },
+      },
       observations: {
         where: observationVisibilityWhere(context.activeStoreId),
         orderBy: { observedAt: "desc" },
@@ -482,6 +506,7 @@ export async function getProductIntelligenceParentOptions(storeId?: string) {
       id: true,
       title: true,
       brand: true,
+      categoryId: true,
       category: true,
       _count: { select: { childItems: true } },
     },
@@ -512,6 +537,15 @@ export async function getProductIntelligenceItemById(id: string, storeId?: strin
     },
     include: {
       store: { select: { id: true, name: true, code: true } },
+      sku: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          catalogRole: true,
+          parentSkuId: true,
+        },
+      },
       observations: {
         where: observationVisibilityWhere(context.activeStoreId),
         include: {
@@ -520,7 +554,13 @@ export async function getProductIntelligenceItemById(id: string, storeId?: strin
         orderBy: { observedAt: "desc" },
       },
       parentItem: {
-        select: { id: true, title: true, brand: true, category: true },
+        select: {
+          id: true,
+          title: true,
+          brand: true,
+          categoryId: true,
+          category: true,
+        },
       },
       childItems: {
         where: itemVisibilityWhere(context.activeStoreId),
@@ -544,10 +584,23 @@ export async function createProductIntelligenceAction(data: CreateProductIntelli
     const context = await requireUserContext(data.storeId ? { storeId: data.storeId } : undefined);
     const title = data.title.trim();
     if (!title) throw new Error("商品名称不能为空");
-    if (!data.category?.trim() && !data.parentItemId) throw new Error("请选择或填写品类");
+    if (!data.categoryId && !data.category?.trim() && !data.parentItemId) {
+      throw new Error("请选择商品品类");
+    }
     const observations =
       data.initialObservations ?? (data.initialObservation ? [data.initialObservation] : []);
     const parentItemId = await resolveParentItemId(data.parentItemId, context.activeStoreId);
+    const parentCategory = parentItemId
+      ? await prisma.productIntelligenceItem.findUnique({
+          where: { id: parentItemId },
+          select: { categoryId: true, category: true },
+        })
+      : null;
+    const categoryRecord = await resolveProductCategory({
+      organizationId: context.organizationId,
+      categoryId: data.categoryId ?? parentCategory?.categoryId,
+      legacyName: data.category ?? parentCategory?.category,
+    });
     if (!parentItemId && observations.length > 0) {
       throw new Error("商品组只作为父级容器，请在具体 SKU 上记录价格");
     }
@@ -558,7 +611,8 @@ export async function createProductIntelligenceAction(data: CreateProductIntelli
         parentItemId,
         title,
         brand: optionalText(data.brand),
-        category: optionalText(data.category),
+        categoryId: categoryRecord?.id ?? null,
+        category: categoryRecord?.name ?? optionalText(data.category),
         model: optionalText(data.model),
         productKind: normalizeEnum(data.productKind, PRODUCT_KIND_VALUES, "NEW"),
         description: optionalText(data.description),
@@ -599,6 +653,7 @@ export async function createProductIntelligenceVariantAction(
       where: { id: parentItemId },
       select: {
         brand: true,
+        categoryId: true,
         category: true,
         productKind: true,
         description: true,
@@ -612,6 +667,7 @@ export async function createProductIntelligenceVariantAction(
         parentItemId,
         title,
         brand: parent.brand,
+        categoryId: parent.categoryId,
         category: parent.category,
         model: optionalText(data.model),
         productKind: parent.productKind,
@@ -650,6 +706,14 @@ export async function updateProductIntelligenceAction(
       data.parentItemId === existing.id
         ? null
         : await resolveParentItemId(data.parentItemId, existing.storeId);
+    const categoryRecord =
+      data.categoryId === null && !data.category?.trim()
+        ? null
+        : await resolveProductCategory({
+            organizationId: context.organizationId,
+            categoryId: data.categoryId ?? existing.categoryId,
+            legacyName: data.category ?? existing.category,
+          });
 
     const item = await prisma.productIntelligenceItem.update({
       where: { id },
@@ -657,7 +721,8 @@ export async function updateProductIntelligenceAction(
         parentItemId,
         title,
         brand: optionalText(data.brand),
-        category: optionalText(data.category),
+        categoryId: categoryRecord?.id ?? null,
+        category: categoryRecord?.name ?? optionalText(data.category),
         model: optionalText(data.model),
         productKind: normalizeEnum(data.productKind, PRODUCT_KIND_VALUES, existing.productKind),
         description: optionalText(data.description),

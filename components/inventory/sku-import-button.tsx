@@ -7,8 +7,6 @@ import { Upload } from "lucide-react";
 import { CSVImportDialog } from "@/components/shared/csv-import-dialog";
 import { runImport } from "@/app/actions/import";
 
-const STORE_ID = "store_1";
-
 const SKU_FIELDS = [
   { key: "code", label: "SKU代码", required: true },
   { key: "name", label: "商品名称", required: true },
@@ -18,6 +16,7 @@ const SKU_FIELDS = [
 ];
 
 interface SKUImportButtonProps {
+  storeId: string;
   label?: string;
   className?: string;
   variant?: ButtonProps["variant"];
@@ -25,6 +24,7 @@ interface SKUImportButtonProps {
 }
 
 export function SKUImportButton({
+  storeId,
   label = "批量导入",
   className,
   variant = "outline",
@@ -34,7 +34,7 @@ export function SKUImportButton({
   const router = useRouter();
 
   const handleImport = async (rows: Record<string, string>[]) => {
-    const result = await runImport(STORE_ID, "SKU", rows);
+    const result = await runImport(storeId, "SKU", rows);
     router.refresh();
     return result;
   };
