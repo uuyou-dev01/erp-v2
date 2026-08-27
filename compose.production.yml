@@ -1,0 +1,138 @@
+name: erp-v2
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=1000
+    volumes:
+      - ./.runtime/postgres:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 768m
+    cpus: 0.75
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    image: erp-v2-migrate:v${APP_VERSION:?APP_VERSION is required}-${GIT_SHA:?GIT_SHA is required}
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: production
+      NEXT_PHASE: phase-production-build
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    mem_limit: 512m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        APP_VERSION: ${APP_VERSION:?APP_VERSION is required}
+        GIT_SHA: ${GIT_SHA:?GIT_SHA is required}
+        BUILD_DATE: ${BUILD_DATE:?BUILD_DATE is required}
+        NEXT_PUBLIC_WEB_PUSH_VAPID_KEY: ${NEXT_PUBLIC_WEB_PUSH_VAPID_KEY:-}
+    image: erp-v2-app:v${APP_VERSION:?APP_VERSION is required}-${GIT_SHA:?GIT_SHA is required}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Shanghai}
+      ERP_ASSET_ROOT: /app/.data/assets
+      CAPTURE_CONCURRENCY: "1"
+      OCR_CONCURRENCY: "1"
+    expose:
+      - "3000"
+    volumes:
+      - ./.runtime/assets:/app/.data
+    shm_size: 512mb
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - frontend
+      - backend
+    mem_limit: 2304m
+    cpus: 1.5
+    security_opt:
+      - no-new-privileges:true
+
+  scheduler:
+    image: erp-v2-app:v${APP_VERSION:?APP_VERSION is required}-${GIT_SHA:?GIT_SHA is required}
+    restart: unless-stopped
+    command: ["node", "scripts/production-scheduler.mjs"]
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Shanghai}
+      ERP_INTERNAL_BASE_URL: http://app:3000
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - frontend
+    mem_limit: 128m
+    cpus: 0.1
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      ERP_DOMAIN: ${ERP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./.runtime/caddy-data:/data
+      - ./.runtime/caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - frontend
+    mem_limit: 128m
+    cpus: 0.15
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  frontend:
+    internal: false
+  backend:
+    internal: true

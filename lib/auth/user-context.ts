@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
 import { readSessionToken } from "@/lib/auth/session-token";
+import { isSecureCookieEnabled } from "@/lib/auth/cookie-security";
 
 export interface UserContext {
   userId: string;
@@ -15,26 +16,42 @@ export interface UserContext {
   activeInventoryPoolId: string | null;
 }
 
-export const USER_CONTEXT_COOKIE = "erp_current_user_email";
+export const USER_CONTEXT_COOKIE =
+  isSecureCookieEnabled() ? "__Host-erp_session" : "erp_session";
 export const ACTIVE_STORE_COOKIE = "erp_active_store_id";
 export const ACTIVE_ORGANIZATION_COOKIE = "erp_active_organization_id";
-async function getCurrentUserEmail() {
+async function getCurrentSessionIdentity() {
   const cookieStore = await cookies();
   const session = readSessionToken(cookieStore.get(USER_CONTEXT_COOKIE)?.value);
-  const email =
-    session?.email ||
-    process.env.ERP_DEV_USER_EMAIL ||
-    (process.env.NODE_ENV === "test" ? "admin@example.com" : undefined);
-  if (!email) {
+  if (session) {
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { id: true, sessionVersion: true, accountStatus: true },
+    });
+    if (
+      !user ||
+      user.accountStatus !== "ACTIVE" ||
+      user.sessionVersion !== session.sessionVersion
+    ) {
+      throw new Error("登录状态已失效，请重新登录");
+    }
+    return { userId: user.id } as const;
+  }
+  const developmentEmail =
+    process.env.NODE_ENV !== "production"
+      ? process.env.ERP_DEV_USER_EMAIL ||
+        (process.env.NODE_ENV === "test" ? "admin@example.com" : undefined)
+      : undefined;
+  if (!developmentEmail) {
     throw new Error("请先登录");
   }
-  return email;
+  return { email: developmentEmail } as const;
 }
 
 export async function requireAuthenticatedUser() {
-  const email = await getCurrentUserEmail();
+  const identity = await getCurrentSessionIdentity();
   const user = await prisma.user.findUnique({
-    where: { email },
+    where: "userId" in identity ? { id: identity.userId } : { email: identity.email },
     select: { id: true, email: true, name: true },
   });
   if (!user) {
@@ -44,9 +61,9 @@ export async function requireAuthenticatedUser() {
 }
 
 export async function requireUserContext(input?: { storeId?: string }): Promise<UserContext> {
-  const email = await getCurrentUserEmail();
+  const identity = await getCurrentSessionIdentity();
   const user = await prisma.user.findUnique({
-    where: { email },
+    where: "userId" in identity ? { id: identity.userId } : { email: identity.email },
     include: {
       memberships: true,
       storeAccesses: { include: { store: true } },

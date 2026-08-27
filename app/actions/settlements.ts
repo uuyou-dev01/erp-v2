@@ -9,6 +9,7 @@ import { calculateAgreement, parseAgreementRule } from "@/lib/application/tradin
 import { requireUserContext } from "@/lib/auth/user-context";
 import { convertMoney, createStoreMoneyConverter } from "@/lib/fx";
 import { prisma } from "@/lib/prisma";
+import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 
 type StringableDecimal = { toString(): string };
@@ -709,6 +710,25 @@ export async function changeSettlementStatusAction(id: string, nextStatus: "CONF
 
       return changed;
     });
+
+    const counterpartOrganizationId = isPayer
+      ? settlement.payeeOrganizationId
+      : settlement.payerOrganizationId;
+    if (counterpartOrganizationId) {
+      await notifyOrganizationAdministrators({
+        organizationId: counterpartOrganizationId,
+        actorId: context.userId,
+        roles: [ROLES.OWNER, ROLES.ADMIN, ROLES.FINANCE],
+        refType: "SETTLEMENT",
+        refId: settlement.id,
+        type: "SETTLEMENT_STATUS_CHANGED",
+        title: `结算 ${existing.settlementNo} 状态已更新`,
+        body: `当前状态：${settlement.status}`,
+        actionUrl: `/finance/settlements/${encodeURIComponent(settlement.id)}`,
+        dedupeKey: `settlement:${settlement.id}:status:${settlement.status}`,
+        priority: settlement.status === "VOID" ? "HIGH" : "NORMAL",
+      });
+    }
 
     revalidateSettlementSurfaces(settlement.id, settlement.fulfillmentRequestId ?? undefined);
     if (nextStatus === "PAID") {

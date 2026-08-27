@@ -1,10 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
-import { requireUserContext } from "@/lib/auth/user-context";
+import {
+  ACTIVE_ORGANIZATION_COOKIE,
+  ACTIVE_STORE_COOKIE,
+  requireUserContext,
+  USER_CONTEXT_COOKIE,
+} from "@/lib/auth/user-context";
+import { recordAuthAudit } from "@/lib/auth/security-events";
 
 function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
@@ -52,11 +59,26 @@ export async function changeMyPasswordAction(formData: FormData) {
       throw new Error("当前密码不正确");
     }
 
-    await prisma.user.update({
-      where: { id: context.userId },
-      data: { password: await hashPassword(newPassword) },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: context.userId },
+        data: { password: await hashPassword(newPassword), sessionVersion: { increment: 1 } },
+      });
+      await tx.authToken.updateMany({
+        where: { userId: context.userId, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
     });
-    return actionSuccess({ changed: true });
+    await recordAuthAudit({
+      eventType: "PASSWORD_CHANGED",
+      outcome: "SUCCESS",
+      userId: context.userId,
+    });
+    const cookieStore = await cookies();
+    cookieStore.delete(USER_CONTEXT_COOKIE);
+    cookieStore.delete(ACTIVE_STORE_COOKIE);
+    cookieStore.delete(ACTIVE_ORGANIZATION_COOKIE);
+    return actionSuccess({ changed: true, destination: "/login" });
   } catch (error) {
     return toActionFailure(error, "修改密码失败，请重试");
   }

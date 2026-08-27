@@ -139,9 +139,9 @@ Here's what your complete `.env` should look like:
 # Database
 DATABASE_URL="postgresql://postgres@localhost:5432/erp?schema=public"
 
-# NextAuth
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="your-secret-key-here"
+# Application session signing (generate with: openssl rand -hex 32)
+ERP_SESSION_SECRET="replace-with-a-random-64-character-hex-value"
+AUTH_SELF_SIGNUP_ENABLED="false"
 ```
 
 ## 🎯 Final Steps

@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { createPublicCode } from "@/lib/auth/invitation-token";
+import { isSecureCookieEnabled } from "@/lib/auth/cookie-security";
 import {
   ACTIVE_ORGANIZATION_COOKIE,
   ACTIVE_STORE_COOKIE,
@@ -121,13 +122,13 @@ export async function createOrganizationAction(formData: FormData) {
     cookieStore.set(ACTIVE_ORGANIZATION_COOKIE, created.organizationId, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureCookieEnabled(),
       path: "/",
     });
     cookieStore.set(ACTIVE_STORE_COOKIE, created.storeId, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureCookieEnabled(),
       path: "/",
     });
     return actionSuccess(created);

@@ -1,0 +1,17 @@
+.git
+.github
+.next
+node_modules
+.env
+.env.*
+!.env.example
+.data
+.runtime
+.codex
+.codex-audit
+coverage
+test-results
+playwright-report
+public/uploads
+docs/product-audits
+npm-debug.log*

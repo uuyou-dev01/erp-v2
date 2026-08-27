@@ -51,8 +51,6 @@ export function RegisterForm({
             maxLength={50}
             required
             disabled={pending}
-            defaultValue={fixedEmail}
-            readOnly={Boolean(fixedEmail)}
           />
         </div>
         <div className="space-y-1.5">
@@ -64,11 +62,13 @@ export function RegisterForm({
             autoComplete="email"
             required
             disabled={pending}
+            defaultValue={fixedEmail}
+            readOnly={Boolean(fixedEmail)}
           />
           <p className="text-xs text-muted-foreground">
             {fixedEmail
               ? "邀请只允许使用这个邮箱注册，以免仓库权限发给错误账号。"
-              : "内部测试阶段暂不验证邮箱，请使用你能长期识别的地址。"}
+              : "仅在管理员明确开放注册时可用；请使用本人长期持有的邮箱。"}
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -69,11 +69,12 @@ async function fetchRatesForBase(baseCurrency: string) {
 
 export async function GET(req: Request) {
   const syncToken = process.env.FX_SYNC_TOKEN;
-  if (syncToken) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${syncToken}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!syncToken) {
+    return NextResponse.json({ error: "FX sync is not configured" }, { status: 503 });
+  }
+  const auth = req.headers.get("authorization");
+  if (auth !== `Bearer ${syncToken}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {

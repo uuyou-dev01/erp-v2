@@ -68,6 +68,8 @@ export function AccountSettingsForm({ name, email }: { name: string; email: stri
         form.reset();
         setPasswordSuccess("密码已更新");
         setPasswordOpen(false);
+        router.push(result.destination);
+        router.refresh();
       });
     });
   };

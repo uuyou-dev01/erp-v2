@@ -49,7 +49,7 @@ export function AuthShell({
             </p>
           </div>
         </div>
-        <p className="relative text-xs text-slate-500">内部测试版 · 邮箱验证将在生产化阶段启用</p>
+        <p className="relative text-xs text-slate-500">v0.9.0 Beta · 管理员一次性邀请制</p>
       </section>
 
       <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-10 lg:px-16">

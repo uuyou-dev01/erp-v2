@@ -10,9 +10,6 @@ test("collaboration surfaces render without app errors", async ({ page }) => {
   });
   page.on("pageerror", (error) => errors.push(error.message));
 
-  await page.goto("/login");
-  await expect(page.getByRole("heading", { name: "登录 ERP" })).toBeVisible();
-
   await page.goto("/workbench");
   await expect(page.locator("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible();
@@ -23,9 +20,10 @@ test("collaboration surfaces render without app errors", async ({ page }) => {
   await expect(sidebar.getByRole("button", { name: "库存管理" })).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "销售订单" })).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "工作量" })).toBeVisible();
-  await expect(sidebar.getByRole("link", { name: "个人设置" })).toBeVisible();
-  await expect(sidebar.getByRole("link", { name: "企业设置" })).toBeVisible();
-  await expect(sidebar.getByRole("link", { name: "系统设置" })).toBeVisible();
+  await page.getByRole("button", { name: "个人与账号设置" }).click();
+  await expect(page.getByRole("menuitem", { name: "个人与账号设置" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "企业设置" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "系统设置" })).toBeVisible();
 
   await page.goto("/notifications");
   await expect(page.locator("main")).toBeVisible();

@@ -1137,6 +1137,7 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
     try {
       const uploadFormData = new FormData();
       uploadFormData.append("file", file);
+      uploadFormData.append("purpose", "BUSINESS_EVIDENCE");
       const response = await fetch("/api/upload", {
         method: "POST",
         body: uploadFormData,

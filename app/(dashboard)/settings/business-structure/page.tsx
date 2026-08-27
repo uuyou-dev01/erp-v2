@@ -1,7 +1,7 @@
 import { Boxes, Building2, RadioTower, Warehouse } from "lucide-react";
 import { getMultiPartyManagementData } from "@/app/actions/multi-party";
 import {
-  AgreementActivateButton,
+  AgreementLifecycleActions,
   BusinessStructureManager,
 } from "@/components/settings/business-structure-manager";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -72,10 +72,17 @@ export default async function BusinessStructurePage() {
           ) : (
             <div className="divide-y">
               {data.agreements.map((agreement) => (
-                <div key={agreement.id} className="grid gap-2 py-3 md:grid-cols-[1fr_auto]">
+                <div
+                  id={`agreement-${agreement.id}`}
+                  key={agreement.id}
+                  className="grid scroll-mt-24 gap-2 py-3 md:grid-cols-[1fr_auto]"
+                >
                   <div>
                     <p className="font-medium">
-                      {agreement.clientOrganization.name} → {agreement.providerOrganization.name}
+                      {agreement.clientOrganization.name} → {agreement.providerOrganization.name}{" "}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        v{agreement.version}
+                      </span>
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {agreement.inventoryPool?.name ?? "全部货盘"} ·{" "}
@@ -85,13 +92,30 @@ export default async function BusinessStructurePage() {
                         : "服务"}
                     </p>
                   </div>
-                  <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
-                    {agreement.status} · {agreement.settlementCurrency} ·{" "}
-                    {agreement.paymentTermsDays} 天{" "}
-                    {agreement.status === "PENDING_COUNTERPARTY" &&
-                    agreement.proposedByOrganizationId !== data.context.organizationId ? (
-                      <AgreementActivateButton id={agreement.id} />
-                    ) : null}
+                  <div className="space-y-2 text-right text-sm text-muted-foreground">
+                    <p>
+                      {agreement.status} · {agreement.settlementCurrency} ·{" "}
+                      {agreement.paymentTermsDays} 天
+                    </p>
+                    <AgreementLifecycleActions
+                      currentOrganizationId={data.context.organizationId}
+                      agreement={{
+                        id: agreement.id,
+                        status: agreement.status,
+                        version: agreement.version,
+                        proposedByOrganizationId: agreement.proposedByOrganizationId,
+                        pausedByOrganizationId: agreement.pausedByOrganizationId,
+                        serviceTypes: Array.isArray(agreement.serviceTypes)
+                          ? agreement.serviceTypes.filter(
+                              (serviceType): serviceType is string => typeof serviceType === "string"
+                            )
+                          : [],
+                        settlementCurrency: agreement.settlementCurrency,
+                        paymentTermsDays: agreement.paymentTermsDays,
+                        notes: agreement.notes,
+                        hasRevision: Boolean(agreement.revision),
+                      }}
+                    />
                   </div>
                 </div>
               ))}

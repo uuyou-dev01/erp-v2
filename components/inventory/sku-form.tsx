@@ -273,6 +273,8 @@ export function SKUForm({
     try {
       const uploadFormData = new FormData();
       uploadFormData.append("file", file);
+      uploadFormData.append("purpose", "CATALOG_IMAGE");
+      uploadFormData.append("visibility", "CATALOG_PUBLIC");
 
       const response = await fetch("/api/upload", {
         method: "POST",

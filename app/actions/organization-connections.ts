@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
 
 function normalizeCollaborationCode(value: string) {
   const code = value.trim().toUpperCase();
@@ -65,6 +66,18 @@ export async function getOrganizationConnectionsData() {
         initiatingPartner: { select: { id: true, name: true, type: true } },
         requestedBy: { select: { name: true, email: true } },
         respondedBy: { select: { name: true, email: true } },
+        events: {
+          select: {
+            id: true,
+            eventType: true,
+            fromStatus: true,
+            toStatus: true,
+            reason: true,
+            createdAt: true,
+            actorUser: { select: { name: true, email: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        },
       },
       orderBy: { updatedAt: "desc" },
     }),
@@ -133,32 +146,29 @@ export async function requestOrganizationConnectionAction(data: {
               requestedById: context.userId,
             },
           });
-      const recipients = await tx.membership.findMany({
-        where: {
-          organizationId: target.id,
-          status: "ACTIVE",
-          role: { in: [ROLES.OWNER, ROLES.ADMIN] },
+      await tx.organizationConnectionEvent.create({
+        data: {
+          connectionId: saved.id,
+          eventType: previous ? "REOPENED" : "REQUESTED",
+          actorUserId: context.userId,
+          fromStatus: previous?.status ?? null,
+          toStatus: "PENDING",
+          metadata: { initiatingPartnerId: partner.id },
         },
-        select: { userId: true },
       });
-      if (recipients.length) {
-        await tx.notification.createMany({
-          data: recipients.map(({ userId }) => ({
-            organizationId: target.id,
-            recipientId: userId,
-            actorId: context.userId,
-            refType: "ORGANIZATION_CONNECTION",
-            refId: saved.id,
-            type: "ORGANIZATION_CONNECTION_REQUEST",
-            title: `${requester.name} 发来企业连接请求`,
-            body: `对方希望通过合作方「${partner.name}」建立企业协作关系。`,
-            actionUrl: "/settings/connections",
-            dedupeKey: `organization-connection:${saved.id}:${saved.updatedAt.getTime()}`,
-          })),
-          skipDuplicates: true,
-        });
-      }
       return saved;
+    });
+    await notifyOrganizationAdministrators({
+      organizationId: target.id,
+      actorId: context.userId,
+      refType: "ORGANIZATION_CONNECTION",
+      refId: connection.id,
+      type: "ORGANIZATION_CONNECTION_REQUEST",
+      title: `${requester.name} 发来企业连接请求`,
+      body: `对方希望通过合作方「${partner.name}」建立企业协作关系。`,
+      actionUrl: "/settings/connections",
+      dedupeKey: `organization-connection:${connection.id}:requested:${connection.updatedAt.getTime()}`,
+      priority: "HIGH",
     });
     revalidateConnectionPages();
     return actionSuccess({ connectionId: connection.id, targetName: target.name });
@@ -177,6 +187,10 @@ export async function respondOrganizationConnectionAction(data: {
       throw new Error("只有企业所有者或管理员可以处理连接请求");
     const connection = await prisma.organizationConnection.findUnique({
       where: { id: data.connectionId },
+      include: {
+        requesterOrganization: { select: { name: true } },
+        targetOrganization: { select: { name: true } },
+      },
     });
     if (
       !connection ||
@@ -186,7 +200,7 @@ export async function respondOrganizationConnectionAction(data: {
       throw new Error("连接请求不存在或已处理");
     }
     const accepted = data.decision === "ACCEPT";
-    await prisma.$transaction(async (tx) => {
+    const transitionEvent = await prisma.$transaction(async (tx) => {
       const claim = await tx.organizationConnection.updateMany({
         where: { id: connection.id, status: "PENDING" },
         data: {
@@ -202,6 +216,28 @@ export async function respondOrganizationConnectionAction(data: {
           data: { organizationId: context.organizationId },
         });
       }
+      return tx.organizationConnectionEvent.create({
+        data: {
+          connectionId: connection.id,
+          eventType: accepted ? "ACCEPTED" : "REJECTED",
+          actorUserId: context.userId,
+          fromStatus: "PENDING",
+          toStatus: accepted ? "ACTIVE" : "REJECTED",
+        },
+      });
+    });
+    await notifyOrganizationAdministrators({
+      organizationId: connection.requesterOrganizationId,
+      actorId: context.userId,
+      includeUserIds: [connection.requestedById],
+      refType: "ORGANIZATION_CONNECTION",
+      refId: connection.id,
+      type: accepted ? "ORGANIZATION_CONNECTION_ACCEPTED" : "ORGANIZATION_CONNECTION_REJECTED",
+      title: accepted
+        ? `${connection.targetOrganization.name} 已接受企业连接`
+        : `${connection.targetOrganization.name} 已拒绝企业连接`,
+      actionUrl: "/settings/connections",
+      dedupeKey: `organization-connection:${connection.id}:${accepted ? "accepted" : "rejected"}:${transitionEvent.id}`,
     });
     revalidateConnectionPages();
     return actionSuccess({ connectionId: connection.id, status: accepted ? "ACTIVE" : "REJECTED" });
@@ -210,13 +246,17 @@ export async function respondOrganizationConnectionAction(data: {
   }
 }
 
-export async function endOrganizationConnectionAction(connectionId: string) {
+export async function endOrganizationConnectionAction(connectionId: string, reason?: string) {
   try {
     const context = await requireUserContext();
     if (!hasRoleAtLeast(context.role, ROLES.ADMIN))
       throw new Error("只有企业所有者或管理员可以解除连接");
     const connection = await prisma.organizationConnection.findUnique({
       where: { id: connectionId },
+      include: {
+        requesterOrganization: { select: { name: true } },
+        targetOrganization: { select: { name: true } },
+      },
     });
     if (
       !connection ||
@@ -227,7 +267,7 @@ export async function endOrganizationConnectionAction(connectionId: string) {
     ) {
       throw new Error("有效企业连接不存在");
     }
-    await prisma.$transaction(async (tx) => {
+    const transitionEvent = await prisma.$transaction(async (tx) => {
       await tx.organizationConnection.update({
         where: { id: connection.id },
         data: { status: "ENDED", endedAt: new Date(), respondedById: context.userId },
@@ -241,6 +281,36 @@ export async function endOrganizationConnectionAction(connectionId: string) {
           data: { organizationId: null },
         });
       }
+      return tx.organizationConnectionEvent.create({
+        data: {
+          connectionId: connection.id,
+          eventType: "ENDED",
+          actorUserId: context.userId,
+          fromStatus: "ACTIVE",
+          toStatus: "ENDED",
+          reason: reason?.trim() || null,
+        },
+      });
+    });
+    const counterpartOrganizationId =
+      connection.requesterOrganizationId === context.organizationId
+        ? connection.targetOrganizationId
+        : connection.requesterOrganizationId;
+    const actorOrganizationName =
+      connection.requesterOrganizationId === context.organizationId
+        ? connection.requesterOrganization.name
+        : connection.targetOrganization.name;
+    await notifyOrganizationAdministrators({
+      organizationId: counterpartOrganizationId,
+      actorId: context.userId,
+      refType: "ORGANIZATION_CONNECTION",
+      refId: connection.id,
+      type: "ORGANIZATION_CONNECTION_ENDED",
+      title: `${actorOrganizationName} 已解除企业连接`,
+      body: reason?.trim() || "未来定向货盘和新协作授权已停止，历史记录仍保留。",
+      actionUrl: "/settings/connections",
+      dedupeKey: `organization-connection:${connection.id}:ended:${transitionEvent.id}`,
+      priority: "HIGH",
     });
     revalidateConnectionPages();
     return actionSuccess({ connectionId });

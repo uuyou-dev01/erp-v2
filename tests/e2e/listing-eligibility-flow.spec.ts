@@ -138,7 +138,9 @@ test.describe("listing platform eligibility", () => {
   });
 
   test.afterAll(async () => {
-    await prisma.listing.deleteMany({ where: { skuId: { in: [skuId, sellableSkuId].filter(Boolean) } } });
+    await prisma.listing.deleteMany({
+      where: { skuId: { in: [skuId, sellableSkuId].filter(Boolean) } },
+    });
     await prisma.stockLedger.deleteMany({
       where: { refType: "E2E", refId: { in: [sourceId, sellableSourceId] } },
     });
@@ -159,11 +161,9 @@ test.describe("listing platform eligibility", () => {
       await dialog.dismiss();
     });
 
-    await page.goto(
-      `/listing/new?listingType=SKU&skuId=${skuId}&platformId=${platformId}`,
-    );
+    await page.goto(`/listing/new?listingType=SKU&skuId=${skuId}&platformId=${platformId}`);
     await expect(page.getByRole("heading", { name: "添加上架记录" })).toBeVisible();
-    await expect(page.getByText("暂无可发货库存", { exact: false })).toBeVisible();
+    await expect(page.getByText("已到仓暂存 1 件，当前不可发货", { exact: false })).toBeVisible();
 
     await page.getByLabel(/Listing 价格/).fill("180");
     await page.getByRole("button", { name: "添加上架记录" }).click();
@@ -177,7 +177,7 @@ test.describe("listing platform eligibility", () => {
         async () =>
           await prisma.listing.count({
             where: { storeId: STORE_ID, skuId, platformId },
-          }),
+          })
       )
       .toBe(0);
   });
@@ -230,7 +230,7 @@ test.describe("listing platform eligibility", () => {
         async () =>
           await prisma.listing.count({
             where: { storeId: STORE_ID, skuId: sellableSkuId, platformId },
-          }),
+          })
       )
       .toBe(0);
   });

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { MOBILE_DEVICE_COOKIE } from "@/lib/mobile/device-auth";
 import { mobileApiError } from "@/lib/mobile/http";
+import { isSecureCookieEnabled } from "@/lib/auth/cookie-security";
 
 export async function POST(request: Request) {
   try {
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
     (await cookies()).set(MOBILE_DEVICE_COOKIE, device.id, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureCookieEnabled(),
       path: "/",
       maxAge: 60 * 60 * 24 * 365,
     });

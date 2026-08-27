@@ -9,6 +9,7 @@ import { buildAgreementRule, toAgreementJson } from "@/lib/application/trading-a
 import { requireUserContext } from "@/lib/auth/user-context";
 import { organizationPairKey } from "@/lib/application/organization-connections";
 import { prisma } from "@/lib/prisma";
+import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
 
 export type SupplyOfferItemInput = {
   id?: string;
@@ -1393,12 +1394,16 @@ export async function changeSupplyOfferStatusAction(
       where: { id },
       include: {
         items: { include: { sku: { select: { imageUrl: true } } } },
+        visibilityRules: { select: { viewerOrganizationId: true } },
       },
     });
     if (!existing) throw new Error("货盘不存在");
     const context = await requireUserContext({ storeId: existing.storeId });
     if ((existing.organizationId ?? context.organizationId) !== context.organizationId)
       throw new Error("只能操作当前经营主体的货盘");
+    if (existing.status === nextStatus) {
+      return actionSuccess({ id: existing.id, status: existing.status, unchanged: true });
+    }
     if (existing.status === "DELISTED" && nextStatus !== "DRAFT") {
       throw new Error("已下架货盘不能恢复，请复制后重新发布");
     }
@@ -1451,13 +1456,41 @@ export async function changeSupplyOfferStatusAction(
         status: nextStatus,
         publishedAt:
           nextStatus === "PUBLISHED" ? (existing.publishedAt ?? new Date()) : existing.publishedAt,
-        pausedAt: nextStatus === "PAUSED" ? new Date() : null,
+        pausedAt: nextStatus === "PAUSED" ? new Date() : existing.pausedAt,
         agreementStatus: nextStatus === "PUBLISHED" ? "CONFIRMED" : existing.agreementStatus,
         agreementConfirmedAt:
           nextStatus === "PUBLISHED" ? new Date() : existing.agreementConfirmedAt,
         updatedById: context.userId,
       },
     });
+
+    const viewerOrganizationIds = Array.from(
+      new Set(
+        existing.visibilityRules
+          .map((rule) => rule.viewerOrganizationId)
+          .filter((organizationId): organizationId is string => Boolean(organizationId))
+      )
+    );
+    await Promise.all(
+      viewerOrganizationIds.map((organizationId) =>
+        notifyOrganizationAdministrators({
+          organizationId,
+          actorId: context.userId,
+          refType: "SUPPLY_OFFER",
+          refId: offer.id,
+          type: "SUPPLY_OFFER_STATUS_CHANGED",
+          title: `定向货盘「${offer.title}」状态已更新`,
+          body: `当前状态：${offer.status}`,
+          actionUrl: `/marketplace/${encodeURIComponent(offer.id)}`,
+          dedupeKey: [
+            `supply-offer:${offer.id}`,
+            `${existing.status}->${offer.status}`,
+            `published:${offer.publishedAt?.toISOString() ?? "never"}`,
+            `paused:${offer.pausedAt?.toISOString() ?? "never"}`,
+          ].join(":"),
+        })
+      )
+    );
 
     revalidateOfferSurfaces(offer.id);
     return actionSuccess({ id: offer.id, status: offer.status });

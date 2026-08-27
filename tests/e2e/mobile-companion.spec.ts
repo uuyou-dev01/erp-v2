@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
-import { createSessionToken } from "@/lib/auth/session-token";
+import { hashPassword } from "@/lib/auth/password";
 import { deleteMobileAsset } from "@/lib/mobile/asset-storage";
 
 const prisma = new PrismaClient();
@@ -14,7 +14,7 @@ test.describe("ERP mobile companion", () => {
     const runId = Date.now().toString(36);
 
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，管理员/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
     await expect(page.getByText("现在需要处理")).toBeVisible();
     await expect
       .poll(async () => (await page.request.get("/api/v1/mobile/devices")).status())
@@ -88,7 +88,7 @@ test.describe("ERP mobile companion", () => {
 
   test("mobile API exposes paginated tasks and notification controls", async ({ page }) => {
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，管理员/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
     const home = await page.request.get("/api/v1/mobile/home");
     expect(home.ok()).toBe(true);
     const tasks = await page.request.get("/api/v1/mobile/tasks?scope=today&limit=2");
@@ -102,7 +102,7 @@ test.describe("ERP mobile companion", () => {
 
   test("uploads screenshot evidence and extracts an OCR price candidate", async ({ page }) => {
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，管理员/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
     expect(
       (
         await page.request.post("/api/v1/mobile/devices/register", {
@@ -143,7 +143,16 @@ test.describe("ERP mobile companion", () => {
   test("captures a mobile photo directly into an item-unit inventory record", async ({ page }) => {
     const runId = Date.now().toString(36);
     const [sku, location] = await Promise.all([
-      prisma.sKU.findFirstOrThrow({ where: { storeId: "store_1", catalogRole: { not: "GROUP" } } }),
+      prisma.sKU.create({
+        data: {
+          storeId: "store_1",
+          code: `PHOTO-${runId}`.toUpperCase(),
+          name: `E2E 单件照片 ${runId}`,
+          catalogRole: "SIMPLE",
+          nameSource: "MANUAL",
+          codeSource: "MANUAL",
+        },
+      }),
       prisma.location.findFirstOrThrow({ where: { storeId: "store_1" } }),
     ]);
     const item = await prisma.itemUnit.create({
@@ -193,6 +202,7 @@ test.describe("ERP mobile companion", () => {
       await prisma.mobileAsset.deleteMany({
         where: { id: { in: assets.map((asset) => asset.id) } },
       });
+      await prisma.sKU.deleteMany({ where: { id: sku.id } });
     }
   });
 
@@ -358,11 +368,12 @@ test.describe("ERP mobile companion", () => {
       where: { stores: { some: { id: "store_1" } } },
     });
     const email = `mobile-isolation-${Date.now()}@example.com`;
+    const password = "mobile-isolation-password";
     const other = await prisma.user.create({
       data: {
         email,
         name: "隔离测试用户",
-        password: "hashed_password_placeholder",
+        password: await hashPassword(password),
         role: "VIEWER",
         storeId: "store_1",
       },
@@ -375,16 +386,12 @@ test.describe("ERP mobile companion", () => {
     });
     const context = await browser.newContext();
     try {
-      await context.addCookies([
-        {
-          name: "erp_current_user_email",
-          value: createSessionToken(email),
-          url: "http://127.0.0.1:3100",
-          httpOnly: true,
-          sameSite: "Lax",
-        },
-      ]);
       const otherPage = await context.newPage();
+      await otherPage.goto("/login");
+      await otherPage.getByLabel("邮箱").fill(email);
+      await otherPage.getByLabel("密码", { exact: true }).fill(password);
+      await otherPage.getByRole("button", { name: "登录" }).click();
+      await expect(otherPage.getByRole("heading", { name: "工作台" })).toBeVisible();
       await otherPage.goto("/m");
       await expect(otherPage.getByRole("heading", { name: /好，隔离测试用户/ })).toBeVisible();
       expect(

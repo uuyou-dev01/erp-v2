@@ -4,7 +4,10 @@ import { useMemo, useState, useTransition } from "react";
 import {
   activateServiceAgreementAction,
   createServiceAgreementAction,
+  endServiceAgreementAction,
   grantScopedAccessAction,
+  pauseServiceAgreementAction,
+  reviseServiceAgreementAction,
   syncLegacyFoundationAction,
 } from "@/app/actions/multi-party";
 import { Button } from "@/components/ui/button";
@@ -143,7 +146,7 @@ export function BusinessStructureManager({
           if (!nextOpen) setError(null);
         }}
         title="创建服务协议"
-        description="配置双方的服务范围与结算约定；创建后由服务方确认启用。"
+        description="配置双方的服务范围与结算约定；创建后由对方企业管理员确认启用。"
         placement="end"
         size="lg"
         closeDisabled={pending}
@@ -379,25 +382,196 @@ export function BusinessStructureManager({
   );
 }
 
-export function AgreementActivateButton({ id }: { id: string }) {
+export function AgreementLifecycleActions({
+  agreement,
+  currentOrganizationId,
+}: {
+  agreement: {
+    id: string;
+    status: string;
+    version: number;
+    proposedByOrganizationId: string | null;
+    pausedByOrganizationId: string | null;
+    serviceTypes: string[];
+    settlementCurrency: string;
+    paymentTermsDays: number;
+    notes: string | null;
+    hasRevision: boolean;
+  };
+  currentOrganizationId: string;
+}) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const [revisionOpen, setRevisionOpen] = useState(false);
+  const [revisionServices, setRevisionServices] = useState<string[]>(agreement.serviceTypes);
+  const canConfirm =
+    (agreement.status === "PENDING_COUNTERPARTY" &&
+      agreement.proposedByOrganizationId !== currentOrganizationId) ||
+    (agreement.status === "PAUSED" &&
+      Boolean(agreement.pausedByOrganizationId) &&
+      agreement.pausedByOrganizationId !== currentOrganizationId);
+
+  function run(
+    task: () => Promise<{ success: boolean; error?: string }>,
+    successMessage: string,
+    onSuccess?: () => void
+  ) {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await task();
+      setMessage(result.success ? successMessage : (result.error ?? "操作失败"));
+      if (result.success) onSuccess?.();
+    });
+  }
+
   return (
-    <span className="inline-flex items-center gap-2">
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={pending}
-        onClick={() =>
-          startTransition(async () => {
-            const result = await activateServiceAgreementAction(id);
-            setMessage(result.success ? "已启用" : result.error);
-          })
-        }
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {canConfirm ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          onClick={() =>
+            run(
+              () => activateServiceAgreementAction(agreement.id),
+              agreement.status === "PAUSED" ? "已恢复" : "已启用"
+            )
+          }
+        >
+          {pending
+            ? "处理中…"
+            : agreement.status === "PAUSED"
+              ? "对方确认恢复"
+              : "对方确认启用"}
+        </Button>
+      ) : null}
+      {agreement.status === "ACTIVE" ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          onClick={() => run(() => pauseServiceAgreementAction(agreement.id), "已暂停")}
+        >
+          暂停
+        </Button>
+      ) : null}
+      {["PENDING_COUNTERPARTY", "ACTIVE", "PAUSED"].includes(agreement.status) ? (
+        <>
+          {["ACTIVE", "PAUSED"].includes(agreement.status) && !agreement.hasRevision ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setRevisionOpen(true)}
+            >
+              创建修订版
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={pending}
+            onClick={() => {
+              if (!window.confirm("结束后将停止新的业务授权，历史协议和成交快照仍会保留。确定结束？")) {
+                return;
+              }
+              run(() => endServiceAgreementAction(agreement.id), "已结束");
+            }}
+          >
+            结束
+          </Button>
+        </>
+      ) : null}
+      {message ? <span className="basis-full text-xs text-muted-foreground">{message}</span> : null}
+
+      <ActionDialog
+        open={revisionOpen}
+        onOpenChange={setRevisionOpen}
+        title={`创建协议修订版 v${agreement.version + 1}`}
+        description="修订会新增版本，不覆盖旧条款；对方确认前当前版本继续有效。"
+        size="md"
+        closeDisabled={pending}
       >
-        {pending ? "启用中…" : "服务方确认启用"}
-      </Button>
-      {message ? <span className="text-xs text-muted-foreground">{message}</span> : null}
-    </span>
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            run(
+              () =>
+                reviseServiceAgreementAction({
+                  id: agreement.id,
+                  serviceTypes: revisionServices,
+                  settlementCurrency: String(form.get("settlementCurrency") || "").toUpperCase(),
+                  paymentTermsDays: Number(form.get("paymentTermsDays") || 0),
+                  notes: String(form.get("notes") || "") || undefined,
+                }),
+              "修订版已发送给对方确认",
+              () => setRevisionOpen(false)
+            );
+          }}
+        >
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">允许的服务</legend>
+            <div className="flex flex-wrap gap-3">
+              {SERVICE_TYPES.map(([value, label]) => (
+                <label key={value} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={revisionServices.includes(value)}
+                    onChange={(event) =>
+                      setRevisionServices((current) =>
+                        event.target.checked
+                          ? Array.from(new Set([...current, value]))
+                          : current.filter((item) => item !== value)
+                      )
+                    }
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor={`revision-currency-${agreement.id}`}>结算币种</Label>
+              <Input
+                id={`revision-currency-${agreement.id}`}
+                name="settlementCurrency"
+                defaultValue={agreement.settlementCurrency}
+                maxLength={3}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`revision-terms-${agreement.id}`}>账期（天）</Label>
+              <Input
+                id={`revision-terms-${agreement.id}`}
+                name="paymentTermsDays"
+                type="number"
+                min={0}
+                defaultValue={agreement.paymentTermsDays}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`revision-notes-${agreement.id}`}>约定说明</Label>
+            <Textarea
+              id={`revision-notes-${agreement.id}`}
+              name="notes"
+              defaultValue={agreement.notes ?? ""}
+            />
+          </div>
+          <div className="flex justify-end gap-2 border-t pt-4">
+            <Button type="button" variant="outline" onClick={() => setRevisionOpen(false)}>
+              取消
+            </Button>
+            <Button type="submit" disabled={pending || revisionServices.length === 0}>
+              {pending ? "发送中…" : "发送修订版"}
+            </Button>
+          </div>
+        </form>
+      </ActionDialog>
+    </div>
   );
 }

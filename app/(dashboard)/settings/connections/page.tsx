@@ -23,6 +23,10 @@ export default async function OrganizationConnectionsPage() {
           createdAt: connection.createdAt.toISOString(),
           respondedAt: connection.respondedAt?.toISOString() ?? null,
           endedAt: connection.endedAt?.toISOString() ?? null,
+          events: connection.events.map((event) => ({
+            ...event,
+            createdAt: event.createdAt.toISOString(),
+          })),
         }))}
       />
     </div>

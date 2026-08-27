@@ -9,6 +9,7 @@ import { buildWithdrawalHoldPlan } from "@/lib/application/wallet-withdrawal";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
+import { bindAssetReferences } from "@/lib/assets/references";
 
 type StringableDecimal = { toString(): string };
 
@@ -356,6 +357,17 @@ export async function markWithdrawalPaidAction(
     if (["REJECTED", "CANCELLED"].includes(existing.status)) {
       throw new Error("已关闭的提现申请不能打款");
     }
+
+    await bindAssetReferences(
+      data.proofUrl ? [data.proofUrl] : [],
+      {
+        organizationId: context.organizationId,
+        storeId: existing.storeId,
+        userId: context.userId,
+      },
+      "WITHDRAWAL_REQUEST",
+      existing.id
+    );
 
     const paidAt = new Date();
     const payout = await prisma.$transaction(async (tx) => {

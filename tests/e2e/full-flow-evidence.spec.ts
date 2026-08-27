@@ -6,10 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
 
 const STORE_ID = "store_1";
-const EVIDENCE_DIR = path.join(
-  process.cwd(),
-  "docs/testing/e2e-2026-07-26/screenshots",
-);
+const EVIDENCE_DIR = path.join(process.cwd(), "docs/testing/releases/v0.9.0/screenshots");
 
 mkdirSync(EVIDENCE_DIR, { recursive: true });
 
@@ -26,10 +23,7 @@ async function lotQuantity(lotId: string) {
     where: { entityType: "LOT", entityId: lotId },
     select: { deltaQty: true },
   });
-  return ledgers.reduce(
-    (sum, row) => sum.plus(row.deltaQty.toString()),
-    new Decimal(0),
-  );
+  return ledgers.reduce((sum, row) => sum.plus(row.deltaQty.toString()), new Decimal(0));
 }
 
 test.describe.configure({ mode: "serial" });
@@ -45,6 +39,9 @@ test.describe("ERP full-flow evidence", () => {
   let sellableLocationId = "";
   let skuId = "";
   let listingId = "";
+  let supplierId = "";
+  let transferSupplierId = "";
+  let taskSupplierId = "";
 
   test.beforeAll(async () => {
     const location = await prisma.location.findFirstOrThrow({
@@ -56,11 +53,45 @@ test.describe("ERP full-flow evidence", () => {
       orderBy: { createdAt: "asc" },
     });
     sellableLocationId = location.id;
+
+    const [supplier, transferSupplier, taskSupplier] = await Promise.all([
+      prisma.partner.create({
+        data: {
+          storeId: STORE_ID,
+          code: `SUPPLIER_${runId}`.toUpperCase(),
+          name: supplierName,
+          type: "SUPPLIER",
+          status: "ACTIVE",
+          defaultCurrency: "CNY",
+        },
+      }),
+      prisma.partner.create({
+        data: {
+          storeId: STORE_ID,
+          code: `TRANSFER_SUPPLIER_${runId}`.toUpperCase(),
+          name: "集运测试供应商",
+          type: "SUPPLIER",
+          status: "ACTIVE",
+          defaultCurrency: "JPY",
+        },
+      }),
+      prisma.partner.create({
+        data: {
+          storeId: STORE_ID,
+          code: `TASK_SUPPLIER_${runId}`.toUpperCase(),
+          name: `任务分发供应商 ${runId}`,
+          type: "SUPPLIER",
+          status: "ACTIVE",
+          defaultCurrency: "CNY",
+        },
+      }),
+    ]);
+    supplierId = supplier.id;
+    transferSupplierId = transferSupplier.id;
+    taskSupplierId = taskSupplier.id;
   });
 
-  test("01 CNY purchase, inbound, listing, sale, shipment and profit", async ({
-    page,
-  }) => {
+  test("01 CNY purchase, inbound, listing, sale, shipment and profit", async ({ page }) => {
     test.setTimeout(120_000);
     const appErrors: string[] = [];
     page.on("console", (message) => {
@@ -71,16 +102,14 @@ test.describe("ERP full-flow evidence", () => {
     await page.goto("/procurement/new");
     await expect(page.getByRole("heading", { name: "新建采购订单" })).toBeVisible();
     await page.getByLabel(/采购单号/).fill(orderNo);
-    await page.getByLabel(/供应商/).fill(supplierName);
+    await page.getByLabel(/供应商（合作方）/).selectOption(supplierId);
     await page.getByLabel(/^币种/).selectOption("CNY");
     await page.getByLabel("目的地仓库").selectOption(sellableLocationId);
     await shot(page, "01-purchase-basic-cny.png");
 
     await page.getByRole("button", { name: /下一步/ }).click();
     await page.getByRole("button", { name: /新建SKU/ }).click();
-    await expect(
-      page.getByRole("heading", { name: /快速新建\s*SKU/ }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: /快速新建\s*SKU/ })).toBeVisible();
     await page.getByLabel("系统 SKU 编码").fill(skuCode);
     await page.getByLabel(/商品名称/).fill(productName);
     await page.getByRole("button", { name: "创建并选中" }).click();
@@ -200,16 +229,12 @@ test.describe("ERP full-flow evidence", () => {
 
     expect(
       appErrors.filter((line) =>
-        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(
-          line,
-        ),
-      ),
+        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line)
+      )
     ).toEqual([]);
   });
 
-  test("02 consolidation status flow and inventory movement evidence", async ({
-    page,
-  }) => {
+  test("02 consolidation status flow and inventory movement evidence", async ({ page }) => {
     test.setTimeout(90_000);
     const transit = await prisma.location.create({
       data: {
@@ -242,6 +267,7 @@ test.describe("ERP full-flow evidence", () => {
       data: {
         storeId: STORE_ID,
         orderNo: `PO_TRANSFER_${runId}`.toUpperCase(),
+        supplierId: transferSupplierId,
         supplierName: "集运测试供应商",
         currency: "JPY",
         subtotal: "18000",
@@ -302,9 +328,7 @@ test.describe("ERP full-flow evidence", () => {
     });
 
     await page.goto("/logistics/consolidations");
-    await expect(
-      page.getByRole("heading", { name: "集运批次", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "集运批次", exact: true })).toBeVisible();
     await shot(page, "12-consolidation-list.png");
     await page.goto(`/logistics/consolidations/${batch.id}`);
     await expect(page.getByText("证据：中国转运仓 → 证据：日本可售仓")).toBeVisible();
@@ -380,14 +404,14 @@ test.describe("ERP full-flow evidence", () => {
           refType: "CONSOLIDATION_BATCH",
           refId: batch.id,
         },
-      }),
+      })
     ).toBe(2);
   });
 
   test("03 multi-account task assignment and notification", async ({ page }) => {
     test.setTimeout(90_000);
     const admin = await prisma.user.findUniqueOrThrow({
-      where: { email: "admin@example.com" },
+      where: { email: process.env.E2E_OWNER_EMAIL ?? "e2e-owner@example.invalid" },
       include: { memberships: true },
     });
     const memberEmail = `${runId}@example.com`;
@@ -425,6 +449,7 @@ test.describe("ERP full-flow evidence", () => {
       data: {
         storeId: STORE_ID,
         orderNo: `PO_TASK_${runId}`.toUpperCase(),
+        supplierId: taskSupplierId,
         supplierName: taskSupplier,
         currency: "CNY",
         subtotal: "88",
@@ -455,6 +480,13 @@ test.describe("ERP full-flow evidence", () => {
     });
 
     await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByLabel("邮箱").fill(process.env.E2E_OWNER_EMAIL ?? "e2e-owner@example.invalid");
+    await page
+      .getByLabel("密码", { exact: true })
+      .fill(process.env.E2E_OWNER_PASSWORD ?? "e2e-owner-password-7fd243e68c2d4b33");
+    await page.getByRole("button", { name: "登录" }).click();
+    await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible();
     await page.goto("/workbench?queue=missingLogistics");
     await expect(page.getByText(taskSupplier)).toBeVisible();
     await page.locator('[role="button"]').filter({ hasText: taskSupplier }).first().click();
@@ -488,13 +520,13 @@ test.describe("ERP full-flow evidence", () => {
             taskId: task.id,
             type: "TASK_ASSIGNED",
           },
-        }),
+        })
       )
       .toBe(1);
 
     await page.goto("/login");
     await page.getByLabel("邮箱").fill(memberEmail);
-    await page.getByLabel("密码").fill("e2e-test-password");
+    await page.getByLabel("密码", { exact: true }).fill("e2e-test-password");
     await page.getByRole("button", { name: "登录" }).click();
     await expect(page.getByRole("heading", { name: "工作台" })).toBeVisible();
     await page.goto("/notifications");

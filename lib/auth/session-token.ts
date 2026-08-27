@@ -1,15 +1,15 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 type SessionPayload = {
-  email: string;
+  userId: string;
+  sessionVersion: number;
   expiresAt: number;
 };
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function sessionSecret() {
-  const configured =
-    process.env.ERP_SESSION_SECRET ?? process.env.NEXTAUTH_SECRET;
+  const configured = process.env.ERP_SESSION_SECRET;
   if (configured && configured !== "your-secret-key-here") return configured;
   if (process.env.NODE_ENV === "production") {
     throw new Error("生产环境必须配置 ERP_SESSION_SECRET");
@@ -23,9 +23,10 @@ function signature(value: string) {
     .digest("base64url");
 }
 
-export function createSessionToken(email: string) {
+export function createSessionToken(userId: string, sessionVersion: number) {
   const payload: SessionPayload = {
-    email: email.trim().toLowerCase(),
+    userId,
+    sessionVersion,
     expiresAt: Date.now() + SESSION_TTL_MS,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -50,7 +51,9 @@ export function readSessionToken(token: string | undefined) {
       Buffer.from(encoded, "base64url").toString("utf8"),
     ) as SessionPayload;
     if (
-      !payload.email ||
+      !payload.userId ||
+      !Number.isInteger(payload.sessionVersion) ||
+      payload.sessionVersion < 1 ||
       !Number.isFinite(payload.expiresAt) ||
       payload.expiresAt <= Date.now()
     ) {

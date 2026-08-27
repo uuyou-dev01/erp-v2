@@ -7,9 +7,12 @@
 /coverage
 /test-results
 /playwright-report
+/.data/e2e-auth.json
+/.data/e2e-auth-*.json
 
 # next.js
 /.next/
+/.next-e2e-*/
 /out/
 
 # production
@@ -38,6 +41,8 @@ next-env.d.ts
 # uploads
 /public/uploads
 /.data/mobile-assets
+/.data/assets
+/.runtime
 
 # local Codex work and generated OCR artifacts
 /.codex/

@@ -33,6 +33,7 @@ import { assignWorkTask } from "@/app/actions/tasks";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { requireActiveCompanionDevice } from "@/lib/mobile/device-auth";
 import { assertMobileRateLimit } from "@/lib/mobile/rate-limit";
+import { bindAssetReferences } from "@/lib/assets/references";
 
 export interface ExecuteMobileTaskInput {
   taskId: string;
@@ -124,17 +125,16 @@ async function executeDomainAction(input: ExecuteMobileTaskInput) {
   if (assetIds.length) {
     const context = await requireUserContext();
     const uniqueAssetIds = [...new Set(assetIds)];
-    const readyAssets = await prisma.mobileAsset.count({
-      where: {
-        id: { in: uniqueAssetIds },
+    await bindAssetReferences(
+      uniqueAssetIds,
+      {
         organizationId: context.organizationId,
+        storeId: context.activeStoreId,
         userId: context.userId,
-        status: "READY",
       },
-    });
-    if (readyAssets !== uniqueAssetIds.length) {
-      throw new Error("部分凭证文件不存在、未上传完成或无权使用");
-    }
+      REF_TYPE_BY_ENTITY[current.summary.entityType],
+      current.summary.entityId
+    );
   }
   if ((input.action === "confirmArrival" || input.action === "receivePurchase") && fields.isComplete === false && !((fields.imageUrls as string[] | undefined)?.length)) {
     throw new Error("部分或异常到货必须上传现场照片");
@@ -184,7 +184,7 @@ async function executeDomainAction(input: ExecuteMobileTaskInput) {
   } else if (input.action === "approveReturnInspection") {
     await submitApproveReturnInspection(current.summary.entityId, { note: String(fields.note || "") });
   } else {
-    throw new Error("该移动操作尚未实现");
+    throw new Error("当前操作类型不受支持");
   }
 
   return current;

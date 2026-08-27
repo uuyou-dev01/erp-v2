@@ -4,24 +4,32 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireActiveCompanionDevice } from "@/lib/mobile/device-auth";
-import { requireUserContext } from "@/lib/auth/user-context";
+import { requireAuthenticatedUser } from "@/lib/auth/user-context";
 import { mobileApiError } from "@/lib/mobile/http";
 import { mobileAssetDriver, readMobileAsset, resolveMobileAssetPath } from "@/lib/mobile/asset-storage";
+import { inspectImage } from "@/lib/assets/image-validation";
+import { canReadPrivateAssetReference } from "@/lib/assets/references";
 
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const [context, { id }] = await Promise.all([requireUserContext(), params]);
+    const [user, { id }] = await Promise.all([requireAuthenticatedUser(), params]);
     const asset = await prisma.mobileAsset.findFirst({
       where: {
         id,
-        organizationId: context.organizationId,
-        storeId: { in: context.storeIds },
         status: "READY",
       },
     });
     if (!asset) throw new Error("证据文件不存在或无权访问");
+    const legacyReference = asset.captureId
+      ? { ...asset, refType: "PRODUCT_INTELLIGENCE_CAPTURE", refId: asset.captureId }
+      : asset.itemUnitId
+        ? { ...asset, refType: "ITEM_UNIT", refId: asset.itemUnitId }
+        : asset;
+    if (!(await canReadPrivateAssetReference(user.id, legacyReference))) {
+      throw new Error("证据文件不存在或无权访问");
+    }
     const bytes = await readMobileAsset(asset.storageKey);
     return new NextResponse(bytes, {
       headers: {
@@ -48,6 +56,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (contentType !== asset.mimeType) throw new Error("图片类型与申请时不一致");
     const bytes = Buffer.from(await request.arrayBuffer());
     if (bytes.byteLength !== asset.byteSize) throw new Error("图片大小与申请时不一致");
+    const inspected = inspectImage(bytes);
+    if (inspected.mimeType !== asset.mimeType) throw new Error("图片实际类型与申请时不一致");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     if (asset.sha256 && asset.sha256 !== sha256) throw new Error("图片校验失败，请重新上传");
     const absolutePath = resolveMobileAssetPath(asset.storageKey);

@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Copy, Link2, RefreshCw, Settings2, UserPlus, X } from "lucide-react";
 import { deactivateTeamMemberAction, updateTeamMemberAccessAction } from "@/app/actions/team";
+import { generatePasswordResetTokenAction } from "@/app/actions/account-security";
 import { transferOrganizationOwnershipAction } from "@/app/actions/organization-membership";
 import {
   createTeamInvitationAction,
@@ -193,6 +194,19 @@ export function TeamMemberTable({
         if (!result.success) return setError(result.error);
         setMessage("成员已停用");
         router.refresh();
+      });
+    });
+  }
+
+  function generatePasswordReset(userId: string) {
+    setError(null);
+    setMessage(null);
+    setLatestLink(null);
+    startTransition(() => {
+      void generatePasswordResetTokenAction(userId).then((result) => {
+        if (!result.success) return setError(result.error);
+        setLatestLink(fullLink(result.resetPath));
+        setMessage("一次性密码重置链接已生成，请通过可信渠道发给本人");
       });
     });
   }
@@ -494,6 +508,17 @@ export function TeamMemberTable({
                           onClick={() => transferOwnership(member.id, member.name || member.email)}
                         >
                           转为所有者
+                        </Button>
+                      ) : null}
+                      {["OWNER", "ADMIN"].includes(currentUserRole) ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending}
+                          onClick={() => generatePasswordReset(member.id)}
+                        >
+                          重置密码
                         </Button>
                       ) : null}
                       <Button

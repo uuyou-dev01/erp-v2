@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { canShipOrders, hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
+import { notifyUser } from "@/lib/application/notifications";
 import { createInvitationToken, hashInvitationToken } from "@/lib/auth/invitation-token";
+import { isSecureCookieEnabled } from "@/lib/auth/cookie-security";
 import {
   ACTIVE_ORGANIZATION_COOKIE,
   ACTIVE_STORE_COOKIE,
@@ -279,17 +281,29 @@ async function acceptInvitation(invitationId: string, expectedToken?: string) {
       data: { storeId: storeIds[0], role: invitation.role },
     });
   });
+  await notifyUser({
+    organizationId: invitation.organizationId,
+    recipientId: invitation.invitedById,
+    actorId: user.id,
+    refType: "ORGANIZATION_INVITATION",
+    refId: invitation.id,
+    type: "MEMBERSHIP_INVITATION_ACCEPTED",
+    title: `${user.name || user.email} 已接受团队邀请`,
+    body: `角色：${invitation.role}；店铺范围：${storeIds.length} 个。`,
+    actionUrl: "/settings/team",
+    dedupeKey: `organization-invitation:${invitation.id}:accepted`,
+  });
   const cookieStore = await cookies();
   cookieStore.set(ACTIVE_ORGANIZATION_COOKIE, invitation.organizationId, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureCookieEnabled(),
     path: "/",
   });
   cookieStore.set(ACTIVE_STORE_COOKIE, storeIds[0], {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureCookieEnabled(),
     path: "/",
   });
   revalidatePath("/settings/team");

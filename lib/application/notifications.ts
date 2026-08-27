@@ -14,6 +14,8 @@ export const NOTIFICATION_RESOLUTION = {
   CONNECTION_ACCEPTED: "CONNECTION_ACCEPTED",
   CONNECTION_REJECTED: "CONNECTION_REJECTED",
   CONNECTION_ENDED: "CONNECTION_ENDED",
+  AGREEMENT_ACCEPTED: "AGREEMENT_ACCEPTED",
+  AGREEMENT_ENDED: "AGREEMENT_ENDED",
 } as const;
 
 type NotificationResolutionCode =
@@ -76,6 +78,22 @@ function connectionResolution(input: { status: string; respondedById?: string | 
   return null;
 }
 
+function serviceAgreementResolution(input: { status: string; acceptedById?: string | null }) {
+  if (input.status === "ACTIVE") {
+    return {
+      resolutionCode: NOTIFICATION_RESOLUTION.AGREEMENT_ACCEPTED,
+      resolvedById: input.acceptedById ?? null,
+    };
+  }
+  if (input.status === "ENDED") {
+    return {
+      resolutionCode: NOTIFICATION_RESOLUTION.AGREEMENT_ENDED,
+      resolvedById: null,
+    };
+  }
+  return null;
+}
+
 export function shouldSkipNotification(input: {
   recipientId: string;
   actorId?: string | null;
@@ -108,7 +126,23 @@ export async function notifyUser(input: {
   const actionUrl =
     input.actionUrl ||
     (input.taskId ? `/m/tasks/${encodeURIComponent(input.taskId)}` : "/m/notifications");
-  const informational = input.type === "TASK_DONE" || input.type === "LOCATION_ACCESS_ADDED";
+  const informationalTypes = new Set([
+    "TASK_DONE",
+    "LOCATION_ACCESS_ADDED",
+    "ORGANIZATION_CONNECTION_ACCEPTED",
+    "ORGANIZATION_CONNECTION_REJECTED",
+    "ORGANIZATION_CONNECTION_ENDED",
+    "SERVICE_AGREEMENT_ACCEPTED",
+    "SERVICE_AGREEMENT_RESUMED",
+    "SERVICE_AGREEMENT_PAUSED",
+    "SERVICE_AGREEMENT_ENDED",
+    "SUPPLY_OFFER_STATUS_CHANGED",
+    "FULFILLMENT_STATUS_CHANGED",
+    "SETTLEMENT_STATUS_CHANGED",
+    "MEMBERSHIP_ACCESS_CHANGED",
+    "MEMBERSHIP_DEACTIVATED",
+  ]);
+  const informational = informationalTypes.has(input.type);
   if (input.dedupeKey) {
     const existing = await prisma.notification.findUnique({
       where: {
@@ -223,7 +257,11 @@ export async function reconcileNotificationResolutions(recipientId: string) {
     where: {
       recipientId,
       resolvedAt: null,
-      OR: [{ taskId: { not: null } }, { refType: "ORGANIZATION_CONNECTION", refId: { not: null } }],
+      OR: [
+        { taskId: { not: null } },
+        { refType: "ORGANIZATION_CONNECTION", refId: { not: null } },
+        { refType: "SERVICE_AGREEMENT", refId: { not: null } },
+      ],
     },
     select: { id: true, type: true, taskId: true, refType: true, refId: true },
   });
@@ -240,7 +278,15 @@ export async function reconcileNotificationResolutions(recipientId: string) {
         .filter(Boolean)
     )
   ) as string[];
-  const [tasks, connections] = await Promise.all([
+  const agreementIds = Array.from(
+    new Set(
+      notifications
+        .filter((notification) => notification.refType === "SERVICE_AGREEMENT")
+        .map((notification) => notification.refId)
+        .filter(Boolean)
+    )
+  ) as string[];
+  const [tasks, connections, agreements] = await Promise.all([
     taskIds.length
       ? prisma.task.findMany({
           where: { id: { in: taskIds } },
@@ -253,9 +299,16 @@ export async function reconcileNotificationResolutions(recipientId: string) {
           select: { id: true, status: true, respondedById: true },
         })
       : [],
+    agreementIds.length
+      ? prisma.serviceAgreement.findMany({
+          where: { id: { in: agreementIds } },
+          select: { id: true, status: true, acceptedById: true },
+        })
+      : [],
   ]);
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const connectionById = new Map(connections.map((connection) => [connection.id, connection]));
+  const agreementById = new Map(agreements.map((agreement) => [agreement.id, agreement]));
   const resolvedAt = new Date();
   const updates = notifications.flatMap((notification) => {
     const task = notification.taskId ? taskById.get(notification.taskId) : null;
@@ -267,7 +320,11 @@ export async function reconcileNotificationResolutions(recipientId: string) {
         })
       : notification.refType === "ORGANIZATION_CONNECTION" && notification.refId
         ? connectionResolution(connectionById.get(notification.refId) ?? { status: "PENDING" })
-        : null;
+        : notification.refType === "SERVICE_AGREEMENT" && notification.refId
+          ? serviceAgreementResolution(
+              agreementById.get(notification.refId) ?? { status: "PENDING_COUNTERPARTY" }
+            )
+          : null;
     return resolution
       ? [
           prisma.notification.updateMany({

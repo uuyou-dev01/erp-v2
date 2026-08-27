@@ -268,7 +268,17 @@ export function MobileActionForm({ task }: { task: MobileTaskData }) {
         </>
       )}
 
-      {action === "approveReturnInspection" && <div className="rounded-2xl bg-blue-50 p-4 text-sm leading-6 text-blue-900">请核对退回商品的实物与库存身份。确认后商品将按现有退货规则恢复状态。</div>}
+      {action === "approveReturnInspection" && (
+        <>
+          <div className="rounded-2xl bg-blue-50 p-4 text-sm leading-6 text-blue-900">请核对退回商品的实物与库存身份。确认后商品将按现有退货规则恢复状态。</div>
+          <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center">
+            <Camera className="h-5 w-5 text-slate-400" />
+            <span className="mt-2 text-sm font-medium text-slate-600">上传退货检查凭证 *</span>
+            <span className="mt-1 text-[11px] text-slate-400">已上传 {((fields.imageUrls as string[]) || []).length} 张</span>
+            <input type="file" accept="image/*" capture="environment" multiple className="sr-only" onChange={(event) => uploadImages(event.target.files)} />
+          </label>
+        </>
+      )}
 
       <div>
         <FieldLabel>备注</FieldLabel>

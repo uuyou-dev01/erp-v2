@@ -44,13 +44,14 @@ fi
 
 # Create .env file
 echo "📝 Creating .env file..."
-cat > .env << 'EOF'
+session_secret="$(openssl rand -hex 32)"
+cat > .env << EOF
 # Database
 DATABASE_URL="postgresql://uuyxn@localhost:5432/erp_v2?schema=public"
 
-# NextAuth
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="your-secret-key-here"
+# Local application session signing
+ERP_SESSION_SECRET="${session_secret}"
+AUTH_SELF_SIGNUP_ENABLED="false"
 EOF
 echo "✅ .env file created"
 

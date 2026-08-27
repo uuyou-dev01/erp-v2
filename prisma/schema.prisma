@@ -83,6 +83,7 @@ model Organization {
   serviceAgreementsAsClient   ServiceAgreement[]       @relation("ServiceAgreementClient")
   serviceAgreementsAsProvider ServiceAgreement[]       @relation("ServiceAgreementProvider")
   serviceAgreementsProposed   ServiceAgreement[]       @relation("ServiceAgreementProposer")
+  serviceAgreementsPaused     ServiceAgreement[]       @relation("ServiceAgreementPauser")
   chargeCategories            ChargeCategory[]
   channelStatements           ChannelStatement[]
   afterSalesCases             AfterSalesCase[]
@@ -158,34 +159,93 @@ model Store {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  password  String
-  role      String   @default("USER")
-  storeId   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String?
+  password        String
+  role            String    @default("USER")
+  storeId         String?
+  emailVerifiedAt DateTime?
+  sessionVersion  Int       @default(1)
+  accountStatus   String    @default("ACTIVE") // ACTIVE, SUSPENDED, CLOSED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  store                        Store?                   @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  store                        Store?                        @relation(fields: [storeId], references: [id], onDelete: SetNull)
   memberships                  Membership[]
   storeAccesses                StoreAccess[]
   inventoryPoolAccesses        InventoryPoolAccess[]
   channelAccesses              ChannelAccess[]
   locationAccesses             LocationAccess[]
-  invitationsSent              OrganizationInvitation[] @relation("OrganizationInvitationInviter")
-  invitationsAccepted          OrganizationInvitation[] @relation("OrganizationInvitationAcceptor")
-  connectionsRequested         OrganizationConnection[] @relation("OrganizationConnectionRequesterUser")
-  connectionsResponded         OrganizationConnection[] @relation("OrganizationConnectionResponderUser")
-  locationFulfillerAssignments LocationFulfiller[]      @relation("LocationFulfillerUser")
-  locationFulfillerInvitations LocationFulfiller[]      @relation("LocationFulfillerInviter")
-  serviceAgreementsAccepted    ServiceAgreement[]       @relation("ServiceAgreementAcceptor")
+  invitationsSent              OrganizationInvitation[]      @relation("OrganizationInvitationInviter")
+  invitationsAccepted          OrganizationInvitation[]      @relation("OrganizationInvitationAcceptor")
+  connectionsRequested         OrganizationConnection[]      @relation("OrganizationConnectionRequesterUser")
+  connectionsResponded         OrganizationConnection[]      @relation("OrganizationConnectionResponderUser")
+  locationFulfillerAssignments LocationFulfiller[]           @relation("LocationFulfillerUser")
+  locationFulfillerInvitations LocationFulfiller[]           @relation("LocationFulfillerInviter")
+  serviceAgreementsAccepted    ServiceAgreement[]            @relation("ServiceAgreementAcceptor")
   workRecords                  WorkRecord[]
-  collaborationRequestsCreated CollaborationRequest[]    @relation("CollaborationRequestCreator")
-  taskDispatchesClaimed         TaskDispatch[]            @relation("TaskDispatchClaimedBy")
+  collaborationRequestsCreated CollaborationRequest[]        @relation("CollaborationRequestCreator")
+  taskDispatchesClaimed        TaskDispatch[]                @relation("TaskDispatchClaimedBy")
+  authTokens                   AuthToken[]                   @relation("AuthTokenUser")
+  authTokensCreated            AuthToken[]                   @relation("AuthTokenCreator")
+  authAuditEvents              AuthAuditEvent[]
+  connectionEvents             OrganizationConnectionEvent[]
 
   @@index([storeId])
   @@map("users")
+}
+
+model AuthToken {
+  id          String    @id @default(cuid())
+  userId      String
+  type        String // RESET_PASSWORD
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  user      User  @relation("AuthTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("AuthTokenCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([userId, type, consumedAt, expiresAt])
+  @@index([expiresAt])
+  @@map("auth_tokens")
+}
+
+model AuthRateLimitBucket {
+  id          String   @id @default(cuid())
+  action      String
+  subjectHash String
+  windowStart DateTime
+  attempts    Int      @default(0)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([action, subjectHash, windowStart])
+  @@index([expiresAt])
+  @@map("auth_rate_limit_buckets")
+}
+
+model AuthAuditEvent {
+  id            String   @id @default(cuid())
+  userId        String?
+  eventType     String
+  outcome       String
+  subjectHash   String?
+  ipHash        String?
+  userAgentHash String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([eventType, outcome, createdAt])
+  @@index([subjectHash, createdAt])
+  @@map("auth_audit_events")
 }
 
 model Membership {
@@ -323,10 +383,10 @@ model CollaborationRequest {
   createdAt          DateTime                      @default(now())
   updatedAt          DateTime                      @updatedAt
 
-  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy    User                     @relation("CollaborationRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  parent       CollaborationRequest?    @relation("CollaborationRequestChildren", fields: [parentRequestId], references: [id], onDelete: SetNull)
-  children     CollaborationRequest[]   @relation("CollaborationRequestChildren")
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User                    @relation("CollaborationRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  parent       CollaborationRequest?   @relation("CollaborationRequestChildren", fields: [parentRequestId], references: [id], onDelete: SetNull)
+  children     CollaborationRequest[]  @relation("CollaborationRequestChildren")
   responses    CollaborationResponse[]
   events       CollaborationEvent[]
   dispatches   TaskDispatch[]
@@ -363,7 +423,7 @@ model CollaborationResponse {
 
 /// 协作协议的追加式事件流；dedupeKey 保证调用方重试不会重复记事件。
 model CollaborationEvent {
-  id             String                 @id @default(cuid())
+  id             String                  @id @default(cuid())
   requestId      String
   responseId     String?
   dispatchId     String?
@@ -372,12 +432,12 @@ model CollaborationEvent {
   actorScopeRef  String?
   dedupeKey      String
   payload        Json?
-  occurredAt     DateTime               @default(now())
-  createdAt      DateTime               @default(now())
+  occurredAt     DateTime                @default(now())
+  createdAt      DateTime                @default(now())
 
-  request  CollaborationRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  request  CollaborationRequest   @relation(fields: [requestId], references: [id], onDelete: Cascade)
   response CollaborationResponse? @relation(fields: [responseId], references: [id], onDelete: SetNull)
-  dispatch TaskDispatch?           @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
+  dispatch TaskDispatch?          @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
 
   @@unique([requestId, dedupeKey])
   @@index([requestId, occurredAt])
@@ -847,6 +907,11 @@ model MobileAsset {
   mimeType       String
   byteSize       Int
   sha256         String?
+  purpose        String    @default("MOBILE_EVIDENCE") // CATALOG_IMAGE, BUSINESS_EVIDENCE, INTELLIGENCE_IMAGE, MOBILE_EVIDENCE
+  visibility     String    @default("ORGANIZATION_PRIVATE") // CATALOG_PUBLIC, ORGANIZATION_PRIVATE
+  originalName   String?
+  refType        String?
+  refId          String?
   status         String    @default("PENDING")
   completedAt    DateTime?
   abortedAt      DateTime?
@@ -860,6 +925,8 @@ model MobileAsset {
   @@index([captureId])
   @@index([itemUnitId])
   @@index([status])
+  @@index([organizationId, visibility])
+  @@index([refType, refId])
   @@map("mobile_assets")
 }
 
@@ -1736,17 +1803,38 @@ model OrganizationConnection {
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
-  requesterOrganization Organization      @relation("OrganizationConnectionRequester", fields: [requesterOrganizationId], references: [id], onDelete: Restrict)
-  targetOrganization    Organization      @relation("OrganizationConnectionTarget", fields: [targetOrganizationId], references: [id], onDelete: Restrict)
-  initiatingPartner     Partner?          @relation(fields: [initiatingPartnerId], references: [id], onDelete: SetNull)
-  requestedBy           User              @relation("OrganizationConnectionRequesterUser", fields: [requestedById], references: [id], onDelete: Restrict)
-  respondedBy           User?             @relation("OrganizationConnectionResponderUser", fields: [respondedById], references: [id], onDelete: SetNull)
+  requesterOrganization Organization                  @relation("OrganizationConnectionRequester", fields: [requesterOrganizationId], references: [id], onDelete: Restrict)
+  targetOrganization    Organization                  @relation("OrganizationConnectionTarget", fields: [targetOrganizationId], references: [id], onDelete: Restrict)
+  initiatingPartner     Partner?                      @relation(fields: [initiatingPartnerId], references: [id], onDelete: SetNull)
+  requestedBy           User                          @relation("OrganizationConnectionRequesterUser", fields: [requestedById], references: [id], onDelete: Restrict)
+  respondedBy           User?                         @relation("OrganizationConnectionResponderUser", fields: [respondedById], references: [id], onDelete: SetNull)
   offerVisibilityRules  OfferVisibility[]
+  events                OrganizationConnectionEvent[]
 
   @@index([requesterOrganizationId, status])
   @@index([targetOrganizationId, status])
   @@index([initiatingPartnerId])
   @@map("organization_connections")
+}
+
+model OrganizationConnectionEvent {
+  id           String   @id @default(cuid())
+  connectionId String
+  eventType    String // REQUESTED, ACCEPTED, REJECTED, ENDED, REOPENED
+  actorUserId  String
+  fromStatus   String?
+  toStatus     String
+  reason       String?  @db.Text
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  connection OrganizationConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  actorUser  User                   @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([connectionId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("organization_connection_events")
 }
 
 model TradingRelationship {
@@ -2741,23 +2829,29 @@ model ServiceAgreement {
   serviceTypes             Json
   settlementCurrency       String
   paymentTermsDays         Int       @default(0)
-  status                   String    @default("ACTIVE") // DRAFT, ACTIVE, PAUSED, ENDED
+  status                   String    @default("ACTIVE") // PENDING_COUNTERPARTY, ACTIVE, PAUSED, ENDED
   effectiveFrom            DateTime?
   effectiveTo              DateTime?
   notes                    String?   @db.Text
   proposedByOrganizationId String?
   acceptedById             String?
   acceptedAt               DateTime?
+  pausedByOrganizationId   String?
+  pausedAt                 DateTime?
+  supersedesAgreementId    String?   @unique
   version                  Int       @default(1)
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
-  clientOrganization     Organization   @relation("ServiceAgreementClient", fields: [clientOrganizationId], references: [id], onDelete: Restrict)
-  providerOrganization   Organization   @relation("ServiceAgreementProvider", fields: [providerOrganizationId], references: [id], onDelete: Restrict)
-  inventoryPool          InventoryPool? @relation(fields: [inventoryPoolId], references: [id], onDelete: SetNull)
-  location               Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  proposedByOrganization Organization?  @relation("ServiceAgreementProposer", fields: [proposedByOrganizationId], references: [id], onDelete: Restrict)
-  acceptedBy             User?          @relation("ServiceAgreementAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  clientOrganization     Organization      @relation("ServiceAgreementClient", fields: [clientOrganizationId], references: [id], onDelete: Restrict)
+  providerOrganization   Organization      @relation("ServiceAgreementProvider", fields: [providerOrganizationId], references: [id], onDelete: Restrict)
+  inventoryPool          InventoryPool?    @relation(fields: [inventoryPoolId], references: [id], onDelete: SetNull)
+  location               Location?         @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  proposedByOrganization Organization?     @relation("ServiceAgreementProposer", fields: [proposedByOrganizationId], references: [id], onDelete: Restrict)
+  pausedByOrganization   Organization?     @relation("ServiceAgreementPauser", fields: [pausedByOrganizationId], references: [id], onDelete: SetNull)
+  acceptedBy             User?             @relation("ServiceAgreementAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  supersedesAgreement    ServiceAgreement? @relation("ServiceAgreementRevisions", fields: [supersedesAgreementId], references: [id], onDelete: Restrict)
+  revision               ServiceAgreement? @relation("ServiceAgreementRevisions")
   chargeRules            ChargeRule[]
 
   @@index([clientOrganizationId, status])
@@ -2765,6 +2859,7 @@ model ServiceAgreement {
   @@index([inventoryPoolId])
   @@index([locationId])
   @@index([proposedByOrganizationId, status])
+  @@index([pausedByOrganizationId, status])
   @@map("service_agreements")
 }
 

@@ -47,6 +47,7 @@ import {
   locationMatchesMarket,
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
+import { bindAssetReferences } from "@/lib/assets/references";
 
 export type OrderStatus =
   | "DRAFT"
@@ -552,7 +553,10 @@ export async function saveOrderShippingProof(
   proof: ShippingProof,
   options?: { trackingNo?: string }
 ) {
-  const order = await prisma.customerOrder.findUnique({ where: { id: orderId } });
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    include: { store: { select: { organizationId: true } } },
+  });
   if (!order) throw new Error("订单不存在");
   if (order.orderStatus !== "CONFIRMED") {
     throw new Error("只有待发货订单可以暂存发货凭证");
@@ -587,6 +591,21 @@ export async function saveOrderShippingProof(
       : null;
     if (!rosterAccess) throw new Error("无权修改该订单的发货凭证");
   }
+
+  const assetOrganizationId = order.store.organizationId;
+  if (!assetOrganizationId) {
+    throw new Error("订单店铺尚未绑定经营主体，不能保存私有凭证");
+  }
+  await bindAssetReferences(
+    proof.imageUrls,
+    {
+      organizationId: assetOrganizationId,
+      storeId: order.storeId,
+      userId: user.id,
+    },
+    "CUSTOMER_ORDER",
+    order.id
+  );
 
   const merged = shippingProofToJson(mergeShippingProof(order.shippingProof, proof));
 
@@ -1093,6 +1112,12 @@ async function performOrderShipment(
       throw new Error(`订单商品 ${line.id} 库存预留不完整，请先完成库存分配`);
     }
   }
+  await bindAssetReferences(
+    options?.shippingProof?.imageUrls,
+    { organizationId: actor.organizationId, storeId: order.storeId, userId: actor.userId },
+    "CUSTOMER_ORDER",
+    order.id
+  );
   const completedTasks = await prisma.$transaction(async (tx) => {
     const shipmentClaim = await tx.customerOrder.updateMany({
       where: { id: orderId, orderStatus: "CONFIRMED" },

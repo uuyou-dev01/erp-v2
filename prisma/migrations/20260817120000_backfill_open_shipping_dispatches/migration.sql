@@ -127,7 +127,7 @@ JOIN "collaboration_requests" r ON r."id" = d."requestId"
 WHERE r."idempotencyKey" LIKE 'backfill:ship-order:%'
   AND d."status" = 'CLAIMED'
   AND d."claimedByUserId" IS NOT NULL
-ON CONFLICT ("requestId", "responderScopeType", "responderScopeRef") DO NOTHING;
+ON CONFLICT ("requestId", "idempotencyKey") DO NOTHING;
 
 -- Queue notifications are snapshots. Eligibility is still rechecked when the
 -- user claims the task, so a stale notification never grants permission.

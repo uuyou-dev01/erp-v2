@@ -145,6 +145,7 @@ export function ProductIntelligenceForm({
     try {
       const uploadFormData = new FormData();
       uploadFormData.append("file", file);
+      uploadFormData.append("purpose", "INTELLIGENCE_IMAGE");
       const response = await fetch("/api/upload", {
         method: "POST",
         body: uploadFormData,

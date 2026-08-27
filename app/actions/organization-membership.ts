@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { deactivateOrganizationMembershipAccess } from "@/lib/application/organization-membership-access";
+import { isSecureCookieEnabled } from "@/lib/auth/cookie-security";
 import {
   ACTIVE_ORGANIZATION_COOKIE,
   ACTIVE_STORE_COOKIE,
@@ -60,14 +61,14 @@ export async function leaveOrganizationAction(organizationId: string) {
         cookieStore.set(ACTIVE_ORGANIZATION_COOKIE, remaining.organizationId, {
           httpOnly: true,
           sameSite: "lax",
-          secure: process.env.NODE_ENV === "production",
+          secure: isSecureCookieEnabled(),
           path: "/",
         });
         if (nextStoreId) {
           cookieStore.set(ACTIVE_STORE_COOKIE, nextStoreId, {
             httpOnly: true,
             sameSite: "lax",
-            secure: process.env.NODE_ENV === "production",
+            secure: isSecureCookieEnabled(),
             path: "/",
           });
         } else cookieStore.delete(ACTIVE_STORE_COOKIE);

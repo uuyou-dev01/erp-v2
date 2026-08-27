@@ -9,11 +9,13 @@ import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { cn } from "@/lib/utils";
 import { MyOrganizations } from "@/components/settings/my-organizations";
+import { releaseMetadata } from "@/lib/runtime/env";
 
 export const dynamic = "force-dynamic";
 
 export default async function PersonalSettingsPage() {
   const context = await requireUserContext().catch(() => redirect("/onboarding"));
+  const release = releaseMetadata();
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: context.userId },
     select: {
@@ -51,6 +53,13 @@ export default async function PersonalSettingsPage() {
           role: membership.role,
         }))}
       />
+
+      <section className="border-t py-6">
+        <h2 className="text-sm font-medium">系统版本</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          v{release.version} · {release.sha === "unknown" ? "开发构建" : release.sha.slice(0, 12)}
+        </p>
+      </section>
 
       <section className="flex flex-col gap-3 border-t py-6 sm:flex-row sm:items-center sm:justify-between">
         <div>

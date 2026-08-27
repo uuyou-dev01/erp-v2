@@ -30,6 +30,24 @@ type ConnectionRow = {
   initiatingPartner: { id: string; name: string; type: string } | null;
   requestedBy: { name: string | null; email: string };
   respondedBy: { name: string | null; email: string } | null;
+  events: Array<{
+    id: string;
+    eventType: string;
+    fromStatus: string | null;
+    toStatus: string;
+    reason: string | null;
+    createdAt: string;
+    actorUser: { name: string | null; email: string };
+  }>;
+};
+
+const EVENT_LABELS: Record<string, string> = {
+  IMPORTED: "导入历史状态",
+  REQUESTED: "发起连接",
+  REOPENED: "重新发起",
+  ACCEPTED: "接受连接",
+  REJECTED: "拒绝连接",
+  ENDED: "解除连接",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -312,6 +330,20 @@ export function OrganizationConnectionsManager({
                   {other.collaborationCode} ·{" "}
                   {new Date(connection.createdAt).toLocaleString("zh-CN")}
                 </p>
+                {tab === "history" && connection.events.length ? (
+                  <ol className="mt-3 space-y-1 border-l pl-3 text-xs text-muted-foreground">
+                    {connection.events.map((event) => (
+                      <li key={event.id}>
+                        <span className="font-medium text-foreground">
+                          {EVENT_LABELS[event.eventType] ?? event.eventType}
+                        </span>{" "}
+                        · {event.actorUser.name || event.actorUser.email} ·{" "}
+                        {new Date(event.createdAt).toLocaleString("zh-CN")}
+                        {event.reason ? ` · ${event.reason}` : ""}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
               </div>
               <div className="flex justify-end gap-2">
                 {tab === "received" && isAdmin ? (

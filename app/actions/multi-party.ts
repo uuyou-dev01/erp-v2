@@ -7,6 +7,15 @@ import { syncLegacyOrganizationFoundation } from "@/lib/application/multi-party-
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
+import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
+import {
+  agreementCounterpartOrganizationId,
+  assertCanConfirmServiceAgreement,
+  canEndServiceAgreement,
+  canReviseServiceAgreement,
+  normalizeServiceAgreementTypes,
+  SERVICE_AGREEMENT_STATUS,
+} from "@/lib/application/service-agreement-lifecycle";
 
 async function requireOrganizationAdmin() {
   const context = await requireUserContext();
@@ -74,6 +83,7 @@ export async function getMultiPartyManagementData() {
         providerOrganization: { select: { id: true, name: true } },
         inventoryPool: { select: { id: true, name: true } },
         location: { select: { id: true, name: true } },
+        revision: { select: { id: true } },
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -115,7 +125,7 @@ export async function createServiceAgreementAction(data: {
     if (data.clientOrganizationId === data.providerOrganizationId) {
       throw new Error("客户主体和服务主体不能相同");
     }
-    if (data.serviceTypes.length === 0) throw new Error("请至少选择一种服务");
+    const serviceTypes = normalizeServiceAgreementTypes(data.serviceTypes);
     if (!/^[A-Z]{3}$/.test(data.settlementCurrency)) throw new Error("结算币种无效");
 
     const [client, provider, pool, location] = await Promise.all([
@@ -146,13 +156,29 @@ export async function createServiceAgreementAction(data: {
         providerOrganizationId: data.providerOrganizationId,
         inventoryPoolId: data.inventoryPoolId || null,
         locationId: data.locationId || null,
-        serviceTypes: data.serviceTypes,
+        serviceTypes,
         settlementCurrency: data.settlementCurrency,
         paymentTermsDays: Math.max(0, data.paymentTermsDays ?? 0),
         notes: data.notes || null,
         status: "PENDING_COUNTERPARTY",
         proposedByOrganizationId: context.organizationId,
       },
+    });
+    const counterpartOrganizationId =
+      context.organizationId === data.clientOrganizationId
+        ? data.providerOrganizationId
+        : data.clientOrganizationId;
+    await notifyOrganizationAdministrators({
+      organizationId: counterpartOrganizationId,
+      actorId: context.userId,
+      refType: "SERVICE_AGREEMENT",
+      refId: agreement.id,
+      type: "SERVICE_AGREEMENT_PROPOSED",
+      title: `${context.organizationId === data.clientOrganizationId ? client.name : provider.name} 发来服务协议`,
+      body: `服务范围：${serviceTypes.join("、")}；结算币种：${data.settlementCurrency}`,
+      actionUrl: `/settings/business-structure#agreement-${encodeURIComponent(agreement.id)}`,
+      dedupeKey: `service-agreement:${agreement.id}:proposed:v${agreement.version}`,
+      priority: "HIGH",
     });
     revalidatePath("/settings/business-structure");
     return actionSuccess({ id: agreement.id });
@@ -166,39 +192,211 @@ export async function activateServiceAgreementAction(id: string) {
     const context = await requireOrganizationAdmin();
     const agreement = await prisma.serviceAgreement.findUnique({ where: { id } });
     if (!agreement) throw new Error("服务协议不存在");
-    if (
-      ![agreement.clientOrganizationId, agreement.providerOrganizationId].includes(
-        context.organizationId
-      )
-    ) {
-      throw new Error("当前企业不是协议参与方");
-    }
-    if (agreement.status !== "PENDING_COUNTERPARTY") {
-      throw new Error("只有待对方确认的协议可以启用");
-    }
-    if (!agreement.proposedByOrganizationId) throw new Error("旧版协议草稿需要重新创建");
-    if (agreement.proposedByOrganizationId === context.organizationId) {
-      throw new Error("协议必须由对方企业管理员确认");
-    }
+    const counterpartOrganizationId = agreementCounterpartOrganizationId({
+      ...agreement,
+      currentOrganizationId: context.organizationId,
+    });
+    assertCanConfirmServiceAgreement({
+      ...agreement,
+      currentOrganizationId: context.organizationId,
+    });
     const activeConnection = await getActiveOrganizationConnection(
       prisma,
       agreement.clientOrganizationId,
       agreement.providerOrganizationId
     );
     if (!activeConnection) throw new Error("双方企业连接已失效，不能启用协议");
-    await prisma.serviceAgreement.update({
-      where: { id },
-      data: {
-        status: "ACTIVE",
-        effectiveFrom: agreement.effectiveFrom ?? new Date(),
-        acceptedById: context.userId,
-        acceptedAt: new Date(),
-      },
+    const now = new Date();
+    const isInitialAcceptance = agreement.status === SERVICE_AGREEMENT_STATUS.PENDING_COUNTERPARTY;
+    await prisma.$transaction(async (tx) => {
+      const claimed = await tx.serviceAgreement.updateMany({
+        where: { id, status: agreement.status },
+        data: {
+          status: SERVICE_AGREEMENT_STATUS.ACTIVE,
+          effectiveFrom: agreement.effectiveFrom ?? now,
+          effectiveTo: null,
+          acceptedById: isInitialAcceptance ? context.userId : agreement.acceptedById,
+          acceptedAt: isInitialAcceptance ? now : agreement.acceptedAt,
+          pausedByOrganizationId: null,
+        },
+      });
+      if (!claimed.count) throw new Error("协议已被其他管理员处理，请刷新后重试");
+      if (agreement.supersedesAgreementId) {
+        const superseded = await tx.serviceAgreement.updateMany({
+          where: {
+            id: agreement.supersedesAgreementId,
+            status: { in: ["PENDING_COUNTERPARTY", "ACTIVE", "PAUSED"] },
+          },
+          data: { status: SERVICE_AGREEMENT_STATUS.ENDED, effectiveTo: now },
+        });
+        if (!superseded.count) {
+          throw new Error("被修订协议已结束或状态已变化，请刷新后重试");
+        }
+      }
+    });
+    await notifyOrganizationAdministrators({
+      organizationId: counterpartOrganizationId,
+      actorId: context.userId,
+      refType: "SERVICE_AGREEMENT",
+      refId: agreement.id,
+      type: isInitialAcceptance ? "SERVICE_AGREEMENT_ACCEPTED" : "SERVICE_AGREEMENT_RESUMED",
+      title: isInitialAcceptance ? "对方已接受服务协议" : "对方已确认恢复服务协议",
+      body: isInitialAcceptance
+        ? agreement.supersedesAgreementId
+          ? `协议版本 ${agreement.version} 已生效，上一版本已结束并保留历史记录。`
+          : `协议版本 ${agreement.version} 已生效。`
+        : `协议版本 ${agreement.version} 已恢复生效。`,
+      actionUrl: `/settings/business-structure#agreement-${encodeURIComponent(agreement.id)}`,
+      dedupeKey: isInitialAcceptance
+        ? `service-agreement:${agreement.id}:accepted:v${agreement.version}`
+        : `service-agreement:${agreement.id}:resumed:${agreement.pausedAt?.toISOString() ?? "legacy"}`,
     });
     revalidatePath("/settings/business-structure");
     return actionSuccess({ id });
   } catch (error) {
     return toActionFailure(error, "启用服务协议失败");
+  }
+}
+
+export async function pauseServiceAgreementAction(id: string) {
+  try {
+    const context = await requireOrganizationAdmin();
+    const agreement = await prisma.serviceAgreement.findUnique({ where: { id } });
+    if (!agreement) throw new Error("服务协议不存在");
+    const counterpartOrganizationId = agreementCounterpartOrganizationId({
+      ...agreement,
+      currentOrganizationId: context.organizationId,
+    });
+    if (agreement.status !== SERVICE_AGREEMENT_STATUS.ACTIVE) {
+      throw new Error("只有生效中的协议可以暂停");
+    }
+    const now = new Date();
+    const claimed = await prisma.serviceAgreement.updateMany({
+      where: { id, status: SERVICE_AGREEMENT_STATUS.ACTIVE },
+      data: {
+        status: SERVICE_AGREEMENT_STATUS.PAUSED,
+        pausedByOrganizationId: context.organizationId,
+        pausedAt: now,
+      },
+    });
+    if (!claimed.count) throw new Error("协议状态已变化，请刷新后重试");
+    await notifyOrganizationAdministrators({
+      organizationId: counterpartOrganizationId,
+      actorId: context.userId,
+      refType: "SERVICE_AGREEMENT",
+      refId: agreement.id,
+      type: "SERVICE_AGREEMENT_PAUSED",
+      title: `服务协议 v${agreement.version} 已暂停`,
+      body: "恢复协议需要由未发起暂停的一方管理员重新确认。",
+      actionUrl: `/settings/business-structure#agreement-${encodeURIComponent(agreement.id)}`,
+      dedupeKey: `service-agreement:${agreement.id}:paused:${now.toISOString()}`,
+      priority: "HIGH",
+    });
+    revalidatePath("/settings/business-structure");
+    return actionSuccess({ id, status: SERVICE_AGREEMENT_STATUS.PAUSED });
+  } catch (error) {
+    return toActionFailure(error, "暂停服务协议失败");
+  }
+}
+
+export async function endServiceAgreementAction(id: string) {
+  try {
+    const context = await requireOrganizationAdmin();
+    const agreement = await prisma.serviceAgreement.findUnique({ where: { id } });
+    if (!agreement) throw new Error("服务协议不存在");
+    const counterpartOrganizationId = agreementCounterpartOrganizationId({
+      ...agreement,
+      currentOrganizationId: context.organizationId,
+    });
+    if (!canEndServiceAgreement(agreement.status)) throw new Error("当前协议不能结束");
+    const now = new Date();
+    const claimed = await prisma.serviceAgreement.updateMany({
+      where: { id, status: agreement.status },
+      data: { status: SERVICE_AGREEMENT_STATUS.ENDED, effectiveTo: now },
+    });
+    if (!claimed.count) throw new Error("协议状态已变化，请刷新后重试");
+    await notifyOrganizationAdministrators({
+      organizationId: counterpartOrganizationId,
+      actorId: context.userId,
+      refType: "SERVICE_AGREEMENT",
+      refId: agreement.id,
+      type: "SERVICE_AGREEMENT_ENDED",
+      title: `服务协议 v${agreement.version} 已结束`,
+      body: "历史协议与既有成交快照继续保留，只停止新的业务授权。",
+      actionUrl: `/settings/business-structure#agreement-${encodeURIComponent(agreement.id)}`,
+      dedupeKey: `service-agreement:${agreement.id}:ended`,
+      priority: "HIGH",
+    });
+    revalidatePath("/settings/business-structure");
+    return actionSuccess({ id, status: SERVICE_AGREEMENT_STATUS.ENDED });
+  } catch (error) {
+    return toActionFailure(error, "结束服务协议失败");
+  }
+}
+
+export async function reviseServiceAgreementAction(data: {
+  id: string;
+  serviceTypes: string[];
+  settlementCurrency: string;
+  paymentTermsDays: number;
+  notes?: string;
+}) {
+  try {
+    const context = await requireOrganizationAdmin();
+    const source = await prisma.serviceAgreement.findUnique({
+      where: { id: data.id },
+      include: { revision: { select: { id: true } } },
+    });
+    if (!source) throw new Error("服务协议不存在");
+    const counterpartOrganizationId = agreementCounterpartOrganizationId({
+      ...source,
+      currentOrganizationId: context.organizationId,
+    });
+    if (!canReviseServiceAgreement(source.status)) {
+      throw new Error("只有生效中或已暂停的协议可以创建修订版");
+    }
+    if (source.revision) throw new Error("该协议已有后续版本，请从最新版本继续修订");
+    const activeConnection = await getActiveOrganizationConnection(
+      prisma,
+      source.clientOrganizationId,
+      source.providerOrganizationId
+    );
+    if (!activeConnection) throw new Error("双方企业连接已失效，不能修订协议");
+    const serviceTypes = normalizeServiceAgreementTypes(data.serviceTypes);
+    const settlementCurrency = data.settlementCurrency.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(settlementCurrency)) throw new Error("结算币种无效");
+    const agreement = await prisma.serviceAgreement.create({
+      data: {
+        clientOrganizationId: source.clientOrganizationId,
+        providerOrganizationId: source.providerOrganizationId,
+        inventoryPoolId: source.inventoryPoolId,
+        locationId: source.locationId,
+        serviceTypes,
+        settlementCurrency,
+        paymentTermsDays: Math.max(0, Math.floor(data.paymentTermsDays || 0)),
+        notes: data.notes?.trim() || null,
+        status: SERVICE_AGREEMENT_STATUS.PENDING_COUNTERPARTY,
+        proposedByOrganizationId: context.organizationId,
+        supersedesAgreementId: source.id,
+        version: source.version + 1,
+      },
+    });
+    await notifyOrganizationAdministrators({
+      organizationId: counterpartOrganizationId,
+      actorId: context.userId,
+      refType: "SERVICE_AGREEMENT",
+      refId: agreement.id,
+      type: "SERVICE_AGREEMENT_REVISION_PROPOSED",
+      title: `服务协议修订版 v${agreement.version} 待确认`,
+      body: `服务范围：${serviceTypes.join("、")}；结算币种：${settlementCurrency}`,
+      actionUrl: `/settings/business-structure#agreement-${encodeURIComponent(agreement.id)}`,
+      dedupeKey: `service-agreement:${agreement.id}:revision-proposed:v${agreement.version}`,
+      priority: "HIGH",
+    });
+    revalidatePath("/settings/business-structure");
+    return actionSuccess({ id: agreement.id, version: agreement.version });
+  } catch (error) {
+    return toActionFailure(error, "创建协议修订版失败");
   }
 }
 

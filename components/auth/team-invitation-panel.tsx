@@ -112,7 +112,7 @@ export function TeamInvitationPanel({
         </p>
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
-        内部测试阶段暂不验证邮箱。邀请只授予页面列出的企业角色和店铺权限。
+        邀请链接应由管理员通过可信渠道发送给本人；它只授予页面列出的企业角色和店铺权限。
       </p>
     </div>
   );

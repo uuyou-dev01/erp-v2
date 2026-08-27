@@ -13,9 +13,17 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     });
     if (!asset) throw new Error("文件尚未上传完成或无权访问");
     if (asset.status === "PENDING") {
-      await verifyMobileAssetUpload(asset);
+      const verified = await verifyMobileAssetUpload(asset);
       const publicUrl = `/api/v1/mobile/assets/${asset.id}/content`;
-      await prisma.mobileAsset.update({ where: { id: asset.id }, data: { status: "READY", publicUrl, completedAt: new Date() } });
+      await prisma.mobileAsset.update({
+        where: { id: asset.id },
+        data: {
+          status: "READY",
+          publicUrl,
+          completedAt: new Date(),
+          ...(verified?.sha256 ? { sha256: verified.sha256 } : {}),
+        },
+      });
       return NextResponse.json({ success: true, asset: { ...asset, status: "READY", publicUrl } });
     }
     return NextResponse.json({ success: true, asset });

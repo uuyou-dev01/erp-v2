@@ -18,6 +18,7 @@ test.describe("browser purchase to profit flow", () => {
   let skuId = "";
   let listingId = "";
   let customerOrderId = "";
+  let supplierId = "";
 
   test.beforeAll(async () => {
     let location = await prisma.location.findFirst({
@@ -43,6 +44,18 @@ test.describe("browser purchase to profit flow", () => {
     }
 
     locationId = location.id;
+
+    const supplier = await prisma.partner.create({
+      data: {
+        storeId: STORE_ID,
+        code: `SUPPLIER_${runId}`.toUpperCase(),
+        name: supplierName,
+        type: "SUPPLIER",
+        status: "ACTIVE",
+        defaultCurrency: "CNY",
+      },
+    });
+    supplierId = supplier.id;
   });
 
   test.afterAll(async () => {
@@ -73,10 +86,7 @@ test.describe("browser purchase to profit flow", () => {
 
     await prisma.listing.deleteMany({
       where: {
-        OR: [
-          { id: listingId || "__missing__" },
-          { sku: { storeId: STORE_ID, code: skuCode } },
-        ],
+        OR: [{ id: listingId || "__missing__" }, { sku: { storeId: STORE_ID, code: skuCode } }],
       },
     });
 
@@ -114,6 +124,9 @@ test.describe("browser purchase to profit flow", () => {
 
     if (createdLocationId) {
       await prisma.location.deleteMany({ where: { id: createdLocationId } });
+    }
+    if (supplierId) {
+      await prisma.partner.deleteMany({ where: { id: supplierId } });
     }
   });
 
@@ -154,8 +167,8 @@ test.describe("browser purchase to profit flow", () => {
 
     expect(
       errors.filter((line) =>
-        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line),
-      ),
+        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line)
+      )
     ).toEqual([]);
   });
 
@@ -164,7 +177,7 @@ test.describe("browser purchase to profit flow", () => {
     await expect(page.getByRole("heading", { name: "新建采购订单" })).toBeVisible();
 
     await page.getByLabel(/采购单号/).fill(orderNo);
-    await page.getByLabel(/供应商/).fill(supplierName);
+    await page.getByLabel(/供应商（合作方）/).selectOption(supplierId);
     await page.getByLabel("目的地仓库").selectOption(locationId);
     await page.getByRole("button", { name: /下一步/ }).click();
 
@@ -202,9 +215,7 @@ test.describe("browser purchase to profit flow", () => {
   }
 
   async function createListingFromSellableInventory(page: import("@playwright/test").Page) {
-    await page.goto(
-      `/inventory/sellable?unlisted=1&q=${encodeURIComponent(productName)}`,
-    );
+    await page.goto(`/inventory/sellable?unlisted=1&q=${encodeURIComponent(productName)}`);
     await expect(page.getByRole("heading", { name: "库存看板" })).toBeVisible();
 
     const card = page.locator("article").filter({ hasText: productName });
@@ -222,9 +233,9 @@ test.describe("browser purchase to profit flow", () => {
           Boolean(
             await prisma.listing.findFirst({
               where: { storeId: STORE_ID, skuId, status: "ACTIVE" },
-            }),
+            })
           ),
-        { timeout: 10_000 },
+        { timeout: 10_000 }
       )
       .toBe(true);
     const listing = await prisma.listing.findFirstOrThrow({
@@ -271,7 +282,7 @@ async function expectLotQuantity(lotId: string, expected: string) {
   });
   const quantity = ledgers.reduce(
     (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
-    new Decimal(0),
+    new Decimal(0)
   );
   expect(quantity.toString()).toBe(expected);
 }

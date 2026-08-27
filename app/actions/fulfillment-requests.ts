@@ -17,6 +17,7 @@ import {
 import type { SellableMarketCode } from "@/lib/application/sellable-market";
 import { hasLocationCapability } from "@/lib/auth/scope-access";
 import { canShipOrders } from "@/lib/auth/permissions";
+import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
 
 type StringableDecimal = { toString(): string };
 
@@ -974,6 +975,20 @@ export async function createResaleOrderFulfillmentAction(data: {
     });
 
     revalidateFulfillmentSurfaces(result.request.id, resaleListing.id, resaleListing.supplyOfferId);
+    if (result.request.providerOrganizationId) {
+      await notifyOrganizationAdministrators({
+        organizationId: result.request.providerOrganizationId,
+        actorId: context.userId,
+        refType: "FULFILLMENT_REQUEST",
+        refId: result.request.id,
+        type: "FULFILLMENT_REQUESTED",
+        title: `收到新的履约请求 ${result.request.requestNo}`,
+        body: `数量：${result.request.quantity.toString()}`,
+        actionUrl: `/fulfillment/requests/${encodeURIComponent(result.request.id)}`,
+        dedupeKey: `fulfillment:${result.request.id}:requested`,
+        priority: "HIGH",
+      });
+    }
     revalidatePath("/sales");
     revalidatePath(`/sales/${result.order.id}`);
     return actionSuccess({ orderId: result.order.id, fulfillmentRequestId: result.request.id });
@@ -1503,6 +1518,27 @@ export async function updateFulfillmentRequestStatusAction(
           message,
         };
       }
+    }
+
+    const counterpartOrganizationId =
+      context.organizationId === request.providerOrganizationId
+        ? request.requesterOrganizationId
+        : request.providerOrganizationId;
+    if (counterpartOrganizationId) {
+      await notifyOrganizationAdministrators({
+        organizationId: counterpartOrganizationId,
+        actorId: context.userId,
+        refType: "FULFILLMENT_REQUEST",
+        refId: request.id,
+        type: "FULFILLMENT_STATUS_CHANGED",
+        title: `履约 ${request.requestNo} 状态已更新`,
+        body: `当前状态：${request.status}`,
+        actionUrl: `/fulfillment/requests/${encodeURIComponent(request.id)}`,
+        dedupeKey: `fulfillment:${request.id}:status:${request.status}`,
+        priority: ["REJECTED", "CANCELLED", "EXCEPTION"].includes(request.status)
+          ? "HIGH"
+          : "NORMAL",
+      });
     }
 
     revalidateFulfillmentSurfaces(

@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Browser, BrowserContext, Route } from "playwright";
+import { withRuntimeSlot } from "@/lib/runtime/semaphore";
 import {
   buildWebLinkPreview,
   type WebLinkDocument,
@@ -297,7 +298,7 @@ async function protectBrowserContext(context: BrowserContext) {
   });
 }
 
-async function renderDocument(requestedUrl: string): Promise<WebLinkDocument> {
+async function renderDocumentWithoutQueue(requestedUrl: string): Promise<WebLinkDocument> {
   const browser = await launchBrowser();
   const context = await browser.newContext({
     locale: "ja-JP",
@@ -366,6 +367,16 @@ async function renderDocument(requestedUrl: string): Promise<WebLinkDocument> {
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
   }
+}
+
+async function renderDocument(requestedUrl: string): Promise<WebLinkDocument> {
+  return withRuntimeSlot({
+    name: "browser",
+    concurrencyEnv: "CAPTURE_CONCURRENCY",
+    timeoutEnv: "CAPTURE_QUEUE_TIMEOUT_MS",
+    defaultTimeoutMs: 60_000,
+    run: () => renderDocumentWithoutQueue(requestedUrl),
+  });
 }
 
 function hasUsefulPreview(preview: WebLinkPreview) {

@@ -7,7 +7,7 @@ const routes = [
   { path: "/inventory/sellable", heading: "库存看板" },
   { path: "/inventory/skus", heading: "商品档案" },
   { path: "/listing", heading: "Listing 分类" },
-  { path: "/sales", heading: "销售管理" },
+  { path: "/sales", heading: "销售订单" },
   { path: "/reports", heading: "报表分析" },
 ];
 

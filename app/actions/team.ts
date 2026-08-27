@@ -9,8 +9,8 @@ import { ensureWarehouseRosterLocationAccess } from "@/lib/application/location-
 import { INCOMPLETE_TASK_STATUSES, TASK_TYPE } from "@/lib/application/tasks";
 import { canShipOrders, hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
-import { hashPassword } from "@/lib/auth/password";
 import { grantsLocationCapability } from "@/lib/auth/scope-access";
+import { notifyUser } from "@/lib/application/notifications";
 
 const TEAM_ROLES = [
   ROLES.ADMIN,
@@ -139,93 +139,6 @@ export async function getTeamManagementData() {
   };
 }
 
-export async function createTeamMember(formData: FormData) {
-  const context = await requireTeamManager();
-  const email = cleanString(formData.get("email")).toLowerCase();
-  const name = cleanString(formData.get("name"));
-  const role = cleanRole(formData.get("role"));
-  if (
-    !hasRoleAtLeast(context.role, ROLES.ADMIN) &&
-    [ROLES.ADMIN, ROLES.MANAGER].includes(role as typeof ROLES.ADMIN)
-  ) {
-    throw new Error("运营负责人不能创建管理员或其他负责人");
-  }
-  const password = cleanString(formData.get("password"));
-  const storeIds = selectedStoreIds(formData, context.storeIds);
-
-  if (!email || !email.includes("@")) {
-    throw new Error("请填写有效邮箱");
-  }
-  if (storeIds.length === 0) {
-    throw new Error("请至少选择一个可访问店铺");
-  }
-  if (password.length < 8) {
-    throw new Error("初始密码至少需要 8 位");
-  }
-  const passwordHash = await hashPassword(password);
-
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: {
-      name: name || undefined,
-      password: passwordHash,
-      role,
-      storeId: storeIds[0],
-    },
-    create: {
-      email,
-      name: name || null,
-      password: passwordHash,
-      role,
-      storeId: storeIds[0],
-    },
-  });
-
-  await prisma.membership.upsert({
-    where: {
-      organizationId_userId: {
-        organizationId: context.organizationId,
-        userId: user.id,
-      },
-    },
-    update: { role, status: "ACTIVE" },
-    create: {
-      organizationId: context.organizationId,
-      userId: user.id,
-      role,
-      status: "ACTIVE",
-    },
-  });
-
-  await Promise.all(
-    storeIds.map((storeId) =>
-      prisma.storeAccess.upsert({
-        where: { storeId_userId: { storeId, userId: user.id } },
-        update: { role },
-        create: { storeId, userId: user.id, role },
-      })
-    )
-  );
-
-  await prisma.storeAccess.deleteMany({
-    where: {
-      userId: user.id,
-      storeId: { in: context.storeIds.filter((storeId) => !storeIds.includes(storeId)) },
-    },
-  });
-
-  revalidatePath("/settings/team");
-}
-
-export async function createTeamMemberAction(formData: FormData) {
-  try {
-    await createTeamMember(formData);
-    return actionSuccess({});
-  } catch (error) {
-    return toActionFailure(error, "保存成员失败，请稍后重试");
-  }
-}
-
 export async function updateTeamMemberAccess(formData: FormData) {
   const context = await requireTeamManager();
   const userId = cleanString(formData.get("userId"));
@@ -349,6 +262,19 @@ export async function updateTeamMemberAccess(formData: FormData) {
     await tx.user.update({ where: { id: userId }, data: { role, storeId: storeIds[0] } });
   });
 
+  await notifyUser({
+    organizationId: context.organizationId,
+    recipientId: userId,
+    actorId: context.userId,
+    refType: "MEMBERSHIP",
+    refId: `${context.organizationId}:${userId}`,
+    type: "MEMBERSHIP_ACCESS_CHANGED",
+    title: "你的企业权限已更新",
+    body: `当前角色：${role}；可访问店铺数量：${storeIds.length}`,
+    actionUrl: "/settings/personal",
+    dedupeKey: `membership:${context.organizationId}:${userId}:access:${Date.now()}`,
+  });
+
   revalidatePath("/settings/team");
 }
 
@@ -386,6 +312,20 @@ export async function deactivateTeamMember(formData: FormData) {
       organizationId: context.organizationId,
       userId,
     });
+  });
+
+  await notifyUser({
+    organizationId: context.organizationId,
+    recipientId: userId,
+    actorId: context.userId,
+    refType: "MEMBERSHIP",
+    refId: `${context.organizationId}:${userId}`,
+    type: "MEMBERSHIP_DEACTIVATED",
+    title: "你的企业成员身份已停用",
+    body: "该企业授予的店铺、库存、渠道和仓库权限已回收。",
+    actionUrl: "/onboarding",
+    dedupeKey: `membership:${context.organizationId}:${userId}:deactivated`,
+    priority: "HIGH",
   });
 
   revalidatePath("/settings/team");

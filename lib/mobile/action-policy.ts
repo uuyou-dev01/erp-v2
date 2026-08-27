@@ -79,6 +79,7 @@ export const MOBILE_ACTION_POLICIES: Record<PrimaryAction, MobileActionPolicy> =
     completionPolicy: "DOMAIN_ACTION_REQUIRED",
     requiresOnline: true,
     requiresSecondConfirm: true,
+    requiredEvidence: ["PHOTO"],
   },
   createListing: DISABLED,
   registerReturn: {

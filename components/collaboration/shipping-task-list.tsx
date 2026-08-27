@@ -147,6 +147,8 @@ export function ShippingTaskList({
     try {
       const data = new FormData();
       data.append("file", file);
+      data.append("purpose", "BUSINESS_EVIDENCE");
+      if (selected) data.append("taskId", selected.id);
       const response = await fetch("/api/upload", { method: "POST", body: data });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "图片上传失败");

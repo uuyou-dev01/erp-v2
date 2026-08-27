@@ -22,6 +22,7 @@ test.describe("procurement create and receive flow", () => {
   let invalidReceiveSkuId = "";
   let duplicateOrderId = "";
   let invalidReceiveOrderId = "";
+  let supplierId = "";
 
   test.beforeAll(async () => {
     let location = await prisma.location.findFirst({
@@ -44,6 +45,18 @@ test.describe("procurement create and receive flow", () => {
 
     locationId = location.id;
 
+    const supplier = await prisma.partner.create({
+      data: {
+        storeId: STORE_ID,
+        code: `SUPPLIER_${runId}`.toUpperCase(),
+        name: supplierName,
+        type: "SUPPLIER",
+        status: "ACTIVE",
+        defaultCurrency: "CNY",
+      },
+    });
+    supplierId = supplier.id;
+
     const duplicateSku = await prisma.sKU.create({
       data: {
         storeId: STORE_ID,
@@ -57,7 +70,8 @@ test.describe("procurement create and receive flow", () => {
       data: {
         storeId: STORE_ID,
         orderNo: duplicateOrderNo,
-        supplierName: "E2E 已存在供应商",
+        supplierId,
+        supplierName,
         currency: "CNY",
         subtotal: "0",
         totalAmount: "0",
@@ -79,7 +93,8 @@ test.describe("procurement create and receive flow", () => {
       data: {
         storeId: STORE_ID,
         orderNo: invalidReceiveOrderNo,
-        supplierName: "E2E 收货错误供应商",
+        supplierId,
+        supplierName,
         currency: "CNY",
         subtotal: "100",
         totalAmount: "100",
@@ -131,7 +146,7 @@ test.describe("procurement create and receive flow", () => {
     }
 
     const cleanupSkuIds = Array.from(
-      new Set([skuId, duplicateSkuId, invalidReceiveSkuId, ...skuIds].filter(Boolean)),
+      new Set([skuId, duplicateSkuId, invalidReceiveSkuId, ...skuIds].filter(Boolean))
     );
     if (cleanupSkuIds.length > 0) {
       await prisma.sKU.deleteMany({ where: { id: { in: cleanupSkuIds } } });
@@ -143,6 +158,9 @@ test.describe("procurement create and receive flow", () => {
 
     if (createdLocationId) {
       await prisma.location.deleteMany({ where: { id: createdLocationId } });
+    }
+    if (supplierId) {
+      await prisma.partner.deleteMany({ where: { id: supplierId } });
     }
   });
 
@@ -159,7 +177,7 @@ test.describe("procurement create and receive flow", () => {
     await expect(page.getByRole("heading", { name: "新建采购订单" })).toBeVisible();
 
     await page.getByLabel(/采购单号/).fill(orderNo);
-    await page.getByLabel(/供应商/).fill(supplierName);
+    await page.getByLabel(/供应商（合作方）/).selectOption(supplierId);
     await page.getByLabel("目的地仓库").selectOption(locationId);
     await page.getByRole("button", { name: /下一步/ }).click();
 
@@ -220,8 +238,8 @@ test.describe("procurement create and receive flow", () => {
 
     expect(
       errors.filter((line) =>
-        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line),
-      ),
+        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line)
+      )
     ).toEqual([]);
   });
 
@@ -251,9 +269,7 @@ test.describe("procurement create and receive flow", () => {
     await expect(page.getByRole("heading", { name: "订单信息预览" })).toBeVisible();
     await page.getByRole("button", { name: /确认提交/ }).click();
 
-    await expect(
-      page.getByRole("alert").filter({ hasText: "采购单号已存在" }),
-    ).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "采购单号已存在" })).toBeVisible();
     expect(dialogMessages).toEqual([]);
     await expect(page).toHaveURL(/\/procurement\/new/);
   });
@@ -281,7 +297,7 @@ test.describe("procurement create and receive flow", () => {
     await quickCreateDialog.getByRole("button", { name: "创建并选中" }).click();
 
     await expect(
-      quickCreateDialog.getByRole("alert").filter({ hasText: "SKU代码已存在" }),
+      quickCreateDialog.getByRole("alert").filter({ hasText: "SKU代码已存在" })
     ).toBeVisible();
     expect(dialogMessages).toEqual([]);
     await expect(quickCreateDialog.getByRole("heading", { name: /快速新建\s*SKU/ })).toBeVisible();
@@ -295,7 +311,9 @@ test.describe("procurement create and receive flow", () => {
     });
 
     await page.goto(`/procurement/${invalidReceiveOrderId}`);
-    await expect(page.getByRole("heading", { name: new RegExp(invalidReceiveOrderNo) })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: new RegExp(invalidReceiveOrderNo) })
+    ).toBeVisible();
     await expect(page.getByRole("heading", { name: "收货" })).toBeVisible();
 
     await prisma.purchaseOrder.update({
@@ -308,7 +326,7 @@ test.describe("procurement create and receive flow", () => {
     await page.getByRole("button", { name: "确认收货", exact: true }).click();
 
     await expect(
-      page.getByRole("alert").filter({ hasText: "只有已下单、在途或已到货待分流的采购单可以入库" }),
+      page.getByRole("alert").filter({ hasText: "只有已下单、在途或已到货待分流的采购单可以入库" })
     ).toBeVisible();
     expect(unexpectedDialogs).toEqual([]);
     await expect(page).toHaveURL(new RegExp(`/procurement/${invalidReceiveOrderId}`));
@@ -322,7 +340,7 @@ async function expectLotQuantity(lotId: string, expected: string) {
   });
   const quantity = ledgers.reduce(
     (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
-    new Decimal(0),
+    new Decimal(0)
   );
   expect(quantity.toString()).toBe(expected);
 }

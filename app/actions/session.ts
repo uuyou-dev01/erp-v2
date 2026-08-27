@@ -12,8 +12,14 @@ import {
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { createSessionToken } from "@/lib/auth/session-token";
+import { isSecureCookieEnabled } from "@/lib/auth/cookie-security";
 import { isSelfSignupEnabled } from "@/lib/auth/signup-policy";
 import { getInvitedSignup } from "@/lib/auth/invited-signup";
+import {
+  assertLoginRateLimit,
+  recordAuthAudit,
+  recordLoginFailureAttempt,
+} from "@/lib/auth/security-events";
 
 function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
@@ -39,12 +45,26 @@ async function authenticateUser(
     throw new Error("请输入密码");
   }
 
+  try {
+    await assertLoginRateLimit(email);
+  } catch (error) {
+    await recordAuthAudit({
+      eventType: "LOGIN",
+      outcome: "BLOCKED",
+      email,
+      metadata: { reason: "RATE_LIMIT" },
+    });
+    throw error;
+  }
+
   const user = await prisma.user.findUnique({
     where: { email },
     select: {
       id: true,
       email: true,
       password: true,
+      sessionVersion: true,
+      accountStatus: true,
       memberships: {
         where: { status: "ACTIVE" },
         select: { id: true },
@@ -57,8 +77,36 @@ async function authenticateUser(
       },
     },
   });
+  if (user?.password === "hashed_password_placeholder" && process.env.NODE_ENV === "production") {
+    await recordLoginFailureAttempt(email);
+    await recordAuthAudit({
+      eventType: "LOGIN",
+      outcome: "BLOCKED",
+      email,
+      userId: user.id,
+      metadata: { reason: "LEGACY_DEMO_PASSWORD" },
+    });
+    throw new Error("该账号仍使用演示占位密码，请联系管理员生成一次性密码重置链接");
+  }
   if (!user || !(await verifyPassword(password, user.password))) {
+    await recordLoginFailureAttempt(email);
+    await recordAuthAudit({
+      eventType: "LOGIN",
+      outcome: "FAILURE",
+      email,
+      userId: user?.id,
+    });
     throw new Error("邮箱或密码不正确");
+  }
+  if (user.accountStatus !== "ACTIVE") {
+    await recordAuthAudit({
+      eventType: "LOGIN",
+      outcome: "BLOCKED",
+      email,
+      userId: user.id,
+      metadata: { accountStatus: user.accountStatus },
+    });
+    throw new Error("账号已停用，请联系管理员");
   }
   if (user.password === "hashed_password_placeholder") {
     await prisma.user.update({
@@ -68,24 +116,32 @@ async function authenticateUser(
   }
 
   const cookieStore = await cookies();
-  cookieStore.set(USER_CONTEXT_COOKIE, createSessionToken(user.email), {
+  cookieStore.set(USER_CONTEXT_COOKIE, createSessionToken(user.id, user.sessionVersion), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureCookieEnabled(),
     path: "/",
     maxAge: 7 * 24 * 60 * 60,
+    priority: "high",
+  });
+
+  await recordAuthAudit({
+    eventType: "LOGIN",
+    outcome: "SUCCESS",
+    email,
+    userId: user.id,
   });
   cookieStore.set(ACTIVE_STORE_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureCookieEnabled(),
     path: "/",
     maxAge: 0,
   });
   cookieStore.set(ACTIVE_ORGANIZATION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureCookieEnabled(),
     path: "/",
     maxAge: 0,
   });
@@ -147,7 +203,7 @@ export async function registerAccountAction(formData: FormData) {
     const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (existing) throw new Error("该邮箱已注册，请直接登录");
 
-    let user: { id: string; email: string };
+    let user: { id: string; email: string; sessionVersion: number };
     try {
       user = await prisma.user.create({
         data: {
@@ -156,8 +212,9 @@ export async function registerAccountAction(formData: FormData) {
           password: await hashPassword(password),
           role: "USER",
           storeId: null,
+          emailVerifiedAt: invitedSignup ? new Date() : null,
         },
-        select: { id: true, email: true },
+        select: { id: true, email: true, sessionVersion: true },
       });
     } catch (error) {
       if (
@@ -171,15 +228,23 @@ export async function registerAccountAction(formData: FormData) {
       throw error;
     }
     const cookieStore = await cookies();
-    cookieStore.set(USER_CONTEXT_COOKIE, createSessionToken(user.email), {
+    cookieStore.set(USER_CONTEXT_COOKIE, createSessionToken(user.id, user.sessionVersion), {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureCookieEnabled(),
       path: "/",
       maxAge: 7 * 24 * 60 * 60,
+      priority: "high",
     });
     cookieStore.delete(ACTIVE_STORE_COOKIE);
     cookieStore.delete(ACTIVE_ORGANIZATION_COOKIE);
+    await recordAuthAudit({
+      eventType: "REGISTER",
+      outcome: "SUCCESS",
+      email,
+      userId: user.id,
+      metadata: { invitationScoped: Boolean(invitedSignup) },
+    });
     return actionSuccess({
       userId: user.id,
       destination:
@@ -221,8 +286,9 @@ export async function switchActiveOrganizationAction(organizationId: string) {
     cookieStore.set(ACTIVE_ORGANIZATION_COOKIE, organizationId, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureCookieEnabled(),
       path: "/",
+      priority: "high",
     });
     cookieStore.delete(ACTIVE_STORE_COOKIE);
     return actionSuccess({ organizationId });
@@ -238,7 +304,9 @@ export async function switchActiveStoreAction(storeId: string) {
     cookieStore.set(ACTIVE_STORE_COOKIE, context.activeStoreId, {
       httpOnly: true,
       sameSite: "lax",
+      secure: isSecureCookieEnabled(),
       path: "/",
+      priority: "high",
     });
     return actionSuccess({ storeId: context.activeStoreId });
   } catch (error) {
