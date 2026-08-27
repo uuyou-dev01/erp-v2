@@ -78,11 +78,33 @@ export interface WorkItem {
   taskCreatedById?: string | null;
   taskCreatedByName?: string | null;
   taskDueAt?: string | null;
+  taskFulfillmentLocationId?: string | null;
+  taskFulfillmentLocationName?: string | null;
+  taskFulfillmentLocationIds?: string[];
+  taskFulfillmentLocationNames?: string[];
   exceptionType?: string;
   exceptionMessage?: string;
   detailHref?: string;
   metadata?: Record<string, string | number | boolean | null>;
   lineItems?: WorkItemLine[];
+}
+
+export function workItemMatchesSearch(item: WorkItem, query: string) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return true;
+  return Boolean(
+    item.title.toLocaleLowerCase().includes(normalizedQuery) ||
+    item.subtitle?.toLocaleLowerCase().includes(normalizedQuery) ||
+    item.skuCode?.toLocaleLowerCase().includes(normalizedQuery) ||
+    item.lineItems?.some(
+      (line) =>
+        line.title.toLocaleLowerCase().includes(normalizedQuery) ||
+        line.skuCode?.toLocaleLowerCase().includes(normalizedQuery)
+    ) ||
+    Object.values(item.metadata ?? {}).some(
+      (value) => typeof value === "string" && value.toLocaleLowerCase().includes(normalizedQuery)
+    )
+  );
 }
 
 export interface WorkItemLine {
@@ -314,9 +336,7 @@ export function deriveQuickEntryWorkItem(entry: QuickEntry): WorkItem | null {
       primaryActionLabel: ACTION_LABELS.resolveException,
       priority: "critical",
       exceptionType: "process_failed",
-      exceptionMessage: formatQuickEntryExceptionMessage(
-        entry.errorMessage ?? "结构化处理失败"
-      ),
+      exceptionMessage: formatQuickEntryExceptionMessage(entry.errorMessage ?? "结构化处理失败"),
     };
   }
 
@@ -332,9 +352,7 @@ export function deriveQuickEntryWorkItem(entry: QuickEntry): WorkItem | null {
       primaryAction: "resolveException",
       primaryActionLabel: ACTION_LABELS.resolveException,
       priority: "warning",
-      exceptionMessage: formatQuickEntryExceptionMessage(
-        entry.errorMessage ?? "字段待补全"
-      ),
+      exceptionMessage: formatQuickEntryExceptionMessage(entry.errorMessage ?? "字段待补全"),
     };
   }
 

@@ -8,6 +8,7 @@ import { LocationCreateDialog } from "@/components/inventory/location-create-dia
 import { LocationRowActions } from "@/components/inventory/location-row-actions";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
 import { capabilityLabel, fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
+import { safeLocationReturnPath } from "@/lib/application/location-create-navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +35,14 @@ const locationTypeColors = {
 
 type LocationRow = Awaited<ReturnType<typeof getLocations>>[number];
 
-export default async function LocationsPage() {
+export default async function LocationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ create?: string; returnTo?: string }>;
+}) {
   const { activeStoreId: storeId } = await requireUserContext();
+  const params = await searchParams;
+  const returnTo = safeLocationReturnPath(params.returnTo);
   const locations = await getLocations(storeId);
 
   const stats = {
@@ -111,6 +118,23 @@ export default async function LocationsPage() {
       },
     },
     {
+      key: "fulfillers",
+      header: "发货人",
+      cell: (row) => {
+        const defaultFulfiller = row.fulfillers.find((fulfiller) => fulfiller.isDefault);
+        return (
+          <div>
+            <p className="text-sm">
+              {defaultFulfiller?.user?.name || defaultFulfiller?.user?.email || "未设置"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {row.fulfillers.length > 0 ? `${row.fulfillers.length} 人可发货` : "进入仓库添加"}
+            </p>
+          </div>
+        );
+      },
+    },
+    {
       key: "createdAt",
       header: "创建时间",
       hideOnMobile: true,
@@ -133,7 +157,11 @@ export default async function LocationsPage() {
             将仓库、集运点和持有人作为履约网络节点；实际地区、运营能力和发货范围分别配置。
           </p>
         </div>
-        <LocationCreateDialog storeId={storeId} />
+        <LocationCreateDialog
+          storeId={storeId}
+          defaultOpen={params.create === "1"}
+          returnTo={returnTo}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">

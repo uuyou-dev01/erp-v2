@@ -1,21 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LocationForm } from "@/components/inventory/location-form";
+import { safeLocationReturnPath } from "@/lib/application/location-create-navigation";
 
 interface LocationCreateDialogProps {
   storeId: string;
   triggerText?: string;
+  defaultOpen?: boolean;
+  returnTo?: string | null;
 }
 
 export function LocationCreateDialog({
   storeId,
   triggerText = "添加位置",
+  defaultOpen = false,
+  returnTo,
 }: LocationCreateDialogProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
+  const safeReturnTo = safeLocationReturnPath(returnTo);
+
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
 
   if (!open) {
     return (
@@ -28,13 +38,19 @@ export function LocationCreateDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
+      <button
+        type="button"
+        aria-label="关闭新增仓库位置弹窗"
+        className="absolute inset-0 bg-black/50"
+        onClick={() => setOpen(false)}
+      />
       <Card className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-hidden">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>新增仓库位置</CardTitle>
             <button
               type="button"
+              aria-label="关闭新增仓库位置弹窗"
               onClick={() => setOpen(false)}
               className="text-muted-foreground hover:text-foreground"
             >
@@ -46,6 +62,7 @@ export function LocationCreateDialog({
           <LocationForm
             storeId={storeId}
             mode="dialog"
+            returnTo={safeReturnTo}
             onSuccess={() => setOpen(false)}
             onCancel={() => setOpen(false)}
           />

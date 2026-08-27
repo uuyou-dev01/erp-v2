@@ -15,6 +15,10 @@ import {
   type ListingCoverageProduct,
 } from "@/lib/application/listing-coverage";
 import { sortListingOpsItems } from "@/lib/application/listing-ops";
+import {
+  inferMarketFromPlatform,
+  type SellableMarketCode,
+} from "@/lib/application/sellable-market";
 
 export const dynamic = "force-dynamic";
 
@@ -103,11 +107,26 @@ function withReturnTo(href: string, returnTo: string) {
   return `${href}${separator}returnTo=${encodeURIComponent(returnTo)}`;
 }
 
+function parseMarket(value?: string): SellableMarketCode | undefined {
+  if (
+    value === "CN" ||
+    value === "JP" ||
+    value === "US" ||
+    value === "EU" ||
+    value === "GLOBAL" ||
+    value === "UNKNOWN"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 export default async function ListingPage({
   searchParams,
 }: {
   searchParams: Promise<{
     platformId?: string;
+    market?: string;
     status?: string;
     risk?: string;
     sort?: string;
@@ -123,9 +142,20 @@ export default async function ListingPage({
   ]);
 
   const listings = flattenListingRecords(products);
+  const activeMarket = parseMarket(params.market);
   const filteredListings = sortListingOpsItems(
     listings.filter((listing) => {
       if (params.platformId && listing.platform.id !== params.platformId) {
+        return false;
+      }
+      if (
+        !params.platformId &&
+        activeMarket &&
+        inferMarketFromPlatform({
+          code: listing.platform.code,
+          country: listing.platform.country ?? null,
+        }) !== activeMarket
+      ) {
         return false;
       }
       if (params.status && listing.status !== params.status) return false;
@@ -171,8 +201,10 @@ export default async function ListingPage({
           id: platform.id,
           name: platform.name,
           code: platform.code,
+          country: platform.country,
         }))}
         activePlatformId={params.platformId}
+        activeMarket={activeMarket}
         status={params.status}
         risk={params.risk}
         sort={params.sort ?? "listedAt"}

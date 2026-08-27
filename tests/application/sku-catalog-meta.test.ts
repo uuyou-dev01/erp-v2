@@ -35,4 +35,13 @@ describe("sku catalog metadata compatibility", () => {
 
     expect(parseSkuCatalogMeta(merged).barcode).toBeNull();
   });
+
+  it("allows all SKU images to be removed", () => {
+    const merged = mergeSkuCatalogAttributes(
+      { images: [{ url: "/uploads/old-cover.webp", isCover: true }] },
+      { images: [] }
+    );
+
+    expect(parseSkuCatalogMeta(merged).images).toEqual([]);
+  });
 });

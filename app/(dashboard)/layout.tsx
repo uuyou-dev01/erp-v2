@@ -1,11 +1,19 @@
 import { DashboardShell } from "@/components/layout/dashboard-shell";
-import { requireUserContext } from "@/lib/auth/user-context";
+import { requireAuthenticatedUser, requireUserContext } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
+import { getCollaborationTaskSummaryForUser } from "@/lib/application/collaboration-task-summary";
 import { redirect } from "next/navigation";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const context = await requireUserContext().catch(() => redirect("/login"));
-  const [stores, account, organizations] = await Promise.all([
+  const authenticatedUser = await requireAuthenticatedUser().catch(() => redirect("/login"));
+  const context = await requireUserContext().catch(async () => {
+    const collaboration = await prisma.locationFulfiller.findFirst({
+      where: { userId: authenticatedUser.id, status: "ACTIVE" },
+      select: { id: true },
+    });
+    redirect(collaboration ? "/collaboration/tasks" : "/onboarding");
+  });
+  const [stores, account, organizations, collaboration] = await Promise.all([
     prisma.store.findMany({
       where: { id: { in: context.storeIds } },
       select: { id: true, name: true },
@@ -30,6 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
+    getCollaborationTaskSummaryForUser(context.userId),
   ]);
 
   return (
@@ -44,6 +53,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         organizationName: account.memberships[0]?.organization.name ?? "当前企业",
       }}
       role={context.role}
+      collaboration={collaboration}
     >
       {children}
     </DashboardShell>

@@ -92,6 +92,15 @@ export async function getLocations(storeId: string) {
         where: { active: true, laneType: "CUSTOMER_DELIVERY" },
         orderBy: [{ priority: "asc" }, { destinationCountry: "asc" }],
       },
+      fulfillers: {
+        where: { status: "ACTIVE" },
+        select: {
+          id: true,
+          isDefault: true,
+          user: { select: { name: true, email: true } },
+        },
+        orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -145,6 +154,7 @@ export async function createLocation(data: CreateLocationInput) {
   const location = await prisma.location.create({
     data: {
       storeId: context.activeStoreId,
+      operatorOrganizationId: context.organizationId,
       code,
       name: data.name,
       region,

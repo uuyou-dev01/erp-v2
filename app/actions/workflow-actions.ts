@@ -33,12 +33,19 @@ import {
   receivePurchaseOrder,
   returnPurchaseOrder,
 } from "@/app/actions/purchase-orders";
+import {
+  LOGISTICS_COST_SOURCE_TYPES,
+  normalizeLogisticsCostInput,
+  saveLogisticsShippingCost,
+} from "@/lib/application/logistics-cost";
 
 export interface FillLogisticsPayload {
   carrier?: string;
   etaDate?: string;
   destinationLocationId?: string;
   purchaseTrackingNo?: string;
+  shippingCost?: string;
+  shippingCurrency?: string;
   note?: string;
 }
 
@@ -78,6 +85,8 @@ export interface TransferPurchasePayload {
   trackingNo?: string;
   carrier?: string;
   etaDate?: string;
+  shippingCost?: string;
+  shippingCurrency?: string;
   note?: string;
 }
 
@@ -297,9 +306,20 @@ export async function submitFillLogistics(
     if (!clean(payload.destinationLocationId)) {
       throw new Error("请选择预计到货位置");
     }
+    const order = await prisma.purchaseOrder.findUnique({
+      where: { id: entityId },
+      select: { storeId: true, currency: true },
+    });
+    if (!order) throw new Error("采购单不存在");
+    const shippingCost = normalizeLogisticsCostInput(
+      { amount: payload.shippingCost, currency: payload.shippingCurrency },
+      order.currency,
+    );
+
+    const shippedAt = new Date();
     await markPurchaseAsShipped({
       purchaseOrderId: entityId,
-      shippedAt: new Date(),
+      shippedAt,
       trackingNo: clean(payload.purchaseTrackingNo),
       carrier: clean(payload.carrier),
       etaDate: optionalInputDate(payload.etaDate),
@@ -307,6 +327,18 @@ export async function submitFillLogistics(
       shipmentNote: logisticsNote(payload),
       shipmentMode: "purchase_only",
     });
+    if (shippingCost) {
+      await saveLogisticsShippingCost(prisma, {
+        storeId: order.storeId,
+        sourceType: LOGISTICS_COST_SOURCE_TYPES.purchase,
+        sourceId: entityId,
+        amount: shippingCost.amount.toFixed(4),
+        currency: shippingCost.currency,
+        fallbackCurrency: order.currency,
+        occurredAt: shippedAt,
+        note: "采购卖家发货邮费",
+      });
+    }
     revalidatePath("/workbench");
     return { success: true };
   }
@@ -541,6 +573,8 @@ export async function submitTransferPurchase(
     toLocationId,
     trackingNo: clean(payload.trackingNo),
     carrier: clean(payload.carrier),
+    shippingCost: clean(payload.shippingCost),
+    shippingCurrency: clean(payload.shippingCurrency),
     etaDate: optionalInputDate(payload.etaDate),
     note: clean(payload.note),
   });

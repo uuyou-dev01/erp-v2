@@ -14,7 +14,7 @@ import { RecentActivityFeed, type ActivityFeedItem } from "./recent-activity-fee
 import { WorkflowCard, getOldestWaitLabel } from "./workflow-card";
 import { ActionDrawer } from "./action-drawer";
 import { QuickEntryWorkbench } from "./quick-entry-workbench";
-import { getVisibleWorkflowStages } from "@/lib/application/next-actions";
+import { getVisibleWorkflowStages, workItemMatchesSearch } from "@/lib/application/next-actions";
 import { cn } from "@/lib/utils";
 import { BulkActionToolbar } from "./bulk-action-toolbar";
 import { PendingActionPanel } from "./pending-action-panel";
@@ -73,12 +73,14 @@ interface RecentEntry {
   functionStatus: string | null;
   purchasePrice: string | null;
   purchaseCurrency: string | null;
+  purchaseDate: string | null;
   purchaseTrackingNo: string | null;
   transitTrackingNo: string | null;
   currentLocationText: string | null;
   listingPlatformsText: string | null;
   salePlatformText: string | null;
   salePrice: string | null;
+  saleDate: string | null;
   batchNote: string | null;
   workflowStage: string;
   inspectionResult: string | null;
@@ -157,16 +159,7 @@ export function NextActionWorkbench({
       items = items.filter((i) => i.taskCreatedById === currentUserId);
     }
     if (search.trim()) {
-      const q = search.toLowerCase();
-      items = items.filter(
-        (i) =>
-          i.title.toLowerCase().includes(q) ||
-          i.subtitle?.toLowerCase().includes(q) ||
-          i.skuCode?.toLowerCase().includes(q) ||
-          Object.values(i.metadata ?? {}).some(
-            (value) => typeof value === "string" && value.toLowerCase().includes(q)
-          )
-      );
+      items = items.filter((item) => workItemMatchesSearch(item, search));
     }
     return items;
   }, [currentUserId, initialItems, selectedQueue, search, taskScope]);
@@ -175,6 +168,11 @@ export function NextActionWorkbench({
     () => initialItems.filter((i) => i.queue === "exception" || i.queue === "inspectionException"),
     [initialItems]
   );
+  const selectable = selectedQueue !== "all";
+  const selectedVisibleCount = filteredItems.filter((item) => checkedIds.includes(item.id)).length;
+  const allVisibleChecked =
+    selectable && filteredItems.length > 0 && selectedVisibleCount === filteredItems.length;
+  const partlyVisibleChecked = selectedVisibleCount > 0 && !allVisibleChecked;
 
   const handleSelectQueue = (queue: WorkQueue | "all") => {
     setSelectedQueue(queue);
@@ -296,7 +294,10 @@ export function NextActionWorkbench({
     <div className="space-y-4">
       <TodayCommandBar
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={(value) => {
+          setSearch(value);
+          setCheckedIds([]);
+        }}
         onQuickEntry={openQuickEntry}
         onPasteImport={openQuickEntry}
       />
@@ -337,24 +338,52 @@ export function NextActionWorkbench({
               : `待处理 · ${filteredItems.length}`
           }
         >
-          <div className="mb-2 flex flex-wrap gap-1">
-            {[
-              ["all", "全部任务"],
-              ["mine", "我的任务"],
-              ["delegated", "我委托的"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={cn(
-                  "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted",
-                  taskScope === value && "border-primary/40 bg-primary/5 text-primary"
-                )}
-                onClick={() => setTaskScope(value as "all" | "mine" | "delegated")}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1">
+              {[
+                ["all", "全部任务"],
+                ["mine", "我的任务"],
+                ["delegated", "我委托的"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted",
+                    taskScope === value && "border-primary/40 bg-primary/5 text-primary"
+                  )}
+                  onClick={() => {
+                    setTaskScope(value as "all" | "mine" | "delegated");
+                    setCheckedIds([]);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {selectable && filteredItems.length > 0 ? (
+              <label className="flex cursor-pointer select-none items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted">
+                <input
+                  type="checkbox"
+                  ref={(node) => {
+                    if (node) node.indeterminate = partlyVisibleChecked;
+                  }}
+                  checked={allVisibleChecked}
+                  onChange={() =>
+                    setCheckedIds(allVisibleChecked ? [] : filteredItems.map((item) => item.id))
+                  }
+                  aria-label="选择当前筛选结果内全部任务"
+                  className="h-4 w-4 rounded border-input"
+                />
+                <span className={cn(selectedVisibleCount > 0 && "font-medium text-foreground")}>
+                  {allVisibleChecked
+                    ? `已全选 ${filteredItems.length} 项`
+                    : partlyVisibleChecked
+                      ? `已选 ${selectedVisibleCount} / ${filteredItems.length} 项`
+                      : `全选当前 ${filteredItems.length} 项`}
+                </span>
+              </label>
+            ) : null}
           </div>
           <BulkActionToolbar
             queue={selectedQueue}
@@ -367,7 +396,7 @@ export function NextActionWorkbench({
           <WorkQueueList
             items={filteredItems}
             selectedId={selectedItem?.id}
-            selectable={selectedQueue !== "all"}
+            selectable={selectable}
             checkedIds={checkedIds}
             onCheckedChange={(item, checked) => {
               setCheckedIds((ids) =>
@@ -439,7 +468,7 @@ export function NextActionWorkbench({
       <ActionDrawer
         open={showQuickEntry}
         onClose={handleCloseQuickEntry}
-        className="max-w-[min(1180px,calc(100vw-2rem))]"
+        className="max-w-[min(1440px,calc(100vw-1rem))]"
       >
         <div className="flex h-full flex-col">
           <div className="border-b px-5 py-4">

@@ -51,7 +51,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
           </Link>
         </div>
 
-        {sku.intelligence.recentMarketObservations.length > 0 ? (
+        {!compact && sku.intelligence.recentMarketObservations.length > 0 ? (
           <div className="border-t pt-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="inline-flex items-center gap-1.5 text-xs font-medium">
@@ -82,7 +82,8 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
                     {formatCurrency(item.amount, item.currency)}
                   </span>
                   <span className="truncate text-[10px] text-muted-foreground">
-                    {item.conditionGrade || "成色未标注"} · {new Date(item.observedAt).toLocaleDateString("zh-CN")}
+                    {item.conditionGrade || "成色未标注"} ·{" "}
+                    {new Date(item.observedAt).toLocaleDateString("zh-CN")}
                   </span>
                   {item.sourceUrl ? (
                     <a
@@ -100,7 +101,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
           </div>
         ) : null}
 
-        {reference.recentPurchaseLines.length > 0 ? (
+        {!compact && reference.recentPurchaseLines.length > 0 ? (
           <div>
             <p className="mb-1 text-xs font-medium">最近采购</p>
             <ul className="space-y-1 text-xs">
@@ -120,7 +121,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
           </div>
         ) : null}
 
-        {reference.recentSalesLines.length > 0 ? (
+        {!compact && reference.recentSalesLines.length > 0 ? (
           <div>
             <p className="mb-1 text-xs font-medium">最近销售</p>
             <ul className="space-y-1 text-xs">
@@ -141,7 +142,8 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
         ) : null}
 
         <p className="text-[10px] text-muted-foreground">
-          情报 {sku.intelligence.marketObservationCount} · 采购 {reference.purchaseLineCount} · 销售 {reference.salesLineCount}
+          情报 {sku.intelligence.marketObservationCount} · 采购 {reference.purchaseLineCount} · 销售{" "}
+          {reference.salesLineCount}
           <Link
             href="/procurement"
             className="ml-1.5 inline-flex items-center gap-0.5 text-primary hover:underline"

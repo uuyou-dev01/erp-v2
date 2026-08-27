@@ -291,7 +291,13 @@ export async function getMobileHome() {
     prisma.user.findUnique({ where: { id: context.userId }, select: { name: true, email: true } }),
     prisma.store.findUnique({ where: { id: context.activeStoreId }, select: { name: true } }),
     getMobileTasks("today"),
-    prisma.notification.count({ where: { recipientId: context.userId, readAt: null } }),
+    prisma.notification.count({
+      where: {
+        recipientId: context.userId,
+        organizationId: context.organizationId,
+        readAt: null,
+      },
+    }),
     getMobileSlaMetrics(),
   ]);
   const actionableTasks = tasks.filter((task) => task.mobileEnabled);

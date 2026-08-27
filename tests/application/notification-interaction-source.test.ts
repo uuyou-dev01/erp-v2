@@ -18,5 +18,11 @@ describe("notification interaction source hygiene", () => {
     expect(listSource).not.toMatch(/await markMyNotificationRead\(/);
     expect(listSource).toContain("notificationError");
     expect(listSource).toContain('role="alert"');
+    expect(listSource).toContain("notification.resolvedAt");
+    expect(listSource).toContain("查看相关记录");
+    expect(listSource).toContain("标记为已读");
+    expect(listSource).toContain("已领取并开始处理");
+
+    expect(actionSource).toContain("reconcileNotificationResolutions");
   });
 });

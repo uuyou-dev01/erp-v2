@@ -12,12 +12,25 @@ import {
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { createSessionToken } from "@/lib/auth/session-token";
+import { isSelfSignupEnabled } from "@/lib/auth/signup-policy";
+import { getInvitedSignup } from "@/lib/auth/invited-signup";
+
+function cleanString(value: FormDataEntryValue | null) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function safeNextPath(value: FormDataEntryValue | null) {
+  const path = cleanString(value);
+  return path.startsWith("/") && !path.startsWith("//") ? path : null;
+}
 
 async function authenticateUser(
   emailInput: FormDataEntryValue | null,
-  passwordInput: FormDataEntryValue | null,
+  passwordInput: FormDataEntryValue | null
 ) {
-  const email = String(emailInput || "").trim().toLowerCase();
+  const email = String(emailInput || "")
+    .trim()
+    .toLowerCase();
   const password = String(passwordInput || "");
   if (!email) {
     throw new Error("请输入邮箱");
@@ -26,16 +39,23 @@ async function authenticateUser(
     throw new Error("请输入密码");
   }
 
-  const user = await prisma.user.findFirst({
-    where: {
-      email,
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      password: true,
       memberships: {
-        some: {
-          status: "ACTIVE",
-        },
+        where: { status: "ACTIVE" },
+        select: { id: true },
+        take: 1,
+      },
+      locationFulfillerAssignments: {
+        where: { status: "ACTIVE" },
+        select: { id: true },
+        take: 1,
       },
     },
-    select: { email: true, password: true },
   });
   if (!user || !(await verifyPassword(password, user.password))) {
     throw new Error("邮箱或密码不正确");
@@ -70,7 +90,12 @@ async function authenticateUser(
     maxAge: 0,
   });
 
-  return user.email;
+  return {
+    id: user.id,
+    email: user.email,
+    hasMembership: user.memberships.length > 0,
+    hasWarehouseCollaboration: user.locationFulfillerAssignments.length > 0,
+  };
 }
 
 export async function switchCurrentUser(formData: FormData) {
@@ -81,13 +106,90 @@ export async function switchCurrentUser(formData: FormData) {
 
 export async function switchCurrentUserAction(formData: FormData) {
   try {
-    const email = await authenticateUser(
-      formData.get("email"),
-      formData.get("password"),
-    );
-    return actionSuccess({ email });
+    const user = await authenticateUser(formData.get("email"), formData.get("password"));
+    const requestedNext = safeNextPath(formData.get("next"));
+    const destination = user.hasMembership
+      ? (requestedNext ?? "/workbench")
+      : requestedNext?.startsWith("/invite/team/") ||
+          requestedNext?.startsWith("/invite/warehouse/")
+        ? requestedNext
+        : user.hasWarehouseCollaboration
+          ? "/collaboration/tasks"
+          : "/onboarding";
+    return actionSuccess({ email: user.email, destination });
   } catch (error) {
     return toActionFailure(error, "切换操作人失败，请重试");
+  }
+}
+
+export const loginAction = switchCurrentUserAction;
+
+export async function registerAccountAction(formData: FormData) {
+  try {
+    const requestedNext = safeNextPath(formData.get("next"));
+    const invitedSignup = requestedNext ? await getInvitedSignup(requestedNext) : null;
+    if (!isSelfSignupEnabled() && !invitedSignup) {
+      throw new Error("当前环境未开放自助注册，请联系管理员");
+    }
+    const name = cleanString(formData.get("name"));
+    const email = cleanString(formData.get("email")).toLowerCase();
+    const password = String(formData.get("password") || "");
+    const confirmPassword = String(formData.get("confirmPassword") || "");
+    if (!name) throw new Error("请输入姓名");
+    if (name.length > 50) throw new Error("姓名不能超过 50 个字符");
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("请输入有效邮箱");
+    if (invitedSignup && invitedSignup.email.toLowerCase() !== email) {
+      throw new Error(`请使用受邀邮箱 ${invitedSignup.email} 注册`);
+    }
+    if (password.length < 8) throw new Error("密码至少需要 8 位");
+    if (password !== confirmPassword) throw new Error("两次输入的密码不一致");
+
+    const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (existing) throw new Error("该邮箱已注册，请直接登录");
+
+    let user: { id: string; email: string };
+    try {
+      user = await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: await hashPassword(password),
+          role: "USER",
+          storeId: null,
+        },
+        select: { id: true, email: true },
+      });
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code: string }).code === "P2002"
+      ) {
+        throw new Error("该邮箱已注册，请直接登录");
+      }
+      throw error;
+    }
+    const cookieStore = await cookies();
+    cookieStore.set(USER_CONTEXT_COOKIE, createSessionToken(user.email), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60,
+    });
+    cookieStore.delete(ACTIVE_STORE_COOKIE);
+    cookieStore.delete(ACTIVE_ORGANIZATION_COOKIE);
+    return actionSuccess({
+      userId: user.id,
+      destination:
+        requestedNext?.startsWith("/invite/team/") ||
+        requestedNext?.startsWith("/invite/warehouse/")
+          ? requestedNext
+          : "/onboarding",
+    });
+  } catch (error) {
+    return toActionFailure(error, "注册失败，请稍后重试");
   }
 }
 

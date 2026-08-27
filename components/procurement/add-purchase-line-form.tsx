@@ -16,12 +16,14 @@ interface AddPurchaseLineFormProps {
   purchaseOrderId: string;
   currency: string;
   storeId: string;
+  onSuccess?: () => void;
 }
 
 export function AddPurchaseLineForm({
   purchaseOrderId,
   currency,
   storeId,
+  onSuccess,
 }: AddPurchaseLineFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -56,7 +58,10 @@ export function AddPurchaseLineForm({
       newErrors.quantity = "数量为必填项";
     } else if (!isValidDecimal(formData.quantity) || parseFloat(formData.quantity) <= 0) {
       newErrors.quantity = "数量格式无效";
-    } else if (formData.trackingMode === "ITEM_UNIT" && !Number.isInteger(Number(formData.quantity))) {
+    } else if (
+      formData.trackingMode === "ITEM_UNIT" &&
+      !Number.isInteger(Number(formData.quantity))
+    ) {
       newErrors.quantity = "一物一单商品的数量必须是整数";
     }
     if (!formData.unitPrice) {
@@ -89,6 +94,7 @@ export function AddPurchaseLineForm({
       }
 
       setFormData({ skuId: "", trackingMode: "LOT", quantity: "", unitPrice: "" });
+      onSuccess?.();
       router.refresh();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "添加商品失败，请重试");
@@ -114,7 +120,8 @@ export function AddPurchaseLineForm({
             <option value="">{t("inventory.select_sku")}</option>
             {(() => {
               const isGroup = (sku: (typeof skus)[number]) =>
-                sku.catalogRole === "GROUP" || (!sku.parentSkuId && skus.some((s) => s.parentSkuId === sku.id));
+                sku.catalogRole === "GROUP" ||
+                (!sku.parentSkuId && skus.some((s) => s.parentSkuId === sku.id));
               const groups = skus.filter(isGroup);
               const standalone = skus.filter((sku) => !sku.parentSkuId && !isGroup(sku));
 
@@ -153,10 +160,12 @@ export function AddPurchaseLineForm({
           <Select
             id="trackingMode"
             value={formData.trackingMode}
-            onChange={(e) => setFormData({
-              ...formData,
-              trackingMode: e.target.value as "LOT" | "ITEM_UNIT",
-            })}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                trackingMode: e.target.value as "LOT" | "ITEM_UNIT",
+              })
+            }
           >
             <option value="LOT">按数量管理</option>
             <option value="ITEM_UNIT">一物一单（逐件建档）</option>
@@ -185,7 +194,9 @@ export function AddPurchaseLineForm({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="unitPrice">{t("purchase.unit_price")} ({currency}) *</Label>
+          <Label htmlFor="unitPrice">
+            {t("purchase.unit_price")} ({currency}) *
+          </Label>
           <Input
             id="unitPrice"
             type="text"

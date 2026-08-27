@@ -24,12 +24,24 @@ import {
   ORDER_ALLOCATION_STATUS,
   RESERVING_ALLOCATION_STATUSES,
 } from "@/lib/application/order-allocation";
-import { requireUserContext } from "@/lib/auth/user-context";
-import { completeTasksForRef, createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
+import { requireAuthenticatedUser, requireUserContext } from "@/lib/auth/user-context";
+import {
+  completeTasksForRef,
+  completeTasksForRefInTransaction,
+  createTaskIfMissing,
+  notifyTaskCompleted,
+  TASK_TYPE,
+} from "@/lib/application/tasks";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { getEffectiveSellableQuantity } from "@/lib/application/inventory";
+import { getOrderFulfillmentLocationIds } from "@/lib/application/location-fulfillment-roster";
+import {
+  completeShipOrderDispatchInTransaction,
+  ensureShipOrderTaskDispatch,
+} from "@/lib/application/shipping-dispatch-lifecycle";
 import { isFulfillmentDestinationCode } from "@/lib/inventory/location-fulfillment";
+import { assertCanShipCustomerOrder } from "@/lib/application/shipping-authorization";
 import {
   inferMarketFromPlatform,
   locationMatchesMarket,
@@ -78,6 +90,69 @@ export interface ConfirmOrderInput {
   orderId: string;
 }
 
+const salesOrderBusinessInclude = {
+  salesChannelAccount: {
+    select: { id: true, name: true, code: true, platformCode: true },
+  },
+  resaleListing: {
+    select: {
+      id: true,
+      title: true,
+      fulfillmentMode: true,
+      supplyUnitPrice: true,
+      supplyCurrency: true,
+      estimatedGrossProfit: true,
+      salesChannelAccount: {
+        select: { id: true, name: true, code: true, platformCode: true },
+      },
+      supplyOffer: {
+        select: {
+          id: true,
+          title: true,
+          fulfillmentMode: true,
+          organization: { select: { id: true, name: true } },
+          providerOrganization: { select: { id: true, name: true } },
+          ownerPartner: { select: { id: true, name: true } },
+        },
+      },
+      supplyOfferItem: {
+        select: {
+          id: true,
+          title: true,
+          variantCode: true,
+          sku: { select: { id: true, code: true, name: true, imageUrl: true } },
+          itemUnit: { select: { id: true, skuId: true } },
+        },
+      },
+    },
+  },
+  fulfillmentRequests: {
+    select: {
+      id: true,
+      requestNo: true,
+      status: true,
+      quantity: true,
+      carrier: true,
+      trackingNo: true,
+      shippingCountry: true,
+      providerOrganizationId: true,
+      updatedAt: true,
+      settlements: {
+        select: { id: true, settlementNo: true, status: true, totalAmount: true, currency: true },
+        orderBy: { updatedAt: "desc" as const },
+      },
+    },
+    orderBy: { updatedAt: "desc" as const },
+  },
+  settlements: {
+    select: { id: true, settlementNo: true, status: true, totalAmount: true, currency: true },
+    orderBy: { updatedAt: "desc" as const },
+  },
+  afterSalesCases: {
+    select: { id: true, status: true },
+  },
+} as const;
+
 export async function getCustomerOrders(storeId: string, platformId?: string) {
   const context = await requireUserContext({ storeId });
   return await prisma.customerOrder.findMany({
@@ -92,6 +167,7 @@ export async function getCustomerOrders(storeId: string, platformId?: string) {
           sku: true,
         },
       },
+      ...salesOrderBusinessInclude,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -117,6 +193,7 @@ export async function getCustomerOrderById(id: string) {
           },
         },
       },
+      ...salesOrderBusinessInclude,
     },
   });
   if (!order) return null;
@@ -426,18 +503,35 @@ export async function confirmOrder(data: ConfirmOrderInput) {
     }
   });
 
-  await createTaskIfMissing({
-    organizationId: context.organizationId,
-    storeId: order.storeId,
-    type: TASK_TYPE.SHIP_ORDER,
-    title: `发货订单 ${order.orderNumber}`,
-    description: order.platformId
-      ? "订单已确认，等待打包/发货。"
-      : "手工订单已确认，等待打包/发货。",
-    refType: "CUSTOMER_ORDER",
-    refId: order.id,
-    createdById: context.userId,
-  });
+  const fulfillmentLocationIds = await getOrderFulfillmentLocationIds(order.id);
+  const fulfillmentLocationId =
+    fulfillmentLocationIds.length === 1 ? fulfillmentLocationIds[0] : null;
+  if (fulfillmentLocationId) {
+    await ensureShipOrderTaskDispatch({
+      organizationId: context.organizationId,
+      storeId: order.storeId,
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      createdById: context.userId,
+      locationId: fulfillmentLocationId,
+      description: order.platformId
+        ? "订单已确认，等待仓库领取并发货。"
+        : "手工订单已确认，等待仓库领取并发货。",
+    });
+  } else {
+    await createTaskIfMissing({
+      organizationId: context.organizationId,
+      storeId: order.storeId,
+      type: TASK_TYPE.SHIP_ORDER,
+      title: `发货订单 ${order.orderNumber}`,
+      description: "订单包含多个来源仓库，需要先拆分或重新分配库存。",
+      refType: "CUSTOMER_ORDER",
+      refId: order.id,
+      createdById: context.userId,
+      fulfillmentLocationId: null,
+      metadata: { fulfillmentLocationIds, assignmentMode: "MULTI_LOCATION_MANUAL" },
+    });
+  }
 
   revalidatePath("/sales");
   revalidatePath(`/sales/${data.orderId}`);
@@ -462,6 +556,36 @@ export async function saveOrderShippingProof(
   if (!order) throw new Error("订单不存在");
   if (order.orderStatus !== "CONFIRMED") {
     throw new Error("只有待发货订单可以暂存发货凭证");
+  }
+  const user = await requireAuthenticatedUser();
+  const internalAccess = await prisma.storeAccess.findFirst({
+    where: { storeId: order.storeId, userId: user.id },
+    select: { id: true },
+  });
+  if (!internalAccess) {
+    const assignedTask = await prisma.task.findFirst({
+      where: {
+        refType: "CUSTOMER_ORDER",
+        refId: orderId,
+        type: TASK_TYPE.SHIP_ORDER,
+        assignedToId: user.id,
+        status: { in: ["ASSIGNED", "IN_PROGRESS", "OVERDUE"] },
+        fulfillmentLocationId: { not: null },
+      },
+      select: { id: true, fulfillmentLocationId: true, organizationId: true },
+    });
+    const rosterAccess = assignedTask?.fulfillmentLocationId
+      ? await prisma.locationFulfiller.findFirst({
+          where: {
+            userId: user.id,
+            locationId: assignedTask.fulfillmentLocationId,
+            organizationId: assignedTask.organizationId,
+            status: "ACTIVE",
+          },
+          select: { id: true },
+        })
+      : null;
+    if (!rosterAccess) throw new Error("无权修改该订单的发货凭证");
   }
 
   const merged = shippingProofToJson(mergeShippingProof(order.shippingProof, proof));
@@ -507,7 +631,8 @@ export async function markOrderDelivered(orderId: string) {
 
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
-  revalidatePath("/reports/team");
+  revalidatePath("/reports/workload");
+  revalidatePath("/reports/team-performance");
   revalidatePath("/workbench");
 }
 
@@ -929,9 +1054,10 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
   revalidatePath("/inventory/sellable");
 }
 
-export async function markOrderShipped(
+async function performOrderShipment(
   orderId: string,
-  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+  options: { trackingNo?: string; shippingProof?: ShippingProof } | undefined,
+  actor: { userId: string; organizationId: string }
 ) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
@@ -967,9 +1093,15 @@ export async function markOrderShipped(
       throw new Error(`订单商品 ${line.id} 库存预留不完整，请先完成库存分配`);
     }
   }
-  const context = await requireUserContext({ storeId: order.storeId });
+  const completedTasks = await prisma.$transaction(async (tx) => {
+    const shipmentClaim = await tx.customerOrder.updateMany({
+      where: { id: orderId, orderStatus: "CONFIRMED" },
+      data: { updatedAt: new Date() },
+    });
+    if (!shipmentClaim.count) {
+      throw new Error("该订单已经由其他人处理，请刷新后查看");
+    }
 
-  await prisma.$transaction(async (tx) => {
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
         if (
@@ -1065,24 +1197,112 @@ export async function markOrderShipped(
           Object.keys(mergedProof).length > 0 ? (mergedProof as Prisma.InputJsonValue) : undefined,
       },
     });
+
+    const completed = await completeTasksForRefInTransaction(tx, {
+      organizationId: actor.organizationId,
+      storeId: order.storeId,
+      type: TASK_TYPE.SHIP_ORDER,
+      refType: "CUSTOMER_ORDER",
+      refId: order.id,
+      completedById: actor.userId,
+      work: {
+        code: "SHIP_ORDER",
+        name: "订单发货",
+        quantity: order.lines.reduce(
+          (sum, line) => sum.plus(line.quantity.toString()),
+          new Decimal(0)
+        ),
+        unit: "件",
+        metadata: {
+          orderId: order.id,
+          platformId: order.platformId,
+        },
+      },
+    });
+    for (const task of completed) {
+      await completeShipOrderDispatchInTransaction(tx, {
+        taskId: task.id,
+        userId: actor.userId,
+      });
+    }
+    return completed;
   });
 
   await syncQuickEntryFromOrder(orderId, "SHIPPED");
-
-  await completeTasksForRef({
-    organizationId: context.organizationId,
-    storeId: order.storeId,
-    type: TASK_TYPE.SHIP_ORDER,
-    refType: "CUSTOMER_ORDER",
-    refId: order.id,
-    completedById: context.userId,
-  });
+  await Promise.all(completedTasks.map((task) => notifyTaskCompleted(task, actor.userId)));
 
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
   revalidatePath("/workbench");
+}
+
+export async function markOrderShipped(
+  orderId: string,
+  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+) {
+  const order = await prisma.customerOrder.findUnique({
+    where: { id: orderId },
+    select: { storeId: true },
+  });
+  if (!order) throw new Error("订单不存在");
+  const context = await requireUserContext({ storeId: order.storeId });
+  await assertCanShipCustomerOrder({
+    orderId,
+    organizationId: context.organizationId,
+    storeId: order.storeId,
+    userId: context.userId,
+    role: context.role,
+  });
+  return performOrderShipment(orderId, options, {
+    userId: context.userId,
+    organizationId: context.organizationId,
+  });
+}
+
+export async function markOrderShippedAsLocationFulfiller(
+  taskId: string,
+  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+) {
+  const user = await requireAuthenticatedUser();
+  const task = await prisma.task.findFirst({
+    where: {
+      id: taskId,
+      type: TASK_TYPE.SHIP_ORDER,
+      refType: "CUSTOMER_ORDER",
+      assignedToId: user.id,
+      status: "IN_PROGRESS",
+      fulfillmentLocationId: { not: null },
+    },
+    select: {
+      refId: true,
+      organizationId: true,
+      fulfillmentLocationId: true,
+    },
+  });
+  if (!task?.fulfillmentLocationId) throw new Error("任务不存在或未指派给你");
+
+  const rosterAccess = await prisma.locationFulfiller.findFirst({
+    where: {
+      organizationId: task.organizationId,
+      locationId: task.fulfillmentLocationId,
+      userId: user.id,
+      status: "ACTIVE",
+    },
+    select: { id: true },
+  });
+  if (!rosterAccess) throw new Error("该仓库的发货权限已失效");
+
+  const locationIds = await getOrderFulfillmentLocationIds(task.refId);
+  if (locationIds.length !== 1 || locationIds[0] !== task.fulfillmentLocationId) {
+    throw new Error("订单库存不完全属于你负责的仓库，请联系订单负责人处理");
+  }
+
+  return performOrderShipment(task.refId, options, {
+    userId: user.id,
+    organizationId: task.organizationId,
+  });
 }
 
 export async function markOrderShippedAction(
@@ -1241,7 +1461,8 @@ export async function settleCustomerOrder(
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
   revalidatePath("/reports");
-  revalidatePath("/reports/team");
+  revalidatePath("/reports/workload");
+  revalidatePath("/reports/team-performance");
   revalidatePath("/workbench");
 }
 

@@ -283,6 +283,7 @@ describe("marketplace resale collaboration flow", () => {
     });
     expect(createdOrder.orderStatus).toBe("CONFIRMED");
     expect(createdOrder.resaleListingId).toBe(resaleListingId);
+    expect(createdOrder.shippingCountry).toBe("JP");
 
     await expect(
       prisma.supplyOffer.findUniqueOrThrow({ where: { id: offerId } })
@@ -305,6 +306,11 @@ describe("marketplace resale collaboration flow", () => {
       expect(shipResult.settlement).toMatchObject({ status: "CREATED" });
       settlementId = shipResult.settlement?.id ?? "";
     }
+
+    const createdSettlement = await prisma.settlement.findUniqueOrThrow({
+      where: { id: settlementId },
+    });
+    expect(createdSettlement.customerOrderId).toBe(customerOrderId);
 
     const shippedOrder = await prisma.customerOrder.findUniqueOrThrow({
       where: { id: customerOrderId },

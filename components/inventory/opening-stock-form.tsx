@@ -36,6 +36,8 @@ interface OpeningStockFormProps {
   skus: OpeningStockSkuOption[];
   locations: OpeningStockLocationOption[];
   presetSkuIds?: string[];
+  createdLocationId?: string;
+  returnTo?: string;
 }
 
 interface EditableLine {
@@ -71,9 +73,12 @@ export function OpeningStockForm({
   skus,
   locations,
   presetSkuIds = [],
+  createdLocationId,
+  returnTo = "/inventory/opening-stock/new",
 }: OpeningStockFormProps) {
   const router = useRouter();
-  const defaultLocationId = locations[0]?.id ?? "";
+  const defaultLocationId =
+    locations.find((location) => location.id === createdLocationId)?.id ?? locations[0]?.id ?? "";
   const validPresetIds = [
     ...new Set(presetSkuIds.filter((id) => skus.some((sku) => sku.id === id))),
   ];
@@ -147,7 +152,12 @@ export function OpeningStockForm({
         <p className="mt-1 text-amber-800">
           期初库存必须明确落在哪个位置，才能生成可追溯的库存流水。
         </p>
-        <Link href="/inventory/locations/new">
+        <Link
+          href={`/inventory/locations?${new URLSearchParams({
+            create: "1",
+            returnTo,
+          }).toString()}`}
+        >
           <Button className="mt-4" size="sm">
             新建仓库位置
           </Button>

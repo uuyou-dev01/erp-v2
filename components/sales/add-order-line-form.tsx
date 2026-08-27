@@ -16,9 +16,10 @@ interface AddOrderLineFormProps {
   orderId: string;
   currency: string;
   storeId: string;
+  onSuccess?: () => void;
 }
 
-export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFormProps) {
+export function AddOrderLineForm({ orderId, currency, storeId, onSuccess }: AddOrderLineFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [skus, setSKUs] = useState<
@@ -84,6 +85,7 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
       }
 
       setFormData({ skuId: "", quantity: "", unitPrice: "" });
+      onSuccess?.();
       router.refresh();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "添加商品行失败，请重试");
@@ -105,14 +107,19 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
           >
             <option value="">{t("inventory.select_sku")}</option>
             {skus
-              .filter((sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length))
+              .filter(
+                (sku) => sku.catalogRole !== "GROUP" && (sku.parentSkuId || !sku.childSkus?.length)
+              )
               .map((sku) => (
-              <option key={sku.id} value={sku.id}>{sku.code} - {sku.name}</option>
-            ))}
+                <option key={sku.id} value={sku.id}>
+                  {sku.code} - {sku.name}
+                </option>
+              ))}
           </Select>
           {errors.skuId && (
             <p className="flex items-center gap-1 text-xs text-destructive">
-              <AlertCircle className="h-3 w-3" />{errors.skuId}
+              <AlertCircle className="h-3 w-3" />
+              {errors.skuId}
             </p>
           )}
         </div>
@@ -129,13 +136,16 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
           />
           {errors.quantity && (
             <p className="flex items-center gap-1 text-xs text-destructive">
-              <AlertCircle className="h-3 w-3" />{errors.quantity}
+              <AlertCircle className="h-3 w-3" />
+              {errors.quantity}
             </p>
           )}
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="unitPrice">{t("common.price")} ({currency})</Label>
+          <Label htmlFor="unitPrice">
+            {t("common.price")} ({currency})
+          </Label>
           <Input
             id="unitPrice"
             type="text"
@@ -145,7 +155,8 @@ export function AddOrderLineForm({ orderId, currency, storeId }: AddOrderLineFor
           />
           {errors.unitPrice && (
             <p className="flex items-center gap-1 text-xs text-destructive">
-              <AlertCircle className="h-3 w-3" />{errors.unitPrice}
+              <AlertCircle className="h-3 w-3" />
+              {errors.unitPrice}
             </p>
           )}
           <p className="text-xs text-muted-foreground">选填 - 可稍后设置</p>

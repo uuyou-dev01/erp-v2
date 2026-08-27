@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import {
   getWorkbenchQueueCounts,
   getWorkbenchWorkItems,
@@ -14,12 +15,64 @@ import { NextActionWorkbench } from "@/components/workbench/next-action-workbenc
 import { PageHeader } from "@/components/ui/page-header";
 import { Badge } from "@/components/ui/badge";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { getSetupStatus } from "@/lib/application/setup-status";
+import { SetupResumeBanner } from "@/components/setup/setup-resume-banner";
+import { getWarehouseCollaborationTaskInbox } from "@/app/actions/collaboration-tasks";
+import { ShippingTaskList } from "@/components/collaboration/shipping-task-list";
+import { PackageCheck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function WorkbenchPage() {
+export default async function WorkbenchPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ scope?: string }>;
+}) {
   const context = await requireUserContext();
   const storeId = context.activeStoreId;
+  const pageParams = await searchParams;
+
+  if (pageParams.scope === "warehouse") {
+    const warehouseTasks = await getWarehouseCollaborationTaskInbox();
+    const pendingCount = warehouseTasks.filter(
+      (task) => task.isAssignedToMe && ["ASSIGNED", "IN_PROGRESS", "OVERDUE"].includes(task.status)
+    ).length;
+    return (
+      <div>
+        <PageHeader
+          title="仓库协作任务"
+          description="统一处理待领取、处理中、我发起和已完成的仓库交接任务。"
+          badge={
+            pendingCount > 0 ? (
+              <Badge variant="secondary" className="font-normal">
+                {pendingCount} 项待处理
+              </Badge>
+            ) : (
+              <PackageCheck className="h-5 w-5 text-muted-foreground" />
+            )
+          }
+          actions={
+            <>
+              <Link
+                href="/settings/warehouse-collaboration"
+                className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-muted"
+              >
+                仓库协作设置
+              </Link>
+              <Link
+                href="/workbench"
+                className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-muted"
+              >
+                返回日常工作台
+              </Link>
+            </>
+          }
+        />
+        <ShippingTaskList tasks={warehouseTasks} mode="workbench" />
+      </div>
+    );
+  }
+
   const [
     counts,
     items,
@@ -30,6 +83,7 @@ export default async function WorkbenchPage() {
     platforms,
     consolidationBatches,
     assignableMembers,
+    setupStatus,
   ] = await Promise.all([
     getWorkbenchQueueCounts(storeId),
     getWorkbenchWorkItems(storeId, undefined, 120),
@@ -40,6 +94,9 @@ export default async function WorkbenchPage() {
     getPlatforms(storeId),
     getConsolidationBatches(storeId),
     getWorkbenchAssignableMembers(storeId),
+    context.role === "OWNER"
+      ? getSetupStatus({ storeId, role: context.role })
+      : Promise.resolve(null),
   ]);
 
   const recentEntries = entries.map((entry) => ({
@@ -52,12 +109,16 @@ export default async function WorkbenchPage() {
     functionStatus: entry.functionStatus,
     purchasePrice: entry.purchasePrice,
     purchaseCurrency: entry.purchaseCurrency,
+    purchaseDate: entry.purchaseDate
+      ? new Date(entry.purchaseDate).toISOString().slice(0, 10)
+      : null,
     purchaseTrackingNo: entry.purchaseTrackingNo,
     transitTrackingNo: entry.transitTrackingNo,
     currentLocationText: entry.currentLocationText,
     listingPlatformsText: entry.listingPlatformsText,
     salePlatformText: entry.salePlatformText,
     salePrice: entry.salePrice,
+    saleDate: entry.saleDate ? new Date(entry.saleDate).toISOString().slice(0, 10) : null,
     batchNote: entry.batchNote,
     workflowStage: entry.workflowStage,
     inspectionResult: entry.inspectionResult,
@@ -181,6 +242,7 @@ export default async function WorkbenchPage() {
           ) : undefined
         }
       />
+      {setupStatus ? <SetupResumeBanner status={setupStatus} /> : null}
       <Suspense fallback={<div className="text-sm text-muted-foreground">加载工作台...</div>}>
         <NextActionWorkbench
           storeId={storeId}
@@ -195,6 +257,9 @@ export default async function WorkbenchPage() {
             name: member.name || member.email,
             email: member.email,
             role: member.role,
+            relationship: member.relationship,
+            locationIds: member.locationIds,
+            defaultLocationIds: member.defaultLocationIds,
           }))}
           locations={locationOptions}
           consolidationBatches={consolidationOptions}

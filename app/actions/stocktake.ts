@@ -918,6 +918,8 @@ export interface DispatchSkuLocationStockTransferInput extends TransferSkuLocati
   etaDate?: string;
   transportMode?: "HAND_CARRY" | "CONSOLIDATOR" | "POSTAL" | "COURIER" | "FREIGHT" | "OTHER";
   carriedBy?: string;
+  shippingCost?: string;
+  shippingCurrency?: string;
 }
 
 export async function dispatchSkuLocationStockTransfer(
@@ -1015,6 +1017,8 @@ export async function dispatchSkuLocationStockTransfer(
     carrier: input.carrier,
     transportMode: input.transportMode,
     carriedBy: input.carriedBy,
+    shippingCost: input.shippingCost,
+    shippingCurrency: input.shippingCurrency,
     etaDate: etaDate && !Number.isNaN(etaDate.getTime()) ? etaDate : undefined,
     note: input.notes,
   });

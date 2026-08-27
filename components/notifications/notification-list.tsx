@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Bell, Check } from "lucide-react";
+import { AlertTriangle, Bell, Check, CheckCircle2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { markMyNotificationReadAction } from "@/app/actions/notifications";
@@ -14,12 +14,35 @@ interface NotificationRow {
   body: string | null;
   type: string;
   readAt: string | null;
+  resolvedAt: string | null;
+  resolutionCode: string | null;
   createdAt: string;
   refType: string | null;
   refId: string | null;
+  actionUrl: string | null;
+  organizationName: string;
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  TASK_ASSIGNED: "任务指派",
+  TASK_DONE: "任务完成",
+  LOCATION_ACCESS_ADDED: "仓库授权",
+  ORGANIZATION_CONNECTION_REQUEST: "企业连接",
+};
+
+const RESOLUTION_LABELS: Record<string, string> = {
+  INFORMATIONAL: "结果通知",
+  TASK_STARTED: "已领取并开始处理",
+  TASK_COMPLETED: "已完成",
+  TASK_CANCELLED: "已取消",
+  TASK_REASSIGNED: "已改派",
+  CONNECTION_ACCEPTED: "已接受",
+  CONNECTION_REJECTED: "已拒绝",
+  CONNECTION_ENDED: "连接已结束",
+};
+
 function notificationHref(notification: NotificationRow) {
+  if (notification.actionUrl) return notification.actionUrl;
   if (notification.refType === "CUSTOMER_ORDER" && notification.refId) {
     return `/sales/${notification.refId}`;
   }
@@ -67,25 +90,56 @@ export function NotificationList({ notifications }: { notifications: Notificatio
       {notifications.map((notification) => (
         <div
           key={notification.id}
-          className="flex items-start gap-3 border-b px-4 py-3 last:border-b-0"
+          className={`flex items-start gap-3 border-b px-4 py-3 last:border-b-0 ${
+            notification.resolvedAt ? "bg-muted/20" : ""
+          }`}
         >
           <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background">
-            <Bell className="h-4 w-4 text-muted-foreground" />
+            {notification.resolvedAt ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            ) : (
+              <Bell className="h-4 w-4 text-muted-foreground" />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Link href={notificationHref(notification)} className="font-medium hover:underline">
-                {notification.title}
-              </Link>
-              {!notification.readAt && (
-                <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">未读</Badge>
+              {notification.resolvedAt ? (
+                <p className="font-medium">{notification.title}</p>
+              ) : (
+                <Link href={notificationHref(notification)} className="font-medium hover:underline">
+                  {notification.title}
+                </Link>
               )}
-              <span className="text-xs text-muted-foreground">{dateLabel(notification.createdAt)}</span>
+              {!notification.readAt && (
+                <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                  未读
+                </Badge>
+              )}
+              <Badge variant={notification.resolvedAt ? "outline" : "secondary"}>
+                {notification.resolvedAt
+                  ? (RESOLUTION_LABELS[notification.resolutionCode ?? ""] ?? "已处理")
+                  : "待处理"}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {dateLabel(notification.createdAt)}
+              </span>
             </div>
             {notification.body ? (
               <p className="mt-1 text-sm text-muted-foreground">{notification.body}</p>
             ) : null}
-            <p className="mt-1 text-xs text-muted-foreground">{notification.type}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {notification.organizationName} ·{" "}
+              {TYPE_LABELS[notification.type] ?? notification.type}
+            </p>
+            {notification.resolvedAt && notification.actionUrl ? (
+              <Link
+                href={notificationHref(notification)}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                查看相关记录
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            ) : null}
           </div>
           {!notification.readAt && (
             <Button
@@ -94,6 +148,7 @@ export function NotificationList({ notifications }: { notifications: Notificatio
               size="icon"
               className="h-8 w-8"
               disabled={pending}
+              aria-label={`将“${notification.title}”标记为已读`}
               onClick={() => {
                 setNotificationError(null);
                 startTransition(async () => {

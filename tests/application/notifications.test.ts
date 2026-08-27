@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { shouldSkipNotification } from "@/lib/application/notifications";
+import {
+  NOTIFICATION_RESOLUTION,
+  shouldSkipNotification,
+  taskNotificationResolution,
+} from "@/lib/application/notifications";
 
 describe("notification rules", () => {
   it("skips self notifications for completed tasks", () => {
@@ -30,5 +34,38 @@ describe("notification rules", () => {
         type: "TASK_DONE",
       })
     ).toBe(false);
+  });
+
+  it("keeps read state independent while deriving terminal task outcomes", () => {
+    expect(
+      taskNotificationResolution({
+        notificationType: "TASK_ASSIGNED",
+        recipientId: "assignee",
+        assignedToId: "assignee",
+        status: "ASSIGNED",
+      })
+    ).toBeNull();
+    expect(
+      taskNotificationResolution({
+        notificationType: "TASK_ASSIGNED",
+        recipientId: "assignee",
+        assignedToId: "assignee",
+        status: "IN_PROGRESS",
+      })
+    ).toEqual({
+      resolutionCode: NOTIFICATION_RESOLUTION.TASK_STARTED,
+      resolvedById: "assignee",
+    });
+    expect(
+      taskNotificationResolution({
+        notificationType: "TASK_ASSIGNED",
+        recipientId: "assignee",
+        assignedToId: "someone-else",
+        status: "ASSIGNED",
+      })
+    ).toEqual({
+      resolutionCode: NOTIFICATION_RESOLUTION.TASK_REASSIGNED,
+      resolvedById: null,
+    });
   });
 });

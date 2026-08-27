@@ -12,16 +12,20 @@ export default async function NotificationsPage() {
     body: notification.body,
     type: notification.type,
     readAt: notification.readAt?.toISOString() ?? null,
+    resolvedAt: notification.resolvedAt?.toISOString() ?? null,
+    resolutionCode: notification.resolutionCode,
     createdAt: notification.createdAt.toISOString(),
     refType: notification.refType,
     refId: notification.refId,
+    actionUrl: notification.actionUrl,
+    organizationName: notification.organizationName,
   }));
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="通知"
-        description="查看任务指派、转派、完成和异常提醒。"
+        description="查看当前账号在各企业中的任务指派、仓库协作和异常提醒。"
       />
       <NotificationList notifications={rows} />
     </div>

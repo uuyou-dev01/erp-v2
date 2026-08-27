@@ -11,7 +11,12 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
-import { deletePlatformAction, updatePlatformAction } from "@/app/actions/platforms";
+import {
+  createPlatformAction,
+  deletePlatformAction,
+  getPlatforms,
+  updatePlatformAction,
+} from "@/app/actions/platforms";
 
 const runId = `platforms_action_${Date.now()}`;
 const email = `${runId}@example.com`;
@@ -23,10 +28,16 @@ describe("platform action results", () => {
     process.env.ERP_DEV_USER_EMAIL = email;
     const organization = await prisma.organization.create({ data: { code: runId, name: runId } });
     organizationId = organization.id;
-    const store = await prisma.store.create({ data: { organizationId, code: runId, name: runId, currency: "CNY" } });
+    const store = await prisma.store.create({
+      data: { organizationId, code: runId, name: runId, currency: "CNY" },
+    });
     storeId = store.id;
-    const user = await prisma.user.create({ data: { email, password: "test", role: "OWNER", storeId } });
-    await prisma.membership.create({ data: { organizationId, userId: user.id, role: "OWNER", status: "ACTIVE" } });
+    const user = await prisma.user.create({
+      data: { email, password: "test", role: "OWNER", storeId },
+    });
+    await prisma.membership.create({
+      data: { organizationId, userId: user.id, role: "OWNER", status: "ACTIVE" },
+    });
     await prisma.storeAccess.create({ data: { storeId, userId: user.id, role: "OWNER" } });
   });
   afterAll(async () => {
@@ -46,11 +57,22 @@ describe("platform action results", () => {
     }
   });
 
+  it("keeps custom platforms visible after creation", async () => {
+    const code = `CUSTOM_${Date.now()}`;
+    const created = await createPlatformAction({
+      storeId,
+      code,
+      name: "Custom Platform",
+      country: "GLOBAL",
+    });
+
+    expect(created.success).toBe(true);
+    const platforms = await getPlatforms(storeId);
+    expect(platforms.some((platform) => platform.code === code)).toBe(true);
+  });
+
   it("returns a structured failure when deleting with an inaccessible store", async () => {
-    const result = await deletePlatformAction(
-      `missing_platform_${runId}`,
-      `store_${runId}`
-    );
+    const result = await deletePlatformAction(`missing_platform_${runId}`, `store_${runId}`);
 
     expect(result.success).toBe(false);
     if (!result.success) {

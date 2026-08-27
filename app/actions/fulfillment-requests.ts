@@ -10,9 +10,13 @@ import { prisma } from "@/lib/prisma";
 import { ensureSystemChargeCategories } from "@/lib/application/multi-party-foundation";
 import { createSettlementFromFulfillment } from "@/app/actions/settlements";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
-import { getEffectiveSellableQuantity, resolveFifoShipFromLocation } from "@/lib/application/inventory";
+import {
+  getEffectiveSellableQuantity,
+  resolveFifoShipFromLocation,
+} from "@/lib/application/inventory";
 import type { SellableMarketCode } from "@/lib/application/sellable-market";
 import { hasLocationCapability } from "@/lib/auth/scope-access";
+import { canShipOrders } from "@/lib/auth/permissions";
 
 type StringableDecimal = { toString(): string };
 
@@ -72,14 +76,19 @@ type RawFulfillmentRequest = Omit<
   shippingFee: StringableDecimal | null;
 };
 
-function parseDecimal(value: string | undefined, label: string, options: { required?: boolean; min?: Decimal.Value } = {}) {
+function parseDecimal(
+  value: string | undefined,
+  label: string,
+  options: { required?: boolean; min?: Decimal.Value } = {}
+) {
   if (!value || value.trim() === "") {
     if (options.required) throw new Error(`${label}不能为空`);
     return null;
   }
   const decimal = new Decimal(value);
   if (!decimal.isFinite()) throw new Error(`${label}必须是有效数字`);
-  if (options.min !== undefined && decimal.lte(options.min)) throw new Error(`${label}必须大于 ${options.min}`);
+  if (options.min !== undefined && decimal.lte(options.min))
+    throw new Error(`${label}必须大于 ${options.min}`);
   return decimal;
 }
 
@@ -109,14 +118,14 @@ const fulfillmentInclude = {
 
 function serializeFulfillmentRequest(
   request: RawFulfillmentRequest,
-  canViewRecipient = true,
+  canViewRecipient = true
 ): SerializedFulfillmentRequest {
   return {
     ...request,
     isCollaboration: Boolean(
       request.requesterOrganizationId &&
-        request.providerOrganizationId &&
-        request.requesterOrganizationId !== request.providerOrganizationId,
+      request.providerOrganizationId &&
+      request.requesterOrganizationId !== request.providerOrganizationId
     ),
     recipientName: canViewRecipient ? request.recipientName : "已隐藏",
     recipientPhone: canViewRecipient ? request.recipientPhone : null,
@@ -151,15 +160,12 @@ async function allocateFulfillmentInventory(
     supplyOfferId: string;
     reservationId: string | null;
     quantity: { toString(): string };
-  },
+  }
 ) {
   const allocations = await tx.fulfillmentInventoryAllocation.findMany({
     where: { fulfillmentRequestId: request.id, status: "ALLOCATED" },
   });
-  let allocated = allocations.reduce(
-    (sum, item) => sum.plus(item.quantity),
-    new Decimal(0),
-  );
+  let allocated = allocations.reduce((sum, item) => sum.plus(item.quantity), new Decimal(0));
   const required = new Decimal(request.quantity.toString());
 
   if (allocated.lt(required)) {
@@ -183,7 +189,7 @@ async function allocateFulfillmentInventory(
     const hasInventorySource = Boolean(
       offer.sourceSkuId ||
       offer.sourceItemUnitId ||
-      selectedItems.some((item) => item.skuId || item.itemUnitId),
+      selectedItems.some((item) => item.skuId || item.itemUnitId)
     );
     // Manual/external supply has no physical inventory in this ERP. It is
     // reservable at offer level, while real SKU/ItemUnit supply must allocate
@@ -194,12 +200,13 @@ async function allocateFulfillmentInventory(
       ...selectedItems.map((item) => item.itemUnitId),
     ].filter((id): id is string => Boolean(id));
     const requiresExactItemUnit = itemUnitIds.length > 0;
-    const explicitItemUnits = itemUnitIds.length > 0
-      ? await tx.itemUnit.findMany({
-          where: { id: { in: [...new Set(itemUnitIds)] } },
-          select: { skuId: true },
-        })
-      : [];
+    const explicitItemUnits =
+      itemUnitIds.length > 0
+        ? await tx.itemUnit.findMany({
+            where: { id: { in: [...new Set(itemUnitIds)] } },
+            select: { skuId: true },
+          })
+        : [];
     const skuIds = [
       offer.sourceSkuId,
       ...selectedItems.map((item) => item.skuId),
@@ -211,13 +218,7 @@ async function allocateFulfillmentInventory(
     }
     const effectiveQuantities = await Promise.all(
       uniqueSkuIds.map((skuId) =>
-        getEffectiveSellableQuantity(
-          tx,
-          offer.storeId,
-          skuId,
-          undefined,
-          request.inventoryPoolId
-        )
+        getEffectiveSellableQuantity(tx, offer.storeId, skuId, undefined, request.inventoryPoolId)
       )
     );
     const effectiveTotal = effectiveQuantities.reduce(
@@ -288,9 +289,9 @@ async function allocateFulfillmentInventory(
             _sum: { quantity: true },
           }),
         ]);
-        const available = new Decimal(ledger._sum.deltaQty?.toString() ?? 0).minus(
-          alreadyAllocated._sum.quantity?.toString() ?? 0,
-        ).minus(orderAllocated._sum.quantity?.toString() ?? 0);
+        const available = new Decimal(ledger._sum.deltaQty?.toString() ?? 0)
+          .minus(alreadyAllocated._sum.quantity?.toString() ?? 0)
+          .minus(orderAllocated._sum.quantity?.toString() ?? 0);
         if (available.lte(0)) continue;
         const quantity = Decimal.min(available, required.minus(allocated));
         const created = await tx.fulfillmentInventoryAllocation.create({
@@ -311,7 +312,7 @@ async function shipFulfillmentInventory(
     id: string;
     supplyOfferId: string;
     quantity: { toString(): string };
-  },
+  }
 ) {
   const allocations = await tx.fulfillmentInventoryAllocation.findMany({
     where: { fulfillmentRequestId: request.id, status: "ALLOCATED" },
@@ -323,7 +324,9 @@ async function shipFulfillmentInventory(
   });
   if (!offer) throw new Error("供货报价不存在");
   const hasInventorySource = Boolean(
-    offer.sourceSkuId || offer.sourceItemUnitId || offer.items.some((item) => item.skuId || item.itemUnitId),
+    offer.sourceSkuId ||
+    offer.sourceItemUnitId ||
+    offer.items.some((item) => item.skuId || item.itemUnitId)
   );
   if (!hasInventorySource) return;
   const allocated = allocations.reduce((sum, item) => sum.plus(item.quantity), new Decimal(0));
@@ -380,7 +383,7 @@ async function allocateAndShipInventory(
     supplyOfferId: string;
     reservationId: string | null;
     quantity: { toString(): string };
-  },
+  }
 ) {
   await allocateFulfillmentInventory(tx, request);
   await shipFulfillmentInventory(tx, request);
@@ -400,10 +403,7 @@ async function resolveOfferFulfillmentLocation(input: {
   }
   const locationWhere: Prisma.LocationWhereInput = {
     AND: {
-      OR: [
-        { operatorOrganizationId: input.providerOrganizationId },
-        { storeId: input.storeId },
-      ],
+      OR: [{ operatorOrganizationId: input.providerOrganizationId }, { storeId: input.storeId }],
     },
     isSellableDefault: true,
     capabilities: { some: { code: "DIRECT_FULFILLMENT", enabled: true } },
@@ -501,7 +501,7 @@ async function lockAndAssertOfferAvailability(
     offerItemId?: string | null;
     quantity: Decimal;
     channelId?: string | null;
-  },
+  }
 ) {
   await tx.$queryRaw`SELECT "id" FROM "supply_offers" WHERE "id" = ${input.offerId} FOR UPDATE`;
   const offer = await tx.supplyOffer.findUnique({ where: { id: input.offerId } });
@@ -521,7 +521,8 @@ async function lockAndAssertOfferAvailability(
       where: { id: input.channelId, offerId: input.offerId, status: "ACTIVE" },
     });
     if (!channel) throw new Error("销售账号未被当前货盘授权");
-    if (channel.expiresAt && channel.expiresAt <= new Date()) throw new Error("销售账号的货盘授权已过期");
+    if (channel.expiresAt && channel.expiresAt <= new Date())
+      throw new Error("销售账号的货盘授权已过期");
   }
   let physicalRemaining: Decimal | null = null;
   if (item.itemUnitId) {
@@ -541,29 +542,29 @@ async function lockAndAssertOfferAvailability(
       offer.storeId,
       item.skuId,
       undefined,
-      offer.inventoryPoolId,
+      offer.inventoryPoolId
     );
     if (channel?.inventoryMode === "GUARANTEED") {
       physicalRemaining = physicalRemaining.plus(
-        Decimal.max(channel.quotaQty.minus(channel.quotaReservedQty), 0),
+        Decimal.max(channel.quotaQty.minus(channel.quotaReservedQty), 0)
       );
     }
     physicalRemaining = Decimal.max(physicalRemaining.minus(offer.safetyStockQty), 0);
   }
   const itemRemaining = Decimal.min(
     item.quantityAvailable.minus(item.quantityReserved),
-    physicalRemaining ?? item.quantityAvailable.minus(item.quantityReserved),
+    physicalRemaining ?? item.quantityAvailable.minus(item.quantityReserved)
   );
   if (input.quantity.gt(itemRemaining)) {
     throw new Error(
       item.itemUnitId
         ? "指定的单件库存当前不可用，不能替换为同 SKU 的其他库存"
-        : "该货盘商品的实时可售数量不足",
+        : "该货盘商品的实时可售数量不足"
     );
   }
   const baseRemaining = Decimal.min(
     offer.availableQty.minus(offer.reservedQty),
-    physicalRemaining ?? offer.availableQty.minus(offer.reservedQty),
+    physicalRemaining ?? offer.availableQty.minus(offer.reservedQty)
   );
   if (channel?.inventoryMode === "GUARANTEED") {
     const channelRemaining = channel.quotaQty.minus(channel.quotaReservedQty);
@@ -583,9 +584,10 @@ async function lockAndAssertOfferAvailability(
   });
   const protectedQty = guaranteed.reduce(
     (sum, channel) => sum.plus(Decimal.max(channel.quotaQty.minus(channel.quotaReservedQty), 0)),
-    new Decimal(0),
+    new Decimal(0)
   );
-  if (input.quantity.gt(baseRemaining.minus(protectedQty))) throw new Error("共享货盘可接单库存不足");
+  if (input.quantity.gt(baseRemaining.minus(protectedQty)))
+    throw new Error("共享货盘可接单库存不足");
   return { channel, item };
 }
 
@@ -608,8 +610,8 @@ export async function getFulfillmentRequests(storeId?: string) {
       request,
       request.requesterOrganizationId === context.organizationId ||
         request.storeId === context.activeStoreId ||
-        request.assignedToId === context.userId,
-    ),
+        request.assignedToId === context.userId
+    )
   );
 }
 
@@ -632,7 +634,7 @@ export async function getFulfillmentRequestById(id: string, storeId?: string) {
         request,
         request.requesterOrganizationId === context.organizationId ||
           request.storeId === context.activeStoreId ||
-          request.assignedToId === context.userId,
+          request.assignedToId === context.userId
       )
     : null;
 }
@@ -669,10 +671,18 @@ export async function createFulfillmentRequestAction(data: {
     if (resaleListing.status !== "ACTIVE") throw new Error("只有代卖中的记录可以创建履约请求");
 
     const quantity = parseDecimal(data.quantity, "履约数量", { required: true, min: 0 })!;
-    const remainingOfferQty = resaleListing.supplyOffer.availableQty.minus(resaleListing.supplyOffer.reservedQty);
+    const remainingOfferQty = resaleListing.supplyOffer.availableQty.minus(
+      resaleListing.supplyOffer.reservedQty
+    );
     if (quantity.gt(remainingOfferQty)) throw new Error("货盘可供数量不足，不能创建履约请求");
     if (!resaleListing.supplyOfferItem) throw new Error("代卖记录没有关联明确的货盘商品");
-    if (quantity.gt(resaleListing.supplyOfferItem.quantityAvailable.minus(resaleListing.supplyOfferItem.quantityReserved))) {
+    if (
+      quantity.gt(
+        resaleListing.supplyOfferItem.quantityAvailable.minus(
+          resaleListing.supplyOfferItem.quantityReserved
+        )
+      )
+    ) {
       throw new Error("该货盘商品可供数量不足，不能创建履约请求");
     }
     const remainingListingQty = resaleListing.quantityPlanned.minus(resaleListing.quantitySold);
@@ -810,16 +820,27 @@ export async function createResaleOrderFulfillmentAction(data: {
         select: { id: true, customerOrderId: true },
       });
       if (existing?.customerOrderId) {
-        return actionSuccess({ orderId: existing.customerOrderId, fulfillmentRequestId: existing.id });
+        return actionSuccess({
+          orderId: existing.customerOrderId,
+          fulfillmentRequestId: existing.id,
+        });
       }
     }
     if (resaleListing.status !== "ACTIVE") throw new Error("只有代卖中的记录可以登记售出");
 
     const quantity = parseDecimal(data.quantity, "售出数量", { required: true, min: 0 })!;
-    const remainingOfferQty = resaleListing.supplyOffer.availableQty.minus(resaleListing.supplyOffer.reservedQty);
+    const remainingOfferQty = resaleListing.supplyOffer.availableQty.minus(
+      resaleListing.supplyOffer.reservedQty
+    );
     if (quantity.gt(remainingOfferQty)) throw new Error("货盘可供数量不足，不能登记售出");
     if (!resaleListing.supplyOfferItem) throw new Error("代卖记录没有关联明确的货盘商品");
-    if (quantity.gt(resaleListing.supplyOfferItem.quantityAvailable.minus(resaleListing.supplyOfferItem.quantityReserved))) {
+    if (
+      quantity.gt(
+        resaleListing.supplyOfferItem.quantityAvailable.minus(
+          resaleListing.supplyOfferItem.quantityReserved
+        )
+      )
+    ) {
       throw new Error("该货盘商品可供数量不足，不能登记售出");
     }
     const remainingListingQty = resaleListing.quantityPlanned.minus(resaleListing.quantitySold);
@@ -868,12 +889,14 @@ export async function createResaleOrderFulfillmentAction(data: {
           storeId: context.activeStoreId,
           resaleListingId: resaleListing.id,
           platformId: resaleListing.platformId,
+          salesChannelAccountId: resaleListing.salesChannelAccountId,
           orderNumber,
           externalOrderNo: data.externalOrderNo || null,
           customerName,
           customerEmail: data.customerEmail || null,
           customerPhone: data.customerPhone || null,
           shippingAddress,
+          shippingCountry: data.shippingCountry || null,
           orderDate,
           currency: resaleListing.currency,
           subtotal: saleAmount,
@@ -883,7 +906,6 @@ export async function createResaleOrderFulfillmentAction(data: {
           netRevenue,
           orderStatus: "CONFIRMED",
           confirmedAt: orderDate,
-          countryFlow: data.shippingCountry || null,
         },
       });
 
@@ -971,7 +993,7 @@ export async function updateFulfillmentRequestStatusAction(
     shippingCurrency?: string;
     note?: string;
     shippingProofUrl?: string;
-  } = {},
+  } = {}
 ) {
   try {
     const existing = await prisma.fulfillmentRequest.findUnique({
@@ -989,11 +1011,15 @@ export async function updateFulfillmentRequestStatusAction(
       existing.requesterOrganizationId === context.organizationId ||
       context.storeIds.includes(existing.storeId);
     const isProvider = existing.providerOrganizationId
-      ? existing.providerOrganizationId === context.organizationId || existing.assignedToId === context.userId
+      ? existing.providerOrganizationId === context.organizationId ||
+        existing.assignedToId === context.userId
       : context.storeIds.includes(existing.storeId) || existing.assignedToId === context.userId;
     if (!isRequester && !isProvider) throw new Error("无权操作该履约请求");
     if (["ACCEPTED", "REJECTED", "SHIPPED", "DELIVERED"].includes(nextStatus) && !isProvider) {
       throw new Error("只有服务方可以接受、拒绝或完成履约");
+    }
+    if (["ACCEPTED", "SHIPPED", "DELIVERED"].includes(nextStatus) && !canShipOrders(context.role)) {
+      throw new Error("当前角色没有履约发货权限");
     }
     if (
       ["SHIPPED", "DELIVERED"].includes(nextStatus) &&
@@ -1009,7 +1035,8 @@ export async function updateFulfillmentRequestStatusAction(
     ) {
       throw new Error("当前账号没有该仓库的发货权限");
     }
-    if (nextStatus === "CANCELLED" && !isRequester && !isProvider) throw new Error("无权取消履约请求");
+    if (nextStatus === "CANCELLED" && !isRequester && !isProvider)
+      throw new Error("无权取消履约请求");
     if (["DELIVERED", "CANCELLED", "REJECTED"].includes(existing.status)) {
       throw new Error("当前状态不能继续流转");
     }
@@ -1017,7 +1044,10 @@ export async function updateFulfillmentRequestStatusAction(
       existing.status === "REQUESTED" &&
       nextStatus === "SHIPPED" &&
       existing.requesterOrganizationId === existing.providerOrganizationId;
-    if (!(FULFILLMENT_TRANSITIONS[existing.status] ?? []).includes(nextStatus) && !isInternalLegacyDirectShip) {
+    if (
+      !(FULFILLMENT_TRANSITIONS[existing.status] ?? []).includes(nextStatus) &&
+      !isInternalLegacyDirectShip
+    ) {
       throw new Error(`履约状态不能从 ${existing.status} 变更为 ${nextStatus}`);
     }
     if (nextStatus === "SHIPPED" && !data.trackingNo?.trim()) {
@@ -1025,16 +1055,19 @@ export async function updateFulfillmentRequestStatusAction(
     }
 
     const shippingFee = parseDecimal(data.shippingFee, "代垫运费", { min: 0 });
-    const configuredServiceFee = existing.resaleListing?.dropshipFee ?? existing.supplyOffer.dropshipFee;
-    const serviceFee = data.serviceFee !== undefined
-      ? parseDecimal(data.serviceFee, "代发服务费", { min: 0 })
-      : configuredServiceFee
-        ? new Decimal(configuredServiceFee.toString()).mul(existing.quantity)
-        : null;
+    const configuredServiceFee =
+      existing.resaleListing?.dropshipFee ?? existing.supplyOffer.dropshipFee;
+    const serviceFee =
+      data.serviceFee !== undefined
+        ? parseDecimal(data.serviceFee, "代发服务费", { min: 0 })
+        : configuredServiceFee
+          ? new Decimal(configuredServiceFee.toString()).mul(existing.quantity)
+          : null;
     const shippingProofUrl = data.shippingProofUrl?.trim() || null;
     if (shippingProofUrl) {
       const parsed = new URL(shippingProofUrl);
-      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("发货凭证必须是 HTTP(S) 地址");
+      if (!["http:", "https:"].includes(parsed.protocol))
+        throw new Error("发货凭证必须是 HTTP(S) 地址");
     }
     if (nextStatus === "SHIPPED" && (shippingFee?.gt(0) || serviceFee?.gt(0))) {
       await ensureSystemChargeCategories();
@@ -1045,7 +1078,10 @@ export async function updateFulfillmentRequestStatusAction(
         data: { updatedAt: new Date() },
       });
       if (claimed.count !== 1) throw new Error("履约状态已被其他操作更新，请刷新后重试");
-      if ((nextStatus === "REJECTED" || nextStatus === "CANCELLED") && existing.reservation?.status === "ACTIVE") {
+      if (
+        (nextStatus === "REJECTED" || nextStatus === "CANCELLED") &&
+        existing.reservation?.status === "ACTIVE"
+      ) {
         await tx.supplyReservation.update({
           where: { id: existing.reservation.id },
           data: { status: "RELEASED", releasedAt: new Date() },
@@ -1236,7 +1272,9 @@ export async function updateFulfillmentRequestStatusAction(
           tx.organization.findUniqueOrThrow({ where: { id: existing.providerOrganizationId } }),
           tx.user.findUniqueOrThrow({ where: { id: beneficiaryUserId } }),
         ]);
-        const beneficiaryStore = await tx.store.findUnique({ where: { id: beneficiary.storeId } });
+        const beneficiaryStore = beneficiary.storeId
+          ? await tx.store.findUnique({ where: { id: beneficiary.storeId } })
+          : null;
         const providerStore =
           beneficiaryStore?.organizationId === existing.providerOrganizationId
             ? beneficiaryStore
@@ -1245,7 +1283,11 @@ export async function updateFulfillmentRequestStatusAction(
                 orderBy: { createdAt: "asc" },
               });
         if (!providerStore) throw new Error("服务方经营主体还没有可用于记录收益的店铺");
-        const currency = (data.shippingCurrency || existing.shippingCurrency || providerStore.currency).toUpperCase();
+        const currency = (
+          data.shippingCurrency ||
+          existing.shippingCurrency ||
+          providerStore.currency
+        ).toUpperCase();
         let chargeEvent = await tx.chargeEvent.findFirst({
           where: {
             organizationId: existing.providerOrganizationId,
@@ -1397,8 +1439,7 @@ export async function updateFulfillmentRequestStatusAction(
         where: { id },
         data: {
           status: nextStatus,
-          assignedToId:
-            nextStatus === "ACCEPTED" ? context.userId : existing.assignedToId,
+          assignedToId: nextStatus === "ACCEPTED" ? context.userId : existing.assignedToId,
           acceptedAt: nextStatus === "ACCEPTED" ? new Date() : existing.acceptedAt,
           shippedAt: nextStatus === "SHIPPED" ? new Date() : existing.shippedAt,
           deliveredAt: nextStatus === "DELIVERED" ? new Date() : existing.deliveredAt,
@@ -1407,7 +1448,7 @@ export async function updateFulfillmentRequestStatusAction(
           trackingNo: data.trackingNo || existing.trackingNo,
           shippingProof: shippingProofUrl
             ? { url: shippingProofUrl, submittedById: context.userId }
-            : existing.shippingProof ?? undefined,
+            : (existing.shippingProof ?? undefined),
           shippingFee: shippingFee ?? existing.shippingFee,
           shippingCurrency: data.shippingCurrency || existing.shippingCurrency,
           note: data.note || existing.note,
@@ -1464,7 +1505,11 @@ export async function updateFulfillmentRequestStatusAction(
       }
     }
 
-    revalidateFulfillmentSurfaces(request.id, request.resaleListingId ?? undefined, request.supplyOfferId);
+    revalidateFulfillmentSurfaces(
+      request.id,
+      request.resaleListingId ?? undefined,
+      request.supplyOfferId
+    );
     revalidatePath("/finance/wallet");
     revalidatePath("/finance/settlements");
     return actionSuccess({ id: request.id, status: request.status, settlement });

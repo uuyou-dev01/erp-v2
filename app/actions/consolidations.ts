@@ -8,6 +8,11 @@ import { actionSuccess, toActionFailure } from "@/lib/application/action-result"
 import { requireUserContext } from "@/lib/auth/user-context";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 import { prisma } from "@/lib/prisma";
+import {
+  LOGISTICS_COST_SOURCE_TYPES,
+  normalizeLogisticsCostInput,
+  saveLogisticsShippingCost,
+} from "@/lib/application/logistics-cost";
 
 type ConsolidationStatus = "OPEN" | "SEALED" | "SHIPPED" | "RECEIVED";
 
@@ -479,10 +484,22 @@ export async function getConsolidationBatchById(id: string) {
     include: {
       fromLocation: true,
       toLocation: true,
+      store: { select: { currency: true } },
       lines: true,
     },
   });
   if (!batch) return null;
+  const shippingCost = await prisma.logisticsCost.findUnique({
+    where: {
+      storeId_sourceType_sourceId_feeType: {
+        storeId: batch.storeId,
+        sourceType: LOGISTICS_COST_SOURCE_TYPES.consolidation,
+        sourceId: batch.id,
+        feeType: "SHIPPING",
+      },
+    },
+    select: { amount: true, currency: true },
+  });
 
   const purchaseLineIds = batch.lines
     .filter((line) => line.sourceType === "PURCHASE_LINE")
@@ -583,6 +600,9 @@ export async function getConsolidationBatchById(id: string) {
 
   return {
     ...batch,
+    storeCurrency: batch.store.currency,
+    shippingCost: shippingCost?.amount.toString() ?? null,
+    shippingCurrency: shippingCost?.currency ?? batch.store.currency,
     lines: batch.lines.map((line) => {
       const purchaseLine = purchaseLineById.get(line.sourceId);
       const lot = lotById.get(line.sourceId);
@@ -768,16 +788,25 @@ export async function createConsolidationForPurchaseOrders(data: {
 export async function updateConsolidationStatus(
   id: string,
   status: ConsolidationStatus,
-  data?: { outboundTrackingNo?: string; carrier?: string }
+  data?: {
+    outboundTrackingNo?: string;
+    carrier?: string;
+    shippingCost?: string;
+    shippingCurrency?: string;
+  }
 ) {
   const batch = await prisma.consolidationBatch.findUnique({
     where: { id },
-    include: { lines: true },
+    include: { lines: true, store: { select: { currency: true } } },
   });
   if (!batch) {
     throw new Error("集运批次不存在");
   }
   assertConsolidationStatusTransition(batch.status, status);
+  const shippingCost = normalizeLogisticsCostInput(
+    { amount: data?.shippingCost, currency: data?.shippingCurrency },
+    batch.store.currency,
+  );
   if (status === "SEALED") {
     if (!batch.fromLocationId) throw new Error("请先设置集运起运仓库");
     if (!batch.toLocationId) throw new Error("请先设置集运目的仓库");
@@ -813,6 +842,18 @@ export async function updateConsolidationStatus(
         receivedAt: status === "RECEIVED" ? new Date() : undefined,
       },
     });
+    if (status === "SHIPPED" && shippingCost) {
+      await saveLogisticsShippingCost(tx, {
+        storeId: batch.storeId,
+        sourceType: LOGISTICS_COST_SOURCE_TYPES.consolidation,
+        sourceId: batch.id,
+        amount: shippingCost.amount.toFixed(4),
+        currency: shippingCost.currency,
+        fallbackCurrency: batch.store.currency,
+        occurredAt: new Date(),
+        note: batch.note ?? undefined,
+      });
+    }
   });
   revalidatePath("/logistics/consolidations");
   revalidatePath(`/logistics/consolidations/${id}`);
@@ -1660,7 +1701,12 @@ export async function repairConsolidationOriginInventoryAction(id: string) {
 export async function updateConsolidationStatusAction(
   id: string,
   status: ConsolidationStatus,
-  data?: { outboundTrackingNo?: string; carrier?: string }
+  data?: {
+    outboundTrackingNo?: string;
+    carrier?: string;
+    shippingCost?: string;
+    shippingCurrency?: string;
+  }
 ) {
   try {
     await updateConsolidationStatus(id, status, data);

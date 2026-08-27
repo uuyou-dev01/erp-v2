@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
+import { getActiveOrganizationConnection } from "@/lib/application/organization-connections";
 import { syncLegacyOrganizationFoundation } from "@/lib/application/multi-party-foundation";
 import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { requireUserContext } from "@/lib/auth/user-context";
@@ -17,8 +18,24 @@ async function requireOrganizationAdmin() {
 
 export async function getMultiPartyManagementData() {
   const context = await requireOrganizationAdmin();
+  const activeConnections = await prisma.organizationConnection.findMany({
+    where: {
+      status: "ACTIVE",
+      OR: [
+        { requesterOrganizationId: context.organizationId },
+        { targetOrganizationId: context.organizationId },
+      ],
+    },
+    select: { requesterOrganizationId: true, targetOrganizationId: true },
+  });
+  const connectedOrganizationIds = activeConnections.map((connection) =>
+    connection.requesterOrganizationId === context.organizationId
+      ? connection.targetOrganizationId
+      : connection.requesterOrganizationId
+  );
   const [organizations, pools, channels, locations, agreements] = await Promise.all([
     prisma.organization.findMany({
+      where: { id: { in: [context.organizationId, ...connectedOrganizationIds] } },
       select: { id: true, name: true, code: true },
       orderBy: { name: "asc" },
     }),
@@ -110,6 +127,12 @@ export async function createServiceAgreementAction(data: {
       data.locationId ? prisma.location.findUnique({ where: { id: data.locationId } }) : null,
     ]);
     if (!client || !provider) throw new Error("经营主体不存在");
+    const activeConnection = await getActiveOrganizationConnection(
+      prisma,
+      data.clientOrganizationId,
+      data.providerOrganizationId
+    );
+    if (!activeConnection) throw new Error("双方企业尚未建立有效连接");
     if (pool && pool.organizationId !== data.clientOrganizationId) {
       throw new Error("协议货盘必须属于客户主体");
     }
@@ -127,7 +150,8 @@ export async function createServiceAgreementAction(data: {
         settlementCurrency: data.settlementCurrency,
         paymentTermsDays: Math.max(0, data.paymentTermsDays ?? 0),
         notes: data.notes || null,
-        status: "DRAFT",
+        status: "PENDING_COUNTERPARTY",
+        proposedByOrganizationId: context.organizationId,
       },
     });
     revalidatePath("/settings/business-structure");
@@ -142,13 +166,34 @@ export async function activateServiceAgreementAction(id: string) {
     const context = await requireOrganizationAdmin();
     const agreement = await prisma.serviceAgreement.findUnique({ where: { id } });
     if (!agreement) throw new Error("服务协议不存在");
-    if (agreement.providerOrganizationId !== context.organizationId) {
-      throw new Error("只有服务主体管理员可以启用协议");
+    if (
+      ![agreement.clientOrganizationId, agreement.providerOrganizationId].includes(
+        context.organizationId
+      )
+    ) {
+      throw new Error("当前企业不是协议参与方");
     }
-    if (agreement.status !== "DRAFT") throw new Error("只有草稿协议可以启用");
+    if (agreement.status !== "PENDING_COUNTERPARTY") {
+      throw new Error("只有待对方确认的协议可以启用");
+    }
+    if (!agreement.proposedByOrganizationId) throw new Error("旧版协议草稿需要重新创建");
+    if (agreement.proposedByOrganizationId === context.organizationId) {
+      throw new Error("协议必须由对方企业管理员确认");
+    }
+    const activeConnection = await getActiveOrganizationConnection(
+      prisma,
+      agreement.clientOrganizationId,
+      agreement.providerOrganizationId
+    );
+    if (!activeConnection) throw new Error("双方企业连接已失效，不能启用协议");
     await prisma.serviceAgreement.update({
       where: { id },
-      data: { status: "ACTIVE", effectiveFrom: agreement.effectiveFrom ?? new Date() },
+      data: {
+        status: "ACTIVE",
+        effectiveFrom: agreement.effectiveFrom ?? new Date(),
+        acceptedById: context.userId,
+        acceptedAt: new Date(),
+      },
     });
     revalidatePath("/settings/business-structure");
     return actionSuccess({ id });

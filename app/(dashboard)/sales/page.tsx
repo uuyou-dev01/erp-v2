@@ -1,467 +1,507 @@
-import { requireUserContext } from "@/lib/auth/user-context";
+import Link from "next/link";
+import {
+  AlertTriangle,
+  CircleDollarSign,
+  Handshake,
+  Package,
+  Plus,
+  Search,
+  Truck,
+} from "lucide-react";
 import { getCustomerOrders } from "@/app/actions/customer-orders";
 import { getPlatforms } from "@/app/actions/platforms";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ResponsiveTable, type Column } from "@/components/shared/responsive-table";
-import { StatCard } from "@/components/shared/stat-card";
 import { SalesImportButton } from "@/components/sales/sales-import-button";
+import { ResponsiveTable, type Column } from "@/components/shared/responsive-table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
-  Plus,
-  Package,
-  ShoppingBag,
-  CheckCircle,
-  Truck,
-  CircleDollarSign,
-  ClipboardCheck,
-  BarChart3,
-} from "lucide-react";
-import Link from "next/link";
-import { formatCurrency } from "@/lib/decimal";
-import { summarizeSalesOrders } from "@/lib/application/sales-metrics";
-import {
-  inferMarketFromPlatform,
-  marketLabel,
-  type SellableMarketCode,
-} from "@/lib/application/sellable-market";
+  deriveSalesOrderWorkbenchState,
+  orderMatchesSalesWorkbenchView,
+  parseSalesWorkbenchView,
+  type SalesWorkbenchView,
+} from "@/lib/application/sales-order-workbench";
+import { requireUserContext } from "@/lib/auth/user-context";
+import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-
-const statusColors = {
-  DRAFT: "secondary",
-  PLACED: "default",
-  PAID: "default",
-  CONFIRMED: "outline",
-  SHIPPED: "outline",
-  DELIVERED: "outline",
-  RETURNED: "destructive",
-  CANCELLED: "destructive",
-} as const;
-
-const statusLabels: Record<string, string> = {
+const orderStatusLabels: Record<string, string> = {
   DRAFT: "草稿",
   PLACED: "已下单",
   PAID: "已付款",
-  CONFIRMED: "已确认",
-  SHIPPED: "已发货",
-  DELIVERED: "已送达",
+  CONFIRMED: "待发货",
+  SHIPPED: "运输中",
+  DELIVERED: "已完成",
   RETURNED: "已退货",
   CANCELLED: "已取消",
 };
 
+const fulfillmentStatusLabels: Record<string, string> = {
+  REQUESTED: "待供货方接单",
+  ACCEPTED: "供货方已接单",
+  REJECTED: "供货方已拒绝",
+  SHIPPED: "供货方已发货",
+  DELIVERED: "协作已送达",
+  CANCELLED: "协作已取消",
+  EXCEPTION: "履约异常",
+};
+
+const settlementStatusLabels: Record<string, string> = {
+  NOT_READY: "未到结算",
+  PENDING: "待结算",
+  DRAFT: "结算草稿",
+  CONFIRMED: "待线下结清",
+  PAID: "已结清",
+  VOID: "已作废",
+};
+
+const fulfillmentModeLabels: Record<string, string> = {
+  SELF_SHIPS: "我方发货",
+  SUPPLIER_SHIPS: "供货方代发",
+  PLATFORM_SHIPS: "平台发货",
+  RESELLER_SHIPS: "代卖方提货发货",
+  SELF_PICKUP: "自提",
+  UNKNOWN: "待确认履约方",
+};
+
 type OrderRow = Awaited<ReturnType<typeof getCustomerOrders>>[number];
-type OrderPlatform = NonNullable<OrderRow["platform"]>;
 
-const marketOrder: SellableMarketCode[] = ["CN", "JP", "US", "EU", "GLOBAL", "UNKNOWN"];
+type SalesSearchParams = {
+  q?: string;
+  view?: string;
+  mode?: string;
+  status?: string;
+  platform?: string;
+};
 
-function marketFromPlatform(
-  platform?: Pick<OrderPlatform, "country" | "code"> | null
-): SellableMarketCode {
-  return platform ? inferMarketFromPlatform(platform) : "UNKNOWN";
-}
-
-function parseMarket(value?: string): SellableMarketCode | undefined {
-  if (!value) return undefined;
-  return marketOrder.includes(value as SellableMarketCode)
-    ? (value as SellableMarketCode)
-    : undefined;
-}
-
-function salesHref(params: { market?: SellableMarketCode; platform?: string }) {
+function buildSalesHref(current: SalesSearchParams, updates: Partial<SalesSearchParams>) {
+  const merged = { ...current, ...updates };
   const search = new URLSearchParams();
-  if (params.market) search.set("market", params.market);
-  if (params.platform) search.set("platform", params.platform);
+  for (const [key, value] of Object.entries(merged)) {
+    if (value) search.set(key, value);
+  }
   const query = search.toString();
   return query ? `/sales?${query}` : "/sales";
 }
 
-function shortMoney(value: string | number) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount <= 0) return "0";
-  if (amount >= 10000) return `${(amount / 10000).toFixed(1)}万`;
-  return amount.toFixed(0);
+function businessPartnerName(order: OrderRow) {
+  const offer = order.resaleListing?.supplyOffer;
+  return (
+    offer?.providerOrganization?.name ??
+    offer?.organization?.name ??
+    offer?.ownerPartner?.name ??
+    "供货方待确认"
+  );
 }
 
-function MiniBar({
-  label,
-  value,
-  max,
-  meta,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  meta?: string;
-}) {
-  const width = max > 0 ? Math.max(6, Math.round((value / max) * 100)) : 0;
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="truncate font-medium">{label}</span>
-        <span className="shrink-0 text-muted-foreground">{meta ?? `${value} 单`}</span>
-      </div>
-      <div className="h-2 rounded-full bg-muted">
-        <div className="h-2 rounded-full bg-primary/80" style={{ width: `${width}%` }} />
-      </div>
-    </div>
-  );
+function itemSummary(order: OrderRow) {
+  if (order.lines.length > 0) {
+    const first = order.lines[0];
+    const totalQuantity = order.lines.reduce(
+      (sum, line) => sum + Number(line.quantity.toString()),
+      0
+    );
+    return {
+      title: first.sku.name,
+      meta: `${order.lines.length} 项 · ${totalQuantity} 件`,
+    };
+  }
+
+  const resaleItem = order.resaleListing?.supplyOfferItem;
+  const quantity = order.fulfillmentRequests[0]?.quantity;
+  return {
+    title: resaleItem?.title ?? order.resaleListing?.title ?? "商品待补充",
+    meta: `${resaleItem?.variantCode ? `${resaleItem.variantCode} · ` : ""}${quantity ? `${formatQuantity(quantity)} 件` : "数量待确认"}`,
+  };
+}
+
+function orderMatchesSearch(order: OrderRow, query: string) {
+  if (!query) return true;
+  const normalized = query.toLocaleLowerCase("zh-CN");
+  const haystack = [
+    order.orderNumber,
+    order.externalOrderNo,
+    order.customerName,
+    order.platform?.name,
+    order.salesChannelAccount?.name,
+    order.resaleListing?.title,
+    order.resaleListing?.supplyOffer.title,
+    order.resaleListing?.supplyOfferItem?.title,
+    ...order.lines.flatMap((line) => [line.sku.code, line.sku.name]),
+    ...order.fulfillmentRequests.flatMap((request) => [request.requestNo, request.trackingNo]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("zh-CN");
+  return haystack.includes(normalized);
+}
+
+function statusBadgeVariant(status: string) {
+  if (["RETURNED", "CANCELLED", "REJECTED", "EXCEPTION"].includes(status)) {
+    return "destructive" as const;
+  }
+  if (["CONFIRMED", "ACCEPTED", "SHIPPED"].includes(status)) return "default" as const;
+  return "secondary" as const;
 }
 
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ platform?: string; market?: string }>;
+  searchParams: Promise<SalesSearchParams>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
-  const { platform: platformFilter, market } = await searchParams;
-  const marketFilter = parseMarket(market);
+  const params = await searchParams;
+  const view = parseSalesWorkbenchView(params.view);
+  const query = params.q?.trim() ?? "";
+  const mode = params.mode === "DIRECT" || params.mode === "RESALE" ? params.mode : "";
+  const status = params.status && orderStatusLabels[params.status] ? params.status : "";
+
   const [allOrders, platforms] = await Promise.all([
     getCustomerOrders(storeId),
     getPlatforms(storeId),
   ]);
 
-  const marketOrders = marketFilter
-    ? allOrders.filter((o) => marketFromPlatform(o.platform) === marketFilter)
-    : allOrders;
-  const orders = platformFilter
-    ? marketOrders.filter((o) => o.platformId === platformFilter)
-    : marketOrders;
-
-  const filteredOrderSummary = summarizeSalesOrders(orders);
-  const marketSummary = marketOrder
-    .map((marketCode) => {
-      const rows = allOrders.filter((o) => marketFromPlatform(o.platform) === marketCode);
-      const summary = summarizeSalesOrders(rows);
-      return {
-        market: marketCode,
-        label: marketLabel(marketCode),
-        count: rows.length,
-        total: summary.totalRevenue.toFixed(2),
-      };
-    })
-    .filter((row) => row.count > 0 || row.market === "UNKNOWN");
-  const platformSummaryForMarket = summarizeSalesOrders(marketOrders);
-  const platformSales = platforms
-    .filter((p) => !marketFilter || marketFromPlatform(p) === marketFilter)
-    .map((p) => {
-      const total =
-        platformSummaryForMarket.platformSales.find((row) => row.platformId === p.id)?.total ??
-        "0.00";
-      return {
-        id: p.id,
-        name: p.name,
-        market: marketFromPlatform(p),
-        total,
-        count: marketOrders.filter((order) => order.platformId === p.id).length,
-      };
-    });
-  const maxMarketCount = Math.max(1, ...marketSummary.map((row) => row.count));
-  const maxPlatformCount = Math.max(1, ...platformSales.map((row) => row.count));
-  const statusRows = [
-    { status: "DRAFT", label: "草稿", hint: "内部录入，尚未确认成交" },
-    { status: "PLACED", label: "已下单", hint: "平台/客户已产生订单" },
-    { status: "PAID", label: "已付款", hint: "已付款，等待确认履约" },
-    { status: "CONFIRMED", label: "待发货", hint: "已确认，等待出库/发货" },
-    { status: "SHIPPED", label: "运输中", hint: "已发货" },
-    { status: "DELIVERED", label: "已完成", hint: "已送达/完成" },
-  ].map((row) => ({
-    ...row,
-    count: orders.filter((order) => order.orderStatus === row.status).length,
-  }));
-  const maxStatusCount = Math.max(1, ...statusRows.map((row) => row.count));
-
-  const stats = {
-    total: orders.length,
-    pending: orders.filter((o) => ["DRAFT", "PLACED", "PAID"].includes(o.orderStatus)).length,
-    confirmed: orders.filter((o) => o.orderStatus === "CONFIRMED").length,
-    shipped: orders.filter((o) => o.orderStatus === "SHIPPED").length,
-    delivered: orders.filter((o) => o.orderStatus === "DELIVERED").length,
-    totalRevenue: filteredOrderSummary.totalRevenue,
+  const orderStates = new Map(
+    allOrders.map((order) => [order.id, deriveSalesOrderWorkbenchState(order)])
+  );
+  const counts = {
+    all: allOrders.length,
+    todo: allOrders.filter((order) => orderMatchesSalesWorkbenchView(order, "todo")).length,
+    shipment: allOrders.filter((order) => orderMatchesSalesWorkbenchView(order, "shipment")).length,
+    collaboration: allOrders.filter((order) =>
+      orderMatchesSalesWorkbenchView(order, "collaboration")
+    ).length,
+    exception: allOrders.filter((order) => orderMatchesSalesWorkbenchView(order, "exception"))
+      .length,
+    settlement: allOrders.filter((order) => orderMatchesSalesWorkbenchView(order, "settlement"))
+      .length,
   };
+
+  const orders = allOrders.filter((order) => {
+    const state = orderStates.get(order.id)!;
+    return (
+      orderMatchesSalesWorkbenchView(order, view) &&
+      (!mode || state.businessMode === mode) &&
+      (!status || order.orderStatus === status) &&
+      (!params.platform || order.platformId === params.platform) &&
+      orderMatchesSearch(order, query)
+    );
+  });
+
+  const currentParams: SalesSearchParams = {
+    q: query || undefined,
+    view: view === "all" ? undefined : view,
+    mode: mode || undefined,
+    status: status || undefined,
+    platform: params.platform || undefined,
+  };
+
+  const views: Array<{
+    key: SalesWorkbenchView;
+    label: string;
+    count: number;
+    icon: typeof Package;
+  }> = [
+    { key: "all", label: "全部订单", count: counts.all, icon: Package },
+    { key: "todo", label: "待我处理", count: counts.todo, icon: Package },
+    { key: "shipment", label: "待发货", count: counts.shipment, icon: Truck },
+    { key: "collaboration", label: "协作中", count: counts.collaboration, icon: Handshake },
+    { key: "exception", label: "异常", count: counts.exception, icon: AlertTriangle },
+    { key: "settlement", label: "待结算", count: counts.settlement, icon: CircleDollarSign },
+  ];
 
   const columns: Column<OrderRow>[] = [
     {
-      key: "id",
-      header: "订单ID",
-      cell: (row) => <span className="font-medium font-mono text-xs">{row.id.slice(0, 8)}</span>,
-    },
-    {
-      key: "external",
-      header: "外部订单号",
-      cell: (row) => row.externalOrderNo || <span className="text-muted-foreground">-</span>,
-      hideOnMobile: true,
-    },
-    {
-      key: "platform",
-      header: "平台",
-      cell: (row) => (
+      key: "order",
+      header: "订单",
+      className: "min-w-[180px]",
+      cell: (order) => (
         <div className="space-y-1">
-          <div>{row.platform?.name || <span className="text-muted-foreground">-</span>}</div>
-          {row.platform && (
-            <Badge variant="secondary" className="text-[10px] font-normal">
-              {marketLabel(marketFromPlatform(row.platform))}
-            </Badge>
-          )}
+          <Link href={`/sales/${order.id}`} className="font-medium hover:underline">
+            {order.externalOrderNo || order.orderNumber}
+          </Link>
+          <p className="text-xs text-muted-foreground">
+            {order.customerName} · {new Date(order.orderDate).toLocaleDateString("zh-CN")}
+          </p>
         </div>
       ),
     },
     {
-      key: "items",
-      header: "商品数",
-      cell: (row) => `${row.lines.length} 项`,
+      key: "business",
+      header: "业务",
+      className: "min-w-[160px]",
+      cell: (order) => {
+        const state = orderStates.get(order.id)!;
+        return (
+          <div className="space-y-1.5">
+            <Badge variant={state.businessMode === "RESALE" ? "default" : "outline"}>
+              {state.businessMode === "RESALE" ? "我方代卖" : "自营销售"}
+            </Badge>
+            <p className="max-w-[180px] truncate text-xs text-muted-foreground">
+              {state.businessMode === "RESALE"
+                ? businessPartnerName(order)
+                : order.salesChannelAccount?.name || "本店库存"}
+            </p>
+          </div>
+        );
+      },
     },
     {
-      key: "total",
-      header: "总金额",
-      cell: (row) => formatCurrency(row.totalPaid, row.currency),
+      key: "items",
+      header: "商品",
+      className: "min-w-[180px]",
+      cell: (order) => {
+        const summary = itemSummary(order);
+        return (
+          <div className="space-y-1">
+            <p className="max-w-[220px] truncate font-medium">{summary.title}</p>
+            <p className="text-xs text-muted-foreground">{summary.meta}</p>
+          </div>
+        );
+      },
+    },
+    {
+      key: "channel",
+      header: "渠道",
+      hideOnMobile: true,
+      cell: (order) => (
+        <div className="space-y-1">
+          <p>{order.platform?.name || "线下/未指定"}</p>
+          <p className="text-xs text-muted-foreground">
+            {order.salesChannelAccount?.name ||
+              order.resaleListing?.salesChannelAccount?.name ||
+              "账号未关联"}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "fulfillment",
+      header: "履约",
+      className: "min-w-[160px]",
+      cell: (order) => {
+        const state = orderStates.get(order.id)!;
+        const request = order.fulfillmentRequests[0];
+        return (
+          <div className="space-y-1">
+            <p className="font-medium">
+              {fulfillmentModeLabels[state.fulfillmentMode] || state.fulfillmentMode}
+            </p>
+            <p
+              className={cn(
+                "text-xs text-muted-foreground",
+                state.isException && "font-medium text-destructive"
+              )}
+            >
+              {request
+                ? fulfillmentStatusLabels[request.status] || request.status
+                : state.businessMode === "DIRECT"
+                  ? "内部履约"
+                  : "履约请求待建立"}
+            </p>
+          </div>
+        );
+      },
+    },
+    {
+      key: "amount",
+      header: "金额",
+      className: "whitespace-nowrap",
+      cell: (order) => (
+        <div className="space-y-1">
+          <p className="font-medium tabular-nums">
+            {formatCurrency(order.totalPaid, order.currency)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {settlementStatusLabels[orderStates.get(order.id)!.settlementStatus] ||
+              orderStates.get(order.id)!.settlementStatus}
+          </p>
+        </div>
+      ),
     },
     {
       key: "status",
       header: "状态",
-      cell: (row) => (
-        <Badge variant={statusColors[row.orderStatus as keyof typeof statusColors]}>
-          {statusLabels[row.orderStatus] || row.orderStatus}
+      className: "whitespace-nowrap",
+      cell: (order) => (
+        <Badge variant={statusBadgeVariant(order.orderStatus)}>
+          {orderStatusLabels[order.orderStatus] || order.orderStatus}
         </Badge>
       ),
     },
     {
-      key: "date",
-      header: "创建时间",
-      cell: (row) => new Date(row.createdAt).toLocaleDateString("zh-CN"),
-      hideOnMobile: true,
-    },
-    {
       key: "action",
-      header: "操作",
-      className: "text-right",
-      cell: (row) => (
-        <Link href={`/sales/${row.id}`}>
-          <Button variant="ghost" size="sm">
-            查看
-          </Button>
-        </Link>
-      ),
+      header: "下一步",
+      className: "whitespace-nowrap text-right",
+      cell: (order) => {
+        const action = orderStates.get(order.id)!.nextAction;
+        return (
+          <Link href={action.href}>
+            <Button variant={action.emphasis === "primary" ? "default" : "ghost"} size="sm">
+              {action.label}
+            </Button>
+          </Link>
+        );
+      },
     },
   ];
 
+  const hasFilters = Boolean(query || mode || status || params.platform || view !== "all");
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">销售管理</h1>
-          <p className="text-muted-foreground">
-            销售订单是成交后的履约单据，用来跟踪确认、扣库存、发货和收入，不只代表已完成订单。
+          <h1 className="text-2xl font-semibold tracking-tight">销售订单</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            处理自营与代卖成交，跟进库存、协作履约和结算。
           </p>
         </div>
         <div className="flex items-center gap-2">
           <SalesImportButton storeId={storeId} />
           <Link href="/sales/new">
             <Button>
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="h-4 w-4" />
               新建订单
             </Button>
           </Link>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard
-          title="总订单数"
-          value={stats.total}
-          subtitle="当前筛选下履约单"
-          icon={ShoppingBag}
-        />
-        <StatCard
-          title="待确认"
-          value={stats.pending}
-          subtitle="草稿/已下单/已付款"
-          icon={Package}
-          iconColor="text-yellow-500"
-        />
-        <StatCard
-          title="待发货"
-          value={stats.confirmed}
-          subtitle="已确认，待出库"
-          icon={CheckCircle}
-          iconColor="text-green-500"
-        />
-        <StatCard
-          title="已发货"
-          value={stats.shipped}
-          subtitle="运输中"
-          icon={Truck}
-          iconColor="text-blue-500"
-        />
-        <StatCard
-          title="已完成"
-          value={stats.delivered}
-          subtitle="已送达/完成"
-          icon={ClipboardCheck}
-          iconColor="text-emerald-500"
-        />
-        <StatCard
-          title="有效销售额"
-          value={`¥${stats.totalRevenue.toFixed(2)}`}
-          subtitle="已确认/已发货/已送达"
-          icon={CircleDollarSign}
-          iconColor="text-emerald-500"
-        />
-      </div>
-
-      <Card>
-        <CardContent className="space-y-4 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold">地区与平台</h2>
-              <p className="text-xs text-muted-foreground">
-                按平台所属市场查看订单，销售额沿用当前系统币种汇总。
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Link href={salesHref({})}>
-                <Button variant={!marketFilter ? "default" : "outline"} size="sm">
-                  全部市场
-                  <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
-                    {allOrders.length}
-                  </Badge>
-                </Button>
-              </Link>
-              {marketSummary.map((row) => (
-                <Link key={row.market} href={salesHref({ market: row.market })}>
-                  <Button
-                    variant={marketFilter === row.market ? "default" : "outline"}
-                    size="sm"
-                    className={cn(row.count === 0 && "text-muted-foreground")}
-                  >
-                    {row.label}
-                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
-                      {row.count}
-                    </Badge>
-                  </Button>
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="rounded-lg border p-3">
-              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                地区订单结构
-              </div>
-              <div className="space-y-3">
-                {marketSummary.map((row) => (
-                  <MiniBar
-                    key={row.market}
-                    label={row.label}
-                    value={row.count}
-                    max={maxMarketCount}
-                    meta={`${row.count} 单 · ¥${shortMoney(row.total)}`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-lg border p-3">
-              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                平台订单结构
-              </div>
-              <div className="space-y-3">
-                {platformSales.length > 0 ? (
-                  platformSales.map((row) => (
-                    <MiniBar
-                      key={row.id}
-                      label={row.name}
-                      value={row.count}
-                      max={maxPlatformCount}
-                      meta={`${row.count} 单 · ${marketLabel(row.market)}`}
-                    />
-                  ))
-                ) : (
-                  <p className="py-5 text-center text-xs text-muted-foreground">当前市场暂无平台</p>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-lg border p-3">
-              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
-                订单状态说明
-              </div>
-              <div className="space-y-3">
-                {statusRows.map((row) => (
-                  <div key={row.status} className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-3 text-xs">
-                      <span className="font-medium">{row.label}</span>
-                      <span className="text-muted-foreground">{row.count} 单</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted">
-                      <div
-                        className="h-2 rounded-full bg-slate-700/80"
-                        style={{
-                          width: `${maxStatusCount > 0 ? Math.max(6, Math.round((row.count / maxStatusCount) * 100)) : 0}%`,
-                        }}
-                      />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">{row.hint}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Link href={salesHref({ market: marketFilter })}>
-          <Button variant={!platformFilter ? "default" : "outline"} size="sm">
-            全部
-            <Badge variant="secondary" className="ml-2 text-[10px] px-1.5">
-              {marketOrders.length}
-            </Badge>
-          </Button>
-        </Link>
-        {platformSales.map((p) => (
-          <Link key={p.id} href={salesHref({ market: marketFilter, platform: p.id })}>
-            <Button variant={platformFilter === p.id ? "default" : "outline"} size="sm">
-              {p.name}
-              {Number(p.total) > 0 && (
-                <span className="ml-2 text-[10px] opacity-70">¥{Number(p.total).toFixed(0)}</span>
+      <nav
+        aria-label="订单工作视图"
+        className="grid overflow-hidden rounded-lg border bg-background sm:grid-cols-3 xl:grid-cols-6"
+      >
+        {views.map((item) => {
+          const Icon = item.icon;
+          const active = view === item.key;
+          return (
+            <Link
+              key={item.key}
+              href={buildSalesHref(currentParams, {
+                view: item.key === "all" ? undefined : item.key,
+              })}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "flex min-h-16 items-center gap-3 border-b px-4 transition-colors hover:bg-muted/50 sm:border-r xl:border-b-0",
+                active && "bg-primary/[0.06] shadow-[inset_0_-2px_0_hsl(var(--primary))]",
+                item.key === "exception" && item.count > 0 && "text-destructive"
               )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <p className="truncate text-xs text-muted-foreground">{item.label}</p>
+                <p className="mt-0.5 text-lg font-semibold tabular-nums">{item.count}</p>
+              </div>
+            </Link>
+          );
+        })}
+      </nav>
+
+      <form
+        method="get"
+        className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3 lg:flex-row lg:items-center"
+      >
+        {view !== "all" ? <input type="hidden" name="view" value={view} /> : null}
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            name="q"
+            defaultValue={query}
+            placeholder="搜索订单号、客户、商品、货盘或物流单号"
+            className="bg-background pl-9"
+            aria-label="搜索销售订单"
+          />
+        </div>
+        <Select
+          name="mode"
+          defaultValue={mode}
+          className="h-9 bg-background lg:w-36"
+          aria-label="业务类型"
+        >
+          <option value="">全部业务</option>
+          <option value="DIRECT">自营销售</option>
+          <option value="RESALE">我方代卖</option>
+        </Select>
+        <Select
+          name="status"
+          defaultValue={status}
+          className="h-9 bg-background lg:w-36"
+          aria-label="订单状态"
+        >
+          <option value="">全部状态</option>
+          {Object.entries(orderStatusLabels).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </Select>
+        <Select
+          name="platform"
+          defaultValue={params.platform || ""}
+          className="h-9 bg-background lg:w-44"
+          aria-label="销售平台"
+        >
+          <option value="">全部平台</option>
+          {platforms.map((platform) => (
+            <option key={platform.id} value={platform.id}>
+              {platform.name}
+            </option>
+          ))}
+        </Select>
+        <Button type="submit" variant="secondary" size="sm">
+          筛选
+        </Button>
+        {hasFilters ? (
+          <Link href="/sales">
+            <Button type="button" variant="ghost" size="sm">
+              重置
             </Button>
           </Link>
-        ))}
-      </div>
+        ) : null}
+      </form>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>客户订单</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveTable
-            columns={columns}
-            data={orders}
-            keyExtractor={(row) => row.id}
-            emptyState={
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Package className="mb-4 h-12 w-12 text-muted-foreground" />
-                <h3 className="mb-2 text-lg font-semibold">暂无订单</h3>
-                <p className="mb-4 text-sm text-muted-foreground">创建第一个客户订单</p>
-                <Link href="/sales/new">
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    新建订单
+      <section
+        className="overflow-hidden rounded-lg border bg-background"
+        aria-labelledby="sales-order-list-title"
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div>
+            <h2 id="sales-order-list-title" className="text-sm font-semibold">
+              订单列表
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              当前显示 {orders.length} / {allOrders.length} 单
+            </p>
+          </div>
+        </div>
+        <ResponsiveTable
+          columns={columns}
+          data={orders}
+          keyExtractor={(order) => order.id}
+          emptyState={
+            <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+              <Package className="mb-3 h-9 w-9 text-muted-foreground/60" />
+              <h3 className="font-medium">当前视图没有订单</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {hasFilters
+                  ? "可以调整筛选条件，或返回全部订单。"
+                  : "成交或录入订单后会出现在这里。"}
+              </p>
+              {hasFilters ? (
+                <Link href="/sales" className="mt-4">
+                  <Button variant="outline" size="sm">
+                    查看全部订单
                   </Button>
                 </Link>
-              </div>
-            }
-          />
-        </CardContent>
-      </Card>
+              ) : null}
+            </div>
+          }
+        />
+      </section>
     </div>
   );
 }

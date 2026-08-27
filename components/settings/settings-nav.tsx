@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Building2, SlidersHorizontal, UserRound } from "lucide-react";
 import { settingsAreaRoutes } from "@/config/navigation";
 import { cn } from "@/lib/utils";
+import { isNavigationHrefAllowed } from "@/lib/auth/permissions";
 
 const settingAreas = [
   {
@@ -27,12 +28,16 @@ const settingAreas = [
   },
 ];
 
-export function SettingsNav() {
+export function SettingsNav({ role }: { role: string }) {
   const pathname = usePathname();
+  const visibleSettingAreas = settingAreas.flatMap((area) => {
+    const allowedHref = area.matches.find((href) => isNavigationHrefAllowed(role, href));
+    return allowedHref ? [{ ...area, href: allowedHref }] : [];
+  });
 
   return (
     <nav aria-label="设置分类" className="mb-6 flex gap-1 overflow-x-auto border-b">
-      {settingAreas.map((area) => {
+      {visibleSettingAreas.map((area) => {
         const active = area.matches.some(
           (path) => pathname === path || pathname.startsWith(`${path}/`)
         );

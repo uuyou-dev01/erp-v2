@@ -38,8 +38,17 @@ export default async function PartnersPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">合作方</h1>
-        <p className="text-muted-foreground">维护供货、代卖、代发和渠道关系，货盘可见性与结算规则会从这里延伸。</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">合作方</h1>
+            <p className="text-muted-foreground">
+              供应商可以只保留联系人档案；需要跨企业协作时再发起双方确认的连接。
+            </p>
+          </div>
+          <Link href="/settings/connections">
+            <Button variant="outline">管理企业连接</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
@@ -55,7 +64,10 @@ export default async function PartnersPage({
             ) : (
               <div className="divide-y divide-border">
                 {partners.map((partner) => (
-                  <div key={partner.id} className="grid gap-3 py-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                  <div
+                    key={partner.id}
+                    className="grid gap-3 py-4 lg:grid-cols-[1fr_auto] lg:items-center"
+                  >
                     <div className="min-w-0 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold">{partner.name}</span>
@@ -63,22 +75,49 @@ export default async function PartnersPage({
                         <Badge variant={partner.status === "ACTIVE" ? "default" : "secondary"}>
                           {partner.status === "ACTIVE" ? "启用" : "停用"}
                         </Badge>
-                        <Badge variant="secondary">{partnerTypeLabels[partner.type] ?? partner.type}</Badge>
+                        <Badge variant="secondary">
+                          {partnerTypeLabels[partner.type] ?? partner.type}
+                        </Badge>
+                        {partner.organization ? (
+                          <Badge>已连接 {partner.organization.name}</Badge>
+                        ) : partner.organizationConnections[0]?.status === "PENDING" ? (
+                          <Badge variant="secondary">等待企业确认</Badge>
+                        ) : (
+                          <Badge variant="outline">仅联系人档案</Badge>
+                        )}
                       </div>
                       <div className="text-sm text-muted-foreground">
                         {partner.tradingRelationships.length > 0
                           ? partner.tradingRelationships
-                              .map((relationship) => relationshipLabels[relationship.relationshipType] ?? relationship.relationshipType)
+                              .map(
+                                (relationship) =>
+                                  relationshipLabels[relationship.relationshipType] ??
+                                  relationship.relationshipType
+                              )
                               .join(" / ")
                           : "未配置合作关系"}
                         {partner.defaultCurrency ? ` · 默认币种 ${partner.defaultCurrency}` : ""}
                       </div>
                     </div>
                     <div className="flex justify-end gap-2">
+                      {!partner.organization &&
+                      partner.organizationConnections[0]?.status !== "PENDING" ? (
+                        <Link href="/settings/connections">
+                          <Button variant="ghost" size="sm">
+                            连接企业
+                          </Button>
+                        </Link>
+                      ) : null}
                       <Link href={`/settings/partners?partnerId=${partner.id}`}>
-                        <Button variant="outline" size="sm">编辑</Button>
+                        <Button variant="outline" size="sm">
+                          编辑
+                        </Button>
                       </Link>
-                      <PartnerDeactivateButton id={partner.id} name={partner.name} disabled={partner.status !== "ACTIVE"} />
+                      <PartnerDeactivateButton
+                        id={partner.id}
+                        name={partner.name}
+                        disabled={partner.status !== "ACTIVE"}
+                      />
                     </div>
                   </div>
                 ))}

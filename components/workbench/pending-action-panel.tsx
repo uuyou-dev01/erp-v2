@@ -30,10 +30,7 @@ import {
   SmartSuggestionPanel,
 } from "./action-drawer-layout";
 import { getWorkflowActionSpec } from "@/lib/application/workflow-actions";
-import {
-  TaskAssignmentCard,
-  type AssignableMemberOption,
-} from "./task-assignment-card";
+import { TaskAssignmentCard, type AssignableMemberOption } from "./task-assignment-card";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowRight, CheckCircle2 } from "lucide-react";
 import { isActionFailure } from "@/lib/application/action-result";
@@ -78,9 +75,7 @@ export function PendingActionPanel({
   const [notice, setNotice] = useState<PanelNotice | null>(null);
   const actionSpec = getWorkflowActionSpec(detail.primaryAction);
   const detailHref =
-    detail.detailHref && detail.detailHref !== "/workbench"
-      ? detail.detailHref
-      : undefined;
+    detail.detailHref && detail.detailHref !== "/workbench" ? detail.detailHref : undefined;
 
   const refresh = () => {
     router.refresh();
@@ -124,11 +119,9 @@ export function PendingActionPanel({
             }
           }
           if (
-            (detail.primaryAction === "inbound" ||
-              detail.primaryAction === "disposition") &&
+            (detail.primaryAction === "inbound" || detail.primaryAction === "disposition") &&
             "sellablePageHref" in result &&
-            typeof (result as { sellablePageHref: string }).sellablePageHref ===
-              "string"
+            typeof (result as { sellablePageHref: string }).sellablePageHref === "string"
           ) {
             const { sellablePageHref } = result as { sellablePageHref: string };
             setNotice({
@@ -175,10 +168,19 @@ export function PendingActionPanel({
 
   const renderActionForm = () => {
     if (detail.primaryAction === "fillLogistics") {
-      return <FillLogisticsForm detail={detail} locations={locations} pending={pending} run={run} />;
+      return (
+        <FillLogisticsForm detail={detail} locations={locations} pending={pending} run={run} />
+      );
     }
     if (detail.primaryAction === "confirmArrival" && detail.entityType === "shipment") {
-      return <ShipmentArrivalProcessingForm detail={detail} locations={locations} pending={pending} run={run} />;
+      return (
+        <ShipmentArrivalProcessingForm
+          detail={detail}
+          locations={locations}
+          pending={pending}
+          run={run}
+        />
+      );
     }
     if (detail.primaryAction === "confirmArrival" || detail.primaryAction === "receivePurchase") {
       return (
@@ -202,18 +204,24 @@ export function PendingActionPanel({
         />
       );
     }
-    if (detail.primaryAction === "inbound") return <InboundForm detail={detail} locations={locations} pending={pending} run={run} />;
+    if (detail.primaryAction === "inbound")
+      return <InboundForm detail={detail} locations={locations} pending={pending} run={run} />;
     if (detail.primaryAction === "createListing") {
-      return <CreateListingForm detail={detail} platforms={platforms} pending={pending} run={run} />;
+      return (
+        <CreateListingForm detail={detail} platforms={platforms} pending={pending} run={run} />
+      );
     }
-    if (detail.primaryAction === "shipOrder") return <ShipOrderForm detail={detail} pending={pending} run={run} />;
+    if (detail.primaryAction === "shipOrder") {
+      return <ShipOrderForm detail={detail} taskItem={taskItem} pending={pending} run={run} />;
+    }
     if (detail.primaryAction === "confirmDelivery") {
       return <ShippedOrderForm detail={detail} pending={pending} run={run} />;
     }
     if (detail.primaryAction === "approveReturnInspection") {
       return <ReturnInspectionForm detail={detail} pending={pending} run={run} />;
     }
-    if (detail.primaryAction === "settleOrder") return <SettleOrderForm detail={detail} pending={pending} run={run} />;
+    if (detail.primaryAction === "settleOrder")
+      return <SettleOrderForm detail={detail} pending={pending} run={run} />;
     if (detail.primaryAction === "confirmOrder") {
       return (
         <div className="space-y-4">
@@ -240,8 +248,7 @@ export function PendingActionPanel({
   const suggestions = getActionSuggestions(detail);
   const isQuickEntryException =
     detail.entityType === "quickEntry" &&
-    (detail.primaryAction === "resolveException" ||
-      detail.primaryAction === "retryProcess");
+    (detail.primaryAction === "resolveException" || detail.primaryAction === "retryProcess");
   const actionTitle = isQuickEntryException
     ? "补齐录入信息"
     : detail.primaryAction === "viewDetails"
@@ -311,11 +318,7 @@ export function PendingActionPanel({
       }
       context={
         <>
-          <TaskAssignmentCard
-            item={taskItem}
-            members={assignableMembers}
-            onAssigned={onComplete}
-          />
+          <TaskAssignmentCard item={taskItem} members={assignableMembers} onAssigned={onComplete} />
           <ContextSummaryCard detail={detail} />
           <PurchaseLinesCard detail={detail} />
         </>
@@ -360,13 +363,17 @@ function getActionSuggestions(detail: WorkItemDetail) {
     if (detail.entityType === "shipment") {
       return [
         "运输段到达后会完成检查并入库，通过后进入可售库存或同步已有上架记录。",
-        detail.shipments[0]?.trackingNo ? `当前物流单号：${detail.shipments[0].trackingNo}` : "确认后会刷新工作台队列。",
+        detail.shipments[0]?.trackingNo
+          ? `当前物流单号：${detail.shipments[0].trackingNo}`
+          : "确认后会刷新工作台队列。",
       ];
     }
     return [
       "确认到货会在所选位置创建库存；资料完整的商品进入可售，待检查商品进入质检与资料队列。",
       "如果到货位置是转运仓，系统会继续提示分流、集运或转仓。",
-      detail.shipments[0]?.trackingNo ? `当前物流单号：${detail.shipments[0].trackingNo}` : "确认到货后会刷新工作台队列。",
+      detail.shipments[0]?.trackingNo
+        ? `当前物流单号：${detail.shipments[0].trackingNo}`
+        : "确认到货后会刷新工作台队列。",
     ];
   }
   if (detail.primaryAction === "inbound") {
@@ -394,7 +401,9 @@ function getActionSuggestions(detail: WorkItemDetail) {
     return [
       "已发货阶段用于在途跟进：查看凭证、登记退货，或确认妥投后进入待结算。",
       "登记退货会自动冲回库存：批次按数量回批次，单品可选「退货待检」或「直接可售」。",
-      detail.actionContext.trackingNo ? `运单号：${detail.actionContext.trackingNo}` : "尚未填写运单号。",
+      detail.actionContext.trackingNo
+        ? `运单号：${detail.actionContext.trackingNo}`
+        : "尚未填写运单号。",
     ].filter(Boolean) as string[];
   }
   if (detail.primaryAction === "approveReturnInspection") {
@@ -404,14 +413,16 @@ function getActionSuggestions(detail: WorkItemDetail) {
     ];
   }
   if (detail.primaryAction === "confirmOrder") {
-    return [
-      "确认订单后进入待发货；若无需继续，可直接取消并释放库存预留。",
-    ];
+    return ["确认订单后进入待发货；若无需继续，可直接取消并释放库存预留。"];
   }
   if (detail.primaryAction === "settleOrder") {
     return [
-      detail.actionContext.platformFee ? `已带出平台手续费：${detail.actionContext.platformFee}` : "平台手续费可先按订单默认值填写。",
-      detail.actionContext.shippingFee ? `已带出邮费：${detail.actionContext.shippingFee}` : "实际邮费会影响最终利润。",
+      detail.actionContext.platformFee
+        ? `已带出平台手续费：${detail.actionContext.platformFee}`
+        : "平台手续费可先按订单默认值填写。",
+      detail.actionContext.shippingFee
+        ? `已带出邮费：${detail.actionContext.shippingFee}`
+        : "实际邮费会影响最终利润。",
       "若买家退货，请使用下方「登记退货」，不要继续结算。",
     ];
   }

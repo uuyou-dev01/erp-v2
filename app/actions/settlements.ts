@@ -371,6 +371,7 @@ export async function createSettlementFromFulfillment(input: {
           payeeOrganizationId: supplyPayeeOrganizationId,
           partnerId: request.supplyOffer.ownerPartnerId,
           fulfillmentRequestId: request.id,
+          customerOrderId: request.customerOrderId,
           settlementNo: nextSettlementNo(),
           direction: "PAYABLE",
           currency: converter.baseCurrency,

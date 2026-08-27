@@ -85,7 +85,8 @@ describe("navigation structure", () => {
     expect(hrefs).toContain("/resale");
     expect(hrefs).toContain("/finance/settlements");
     expect(hrefs).toContain("/reports");
-    expect(hrefs).toContain("/reports/team");
+    expect(hrefs).toContain("/reports/workload");
+    expect(hrefs).toContain("/reports/team-performance");
     expect(hrefs).toContain("/settings/personal");
     expect(hrefs).toContain("/settings/company");
     expect(hrefs).toContain("/settings/system");
@@ -105,7 +106,8 @@ describe("navigation structure", () => {
     expect(isNavigationHrefAllowed("FULFILLMENT", "/inventory/items")).toBe(true);
     expect(isNavigationHrefAllowed("FULFILLMENT", "/procurement")).toBe(false);
     expect(isNavigationHrefAllowed("FULFILLMENT", "/marketplace/my-offers")).toBe(false);
-    expect(isNavigationHrefAllowed("FULFILLMENT", "/reports/team")).toBe(false);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/reports/workload")).toBe(true);
+    expect(isNavigationHrefAllowed("FULFILLMENT", "/reports/team-performance")).toBe(false);
     expect(canUseQuickEntry("FULFILLMENT")).toBe(false);
   });
 });

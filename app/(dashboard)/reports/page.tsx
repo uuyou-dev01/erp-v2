@@ -34,11 +34,10 @@ import { buttonVariants } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
-
 function computeDateRange(
   range?: string,
   from?: string,
-  to?: string,
+  to?: string
 ): { dateFrom: Date; dateTo: Date } {
   const now = new Date();
   let dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -70,11 +69,7 @@ export default async function ReportsPage({
 }) {
   const { activeStoreId: storeId, organizationId } = await requireUserContext();
   const params = await searchParams;
-  const { dateFrom, dateTo } = computeDateRange(
-    params.range,
-    params.from,
-    params.to,
-  );
+  const { dateFrom, dateTo } = computeDateRange(params.range, params.from, params.to);
   const dateRange = { dateFrom, dateTo };
 
   const [
@@ -106,9 +101,12 @@ export default async function ReportsPage({
           <p className="text-muted-foreground">业务数据分析和可视化报表</p>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/reports/team" className={buttonVariants({ variant: "outline", size: "sm" })}>
+          <Link
+            href="/reports/workload"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
             <Users className="h-4 w-4" />
-            团队工作量
+            工作量中心
           </Link>
           <DateRangePicker />
           <CsvExportButton overview={overview} pnl={monthlyPnL} />
@@ -125,12 +123,9 @@ export default async function ReportsPage({
               <Warehouse className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                ¥{overview.inventory.totalValue}
-              </div>
+              <div className="text-2xl font-bold">¥{overview.inventory.totalValue}</div>
               <p className="text-xs text-muted-foreground">
-                {overview.inventory.lotCount} 入库库存 +{" "}
-                {overview.inventory.itemCount} 单品
+                {overview.inventory.lotCount} 入库库存 + {overview.inventory.itemCount} 单品
               </p>
             </CardContent>
           </Card>
@@ -141,9 +136,7 @@ export default async function ReportsPage({
               <ShoppingCart className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                ¥{overview.procurement.totalAmount}
-              </div>
+              <div className="text-2xl font-bold">¥{overview.procurement.totalAmount}</div>
               <p className="text-xs text-muted-foreground">
                 {overview.procurement.orderCount} 订单，
                 {overview.procurement.receivedCount} 已收货
@@ -157,9 +150,7 @@ export default async function ReportsPage({
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                ¥{overview.sales.totalAmount}
-              </div>
+              <div className="text-2xl font-bold">¥{overview.sales.totalAmount}</div>
               <p className="text-xs text-muted-foreground">
                 {overview.sales.orderCount} 订单，
                 {overview.sales.confirmedCount} 已确认
@@ -173,9 +164,7 @@ export default async function ReportsPage({
               <Globe className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {overview.listing.activeCount}
-              </div>
+              <div className="text-2xl font-bold">{overview.listing.activeCount}</div>
               <p className="text-xs text-muted-foreground">
                 共 {overview.listing.totalCount} 个上架记录
               </p>
@@ -202,9 +191,7 @@ export default async function ReportsPage({
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                ¥{settlementSummary.pendingNetPayable}
-              </div>
+              <div className="text-2xl font-bold">¥{settlementSummary.pendingNetPayable}</div>
               <p className="text-xs text-muted-foreground">
                 应付 ¥{settlementSummary.pendingPayable} / 应收抵扣 ¥
                 {settlementSummary.pendingReceivable}
@@ -218,12 +205,8 @@ export default async function ReportsPage({
               <CheckCircle className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                ¥{settlementSummary.paidNetPayable}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                已付 {settlementSummary.paidCount} 单
-              </p>
+              <div className="text-2xl font-bold">¥{settlementSummary.paidNetPayable}</div>
+              <p className="text-xs text-muted-foreground">已付 {settlementSummary.paidCount} 单</p>
             </CardContent>
           </Card>
 
@@ -233,9 +216,7 @@ export default async function ReportsPage({
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {settlementSummary.pendingCount}
-              </div>
+              <div className="text-2xl font-bold">{settlementSummary.pendingCount}</div>
               <p className="text-xs text-muted-foreground">
                 草稿 {settlementSummary.statusCounts.draft} / 已确认{" "}
                 {settlementSummary.statusCounts.confirmed}
@@ -249,9 +230,7 @@ export default async function ReportsPage({
               <Globe className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {settlementSummary.activeSettlementCount}
-              </div>
+              <div className="text-2xl font-bold">{settlementSummary.activeSettlementCount}</div>
               <p className="text-xs text-muted-foreground">
                 作废 {settlementSummary.statusCounts.void} 单
               </p>
@@ -263,12 +242,60 @@ export default async function ReportsPage({
       {/* 月度收支 */}
       <div>
         <div className="mb-4 flex items-center justify-between">
-          <div><h2 className="text-xl font-semibold">经营费用子账</h2><p className="text-sm text-muted-foreground">预估只用于参考；实际利润仅纳入已确认的实际费用。</p></div>
-          <Link href="/finance/charges" className={buttonVariants({ variant: "outline", size: "sm" })}>费用明细</Link>
+          <div>
+            <h2 className="text-xl font-semibold">经营费用子账</h2>
+            <p className="text-sm text-muted-foreground">
+              预估只用于参考；实际利润仅纳入已确认的实际费用。
+            </p>
+          </div>
+          <Link
+            href="/finance/charges"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            费用明细
+          </Link>
         </div>
-        {chargeSummary.currencies.length === 0 ? <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">当前期间暂无费用事件。</CardContent></Card> : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {chargeSummary.currencies.map((row) => <Card key={row.currency}><CardHeader className="pb-2"><CardTitle className="text-base">{row.currency} 费用</CardTitle></CardHeader><CardContent className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">预估应付 / 应收</span><span>{row.estimatedPayable} / {row.estimatedReceivable}</span></div><div className="flex justify-between"><span className="text-muted-foreground">确认应付 / 应收</span><span>{row.confirmedPayable} / {row.confirmedReceivable}</span></div><div className="flex justify-between border-t pt-2 font-medium"><span>实际利润影响</span><span>{row.actualProfitContribution}</span></div><div className="flex justify-between text-muted-foreground"><span>已结算付 / 收</span><span>{row.settledPayable} / {row.settledReceivable}</span></div></CardContent></Card>)}
-        </div>}
+        {chargeSummary.currencies.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              当前期间暂无费用事件。
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {chargeSummary.currencies.map((row) => (
+              <Card key={row.currency}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{row.currency} 费用</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">预估应付 / 应收</span>
+                    <span>
+                      {row.estimatedPayable} / {row.estimatedReceivable}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">确认应付 / 应收</span>
+                    <span>
+                      {row.confirmedPayable} / {row.confirmedReceivable}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2 font-medium">
+                    <span>实际利润影响</span>
+                    <span>{row.actualProfitContribution}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>已结算付 / 收</span>
+                    <span>
+                      {row.settledPayable} / {row.settledReceivable}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 月度收支 */}
@@ -310,36 +337,28 @@ export default async function ReportsPage({
                   <CheckCircle className="h-4 w-4 text-green-500" />
                   <span className="text-sm">可用入库库存</span>
                 </div>
-                <span className="text-sm font-medium">
-                  {inventoryReport.byStatus.active}
-                </span>
+                <span className="text-sm font-medium">{inventoryReport.byStatus.active}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-brand-blue" />
                   <span className="text-sm">可用单品</span>
                 </div>
-                <span className="text-sm font-medium">
-                  {inventoryReport.byStatus.available}
-                </span>
+                <span className="text-sm font-medium">{inventoryReport.byStatus.available}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-brand-pink" />
                   <span className="text-sm">已分配</span>
                 </div>
-                <span className="text-sm font-medium">
-                  {inventoryReport.byStatus.allocated}
-                </span>
+                <span className="text-sm font-medium">{inventoryReport.byStatus.allocated}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <BarChart3 className="h-4 w-4 text-gray-500" />
                   <span className="text-sm">已消耗</span>
                 </div>
-                <span className="text-sm font-medium">
-                  {inventoryReport.byStatus.consumed}
-                </span>
+                <span className="text-sm font-medium">{inventoryReport.byStatus.consumed}</span>
               </div>
             </div>
           </CardContent>

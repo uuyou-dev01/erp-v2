@@ -16,6 +16,7 @@ import {
   createSKUAction,
   convertSkuStructureAction,
   deleteSKUAction,
+  getSKUDeletionImpactAction,
   setSkuCatalogStatusAction,
   updateSKUAction,
 } from "@/app/actions/skus";
@@ -111,6 +112,69 @@ describe("sku action results", () => {
     if (!result.success) {
       expect(result.error).toContain("SKU不存在");
     }
+  });
+
+  it("explains deletion blockers and recommends preserving business history", async () => {
+    const sku = await prisma.sKU.create({
+      data: {
+        storeId,
+        code: `SKU_${runId}_DELETE_GUIDE`,
+        name: "Deletion guidance SKU",
+      },
+    });
+    const order = await prisma.purchaseOrder.create({
+      data: {
+        storeId,
+        orderNo: `PO_${runId}_DELETE_GUIDE`,
+        currency: "CNY",
+        subtotal: "100",
+        totalAmount: "100",
+      },
+    });
+    await prisma.purchaseLine.create({
+      data: {
+        purchaseOrderId: order.id,
+        skuId: sku.id,
+        quantity: "1",
+        unitPrice: "100",
+        lineAmount: "100",
+      },
+    });
+
+    const impactResult = await getSKUDeletionImpactAction(sku.id);
+    expect(impactResult.success).toBe(true);
+    if (!impactResult.success) return;
+    expect(impactResult.impact.canDelete).toBe(false);
+    expect(impactResult.impact.hasBusinessHistory).toBe(true);
+    expect(impactResult.impact.references).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "purchases", count: 1 })])
+    );
+
+    const deleteResult = await deleteSKUAction(sku.id);
+    expect(deleteResult.success).toBe(false);
+    if (!deleteResult.success) {
+      expect(deleteResult.error).toContain("请停用SKU");
+    }
+  });
+
+  it("allows physical deletion only for an unused empty SKU", async () => {
+    const sku = await prisma.sKU.create({
+      data: {
+        storeId,
+        code: `SKU_${runId}_EMPTY_DELETE`,
+        name: "Empty deletable SKU",
+      },
+    });
+
+    const impactResult = await getSKUDeletionImpactAction(sku.id);
+    expect(impactResult.success).toBe(true);
+    if (!impactResult.success) return;
+    expect(impactResult.impact).toMatchObject({
+      canDelete: true,
+      hasBusinessHistory: false,
+      references: [],
+    });
+    expect((await deleteSKUAction(sku.id)).success).toBe(true);
   });
 
   it("rejects invalid catalog reference price and currency on create", async () => {

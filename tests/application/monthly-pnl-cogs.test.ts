@@ -122,6 +122,7 @@ describe("monthly P&L inventory cost", () => {
         revenue: 100,
         platformFee: 10,
         shippingFee: 5,
+        logisticsFee: 0,
         purchaseCost: 40,
         profit: 45,
       },
@@ -208,6 +209,7 @@ describe("monthly P&L inventory cost", () => {
       revenue: 200,
       platformFee: 20,
       shippingFee: 10,
+      logisticsFee: 0,
       purchaseCost: 80,
       profit: 90,
     });

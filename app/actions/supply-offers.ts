@@ -7,6 +7,7 @@ import { getEffectiveSellableQuantity, getStoreStockBreakdown } from "@/lib/appl
 import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { buildAgreementRule, toAgreementJson } from "@/lib/application/trading-agreement";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { organizationPairKey } from "@/lib/application/organization-connections";
 import { prisma } from "@/lib/prisma";
 
 export type SupplyOfferItemInput = {
@@ -583,14 +584,66 @@ function visibleMarketplaceWhere(activeStoreId: string, organizationId?: string)
           some: {
             OR: [
               { viewerStoreId: activeStoreId },
-              ...(organizationId ? [{ viewerOrganizationId: organizationId }] : []),
-              ...(organizationId ? [{ partner: { organizationId } }] : []),
+              ...(organizationId
+                ? [
+                    {
+                      viewerOrganizationId: organizationId,
+                      organizationConnection: { status: "ACTIVE" },
+                    },
+                  ]
+                : []),
+              ...(organizationId
+                ? [
+                    {
+                      partner: { organizationId },
+                      organizationConnection: { status: "ACTIVE" },
+                    },
+                  ]
+                : []),
             ],
           },
         },
       },
     ],
   };
+}
+
+async function resolveConnectedVisiblePartners(input: {
+  partnerIds: string[];
+  storeId: string;
+  organizationId: string;
+}) {
+  const partners = await prisma.partner.findMany({
+    where: { id: { in: input.partnerIds }, storeId: input.storeId, status: "ACTIVE" },
+    select: { id: true, organizationId: true },
+  });
+  if (partners.length !== input.partnerIds.length) throw new Error("包含无效的可见合作方");
+  if (partners.some((partner) => !partner.organizationId)) {
+    throw new Error("可见合作方必须先连接到对方企业");
+  }
+
+  const pairKeys = partners.map((partner) =>
+    organizationPairKey(input.organizationId, partner.organizationId!)
+  );
+  const connections = await prisma.organizationConnection.findMany({
+    where: { pairKey: { in: pairKeys }, status: "ACTIVE" },
+    select: { id: true, pairKey: true },
+  });
+  const connectionByPairKey = new Map(
+    connections.map((connection) => [connection.pairKey, connection.id])
+  );
+
+  return partners.map((partner) => {
+    const connectionId = connectionByPairKey.get(
+      organizationPairKey(input.organizationId, partner.organizationId!)
+    );
+    if (!connectionId) throw new Error("可见合作方的企业连接已失效");
+    return {
+      ...partner,
+      organizationId: partner.organizationId!,
+      organizationConnectionId: connectionId,
+    };
+  });
 }
 
 export async function getMarketplaceOffers(storeId?: string) {
@@ -955,11 +1008,11 @@ export async function createSupplyOfferAction(data: {
     });
     const viewerStoreIds = normalizeViewerStoreIds(data.viewerStoreIds, context.storeIds);
     const viewerPartnerIds = normalizeIds(data.viewerPartnerIds);
-    const visiblePartners = await prisma.partner.findMany({
-      where: { id: { in: viewerPartnerIds }, storeId: context.activeStoreId, status: "ACTIVE" },
-      select: { id: true, organizationId: true },
+    const visiblePartners = await resolveConnectedVisiblePartners({
+      partnerIds: viewerPartnerIds,
+      storeId: context.activeStoreId,
+      organizationId: context.organizationId,
     });
-    if (visiblePartners.length !== viewerPartnerIds.length) throw new Error("包含无效的可见合作方");
     const channelCreates = await resolveOfferChannelCreates({
       organizationId: context.organizationId,
       storeId: context.activeStoreId,
@@ -1042,6 +1095,7 @@ export async function createSupplyOfferAction(data: {
               scope: "PARTNER",
               partnerId: partner.id,
               viewerOrganizationId: partner.organizationId,
+              organizationConnectionId: partner.organizationConnectionId,
             })),
           ],
         },
@@ -1173,11 +1227,11 @@ export async function updateSupplyOfferAction(
     if (totalQty.lt(existing.reservedQty)) throw new Error("发布数量不能小于当前订单已预留数量");
     const viewerStoreIds = normalizeViewerStoreIds(data.viewerStoreIds, context.storeIds);
     const viewerPartnerIds = normalizeIds(data.viewerPartnerIds);
-    const visiblePartners = await prisma.partner.findMany({
-      where: { id: { in: viewerPartnerIds }, storeId: context.activeStoreId, status: "ACTIVE" },
-      select: { id: true, organizationId: true },
+    const visiblePartners = await resolveConnectedVisiblePartners({
+      partnerIds: viewerPartnerIds,
+      storeId: context.activeStoreId,
+      organizationId: context.organizationId,
     });
-    if (visiblePartners.length !== viewerPartnerIds.length) throw new Error("包含无效的可见合作方");
     const channelCreates = await resolveOfferChannelCreates({
       organizationId: context.organizationId,
       storeId: context.activeStoreId,
@@ -1315,6 +1369,7 @@ export async function updateSupplyOfferAction(
                 scope: "PARTNER",
                 partnerId: partner.id,
                 viewerOrganizationId: partner.organizationId,
+                organizationConnectionId: partner.organizationConnectionId,
               })),
             ],
           },

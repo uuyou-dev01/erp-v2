@@ -57,13 +57,13 @@ export function PartnerForm({
     contactPhone: initialData?.contactPhone ?? "",
     defaultCurrency: initialData?.defaultCurrency ?? "JPY",
     notes: initialData?.notes ?? "",
-    organizationCode: initialData?.organization?.code ?? "",
     relationshipType: primaryRelationship?.relationshipType ?? "SUPPLY",
     visibilityScope: primaryRelationship?.visibilityScope ?? "PRIVATE",
     relationshipStatus: primaryRelationship?.status ?? "ACTIVE",
     commissionRate: primaryRelationship?.commissionRate ?? "",
     serviceFeeRate: primaryRelationship?.serviceFeeRate ?? "",
-    settlementCurrency: primaryRelationship?.settlementCurrency ?? initialData?.defaultCurrency ?? "JPY",
+    settlementCurrency:
+      primaryRelationship?.settlementCurrency ?? initialData?.defaultCurrency ?? "JPY",
     relationshipNotes: primaryRelationship?.notes ?? "",
   });
 
@@ -88,7 +88,6 @@ export function PartnerForm({
         contactPhone: formData.contactPhone || undefined,
         defaultCurrency: formData.defaultCurrency || undefined,
         notes: formData.notes || undefined,
-        organizationCode: formData.organizationCode || undefined,
       };
 
       const partnerResult = initialData
@@ -159,20 +158,12 @@ export function PartnerForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="partner-organization-code">关联经营主体代码（可选）</Label>
-          <Input
-            id="partner-organization-code"
-            value={formData.organizationCode}
-            onChange={(event) =>
-              updateField({ organizationCode: event.target.value.toUpperCase() })
-            }
-            placeholder="由合作方提供，例如 FRIEND-B"
-          />
-          <p className="text-xs text-muted-foreground">关联后，定向货盘才能被对方账号看到；供应商无需登录时可留空。</p>
-        </div>
-        <div className="space-y-2">
           <Label htmlFor="partner-type">类型</Label>
-          <Select id="partner-type" value={formData.type} onChange={(event) => updateField({ type: event.target.value })}>
+          <Select
+            id="partner-type"
+            value={formData.type}
+            onChange={(event) => updateField({ type: event.target.value })}
+          >
             <option value="SUPPLIER">供货方</option>
             <option value="RESELLER">代卖方</option>
             <option value="FULFILLER">代发方</option>
@@ -185,26 +176,47 @@ export function PartnerForm({
       <div className="grid gap-4 md:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="contact-name">联系人</Label>
-          <Input id="contact-name" value={formData.contactName} onChange={(event) => updateField({ contactName: event.target.value })} />
+          <Input
+            id="contact-name"
+            value={formData.contactName}
+            onChange={(event) => updateField({ contactName: event.target.value })}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="contact-email">邮箱</Label>
-          <Input id="contact-email" type="email" value={formData.contactEmail} onChange={(event) => updateField({ contactEmail: event.target.value })} />
+          <Input
+            id="contact-email"
+            type="email"
+            value={formData.contactEmail}
+            onChange={(event) => updateField({ contactEmail: event.target.value })}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="contact-phone">电话</Label>
-          <Input id="contact-phone" value={formData.contactPhone} onChange={(event) => updateField({ contactPhone: event.target.value })} />
+          <Input
+            id="contact-phone"
+            value={formData.contactPhone}
+            onChange={(event) => updateField({ contactPhone: event.target.value })}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="default-currency">默认币种</Label>
-          <Input id="default-currency" value={formData.defaultCurrency} onChange={(event) => updateField({ defaultCurrency: event.target.value.toUpperCase() })} />
+          <Input
+            id="default-currency"
+            value={formData.defaultCurrency}
+            onChange={(event) => updateField({ defaultCurrency: event.target.value.toUpperCase() })}
+          />
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-5">
         <div className="space-y-2">
           <Label htmlFor="relationship-type">关系</Label>
-          <Select id="relationship-type" value={formData.relationshipType} onChange={(event) => updateField({ relationshipType: event.target.value })}>
+          <Select
+            id="relationship-type"
+            value={formData.relationshipType}
+            onChange={(event) => updateField({ relationshipType: event.target.value })}
+          >
             <option value="SUPPLY">供货</option>
             <option value="RESELL">代卖</option>
             <option value="FULFILLMENT">代发</option>
@@ -213,7 +225,11 @@ export function PartnerForm({
         </div>
         <div className="space-y-2">
           <Label htmlFor="visibility-scope">默认可见性</Label>
-          <Select id="visibility-scope" value={formData.visibilityScope} onChange={(event) => updateField({ visibilityScope: event.target.value })}>
+          <Select
+            id="visibility-scope"
+            value={formData.visibilityScope}
+            onChange={(event) => updateField({ visibilityScope: event.target.value })}
+          >
             <option value="PRIVATE">私有</option>
             <option value="PARTNER_ONLY">合作方可见</option>
             <option value="PUBLIC">公开</option>
@@ -221,21 +237,48 @@ export function PartnerForm({
         </div>
         <div className="space-y-2">
           <Label htmlFor="commission-rate">佣金比例</Label>
-          <Input id="commission-rate" type="number" step="0.0001" min="0" max="1" value={formData.commissionRate} onChange={(event) => updateField({ commissionRate: event.target.value })} />
+          <Input
+            id="commission-rate"
+            type="number"
+            step="0.0001"
+            min="0"
+            max="1"
+            value={formData.commissionRate}
+            onChange={(event) => updateField({ commissionRate: event.target.value })}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="service-rate">服务费比例</Label>
-          <Input id="service-rate" type="number" step="0.0001" min="0" max="1" value={formData.serviceFeeRate} onChange={(event) => updateField({ serviceFeeRate: event.target.value })} />
+          <Input
+            id="service-rate"
+            type="number"
+            step="0.0001"
+            min="0"
+            max="1"
+            value={formData.serviceFeeRate}
+            onChange={(event) => updateField({ serviceFeeRate: event.target.value })}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="settlement-currency">结算币种</Label>
-          <Input id="settlement-currency" value={formData.settlementCurrency} onChange={(event) => updateField({ settlementCurrency: event.target.value.toUpperCase() })} />
+          <Input
+            id="settlement-currency"
+            value={formData.settlementCurrency}
+            onChange={(event) =>
+              updateField({ settlementCurrency: event.target.value.toUpperCase() })
+            }
+          />
         </div>
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="partner-notes">备注</Label>
-        <Textarea id="partner-notes" rows={3} value={formData.notes} onChange={(event) => updateField({ notes: event.target.value })} />
+        <Textarea
+          id="partner-notes"
+          rows={3}
+          value={formData.notes}
+          onChange={(event) => updateField({ notes: event.target.value })}
+        />
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}

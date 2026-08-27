@@ -41,4 +41,5 @@ next-env.d.ts
 
 # local Codex work and generated OCR artifacts
 /.codex/
+/.codex-audit/
 /eng.traineddata

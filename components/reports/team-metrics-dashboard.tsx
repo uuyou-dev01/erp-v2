@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { TeamMetricsResult } from "@/lib/application/team-metrics";
+import type { WorkMetricsResult } from "@/lib/application/work-metrics";
 
 interface Option {
   id: string;
@@ -28,6 +29,7 @@ interface TeamMetricsDashboardProps {
   platforms: Option[];
   members: Option[];
   metrics: TeamMetricsResult;
+  workload: WorkMetricsResult;
   filters: {
     storeId: string;
     platformId: string;
@@ -43,8 +45,17 @@ function formatCount(value: string) {
   return Number.isInteger(number) ? String(number) : number.toFixed(2);
 }
 
-function exportCsv(metrics: TeamMetricsResult) {
+function exportCsv(metrics: TeamMetricsResult, workload: WorkMetricsResult) {
   const lines = [
+    ["成员", "记录数", ...workload.types.map((type) => `${type.name}(${type.unit})`)].join(","),
+    ...workload.rows.map((row) =>
+      [
+        row.userName,
+        row.eventCount,
+        ...workload.types.map((type) => row.values[type.id]?.quantity ?? "0"),
+      ].join(",")
+    ),
+    "",
     "成员,上架任务,发货任务,发货订单,发货件数,结算任务,逾期任务,任务ID",
     ...metrics.rows.map((row) =>
       [
@@ -87,6 +98,7 @@ export function TeamMetricsDashboard({
   platforms,
   members,
   metrics,
+  workload,
   filters,
 }: TeamMetricsDashboardProps) {
   const cards = [
@@ -138,11 +150,105 @@ export function TeamMetricsDashboard({
           <Button type="submit" className="flex-1">
             查询
           </Button>
-          <Button type="button" variant="outline" size="icon" onClick={() => exportCsv(metrics)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => exportCsv(metrics, workload)}
+          >
             <Download className="h-4 w-4" />
           </Button>
         </div>
       </form>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>工作量记录</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              类型、数量和单位来自工作记录，可继续增加收货、质检、打包等类型。
+            </p>
+          </div>
+          <span className="text-sm text-muted-foreground">{workload.eventCount} 条记录</span>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>成员</TableHead>
+                  <TableHead className="text-right">记录数</TableHead>
+                  {workload.types.map((type) => (
+                    <TableHead key={type.id} className="min-w-28 text-right">
+                      {type.name}
+                      <span className="ml-1 font-normal text-muted-foreground">({type.unit})</span>
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {workload.rows.length ? (
+                  workload.rows.map((row) => (
+                    <TableRow key={row.userId}>
+                      <TableCell className="font-medium">{row.userName}</TableCell>
+                      <TableCell className="text-right">{row.eventCount}</TableCell>
+                      {workload.types.map((type) => {
+                        const value = row.values[type.id];
+                        return (
+                          <TableCell key={type.id} className="text-right">
+                            {value ? formatCount(value.quantity) : "—"}
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={Math.max(2, workload.types.length + 2)}
+                      className="py-10 text-center text-muted-foreground"
+                    >
+                      当前筛选范围内暂无工作量记录
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {workload.records.length ? (
+            <div>
+              <p className="mb-2 text-sm font-medium">最近记录</p>
+              <div className="max-h-72 overflow-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>时间</TableHead>
+                      <TableHead>成员</TableHead>
+                      <TableHead>工作</TableHead>
+                      <TableHead className="text-right">工作量</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {workload.records.slice(0, 20).map((record) => (
+                      <TableRow key={record.id}>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                          {new Date(record.occurredAt).toLocaleString("zh-CN")}
+                        </TableCell>
+                        <TableCell>{record.userName}</TableCell>
+                        <TableCell>{record.workName}</TableCell>
+                        <TableCell className="text-right">
+                          {formatCount(record.quantity)} {record.unit}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-4">
         {cards.map(([label, value]) => (
@@ -160,7 +266,12 @@ export function TeamMetricsDashboard({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>成员工作量</CardTitle>
-          <Button type="button" variant="outline" size="sm" onClick={() => exportCsv(metrics)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => exportCsv(metrics, workload)}
+          >
             <Download className="h-4 w-4" />
             导出 CSV
           </Button>

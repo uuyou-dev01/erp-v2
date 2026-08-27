@@ -11,10 +11,10 @@ export const dynamic = "force-dynamic";
 export default async function NewOpeningStockPage({
   searchParams,
 }: {
-  searchParams: Promise<{ skuIds?: string }>;
+  searchParams: Promise<{ skuIds?: string; createdLocationId?: string }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
-  const { skuIds } = await searchParams;
+  const { skuIds, createdLocationId } = await searchParams;
   const [store, skus, locations] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
@@ -43,17 +43,17 @@ export default async function NewOpeningStockPage({
   const defaultDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
   }).format(new Date());
+  const returnQuery = new URLSearchParams();
+  if (skuIds) returnQuery.set("skuIds", skuIds);
+  const returnTo = `/inventory/opening-stock/new${
+    returnQuery.size > 0 ? `?${returnQuery.toString()}` : ""
+  }`;
 
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-2">
         <Link href="/inventory/opening-stock">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="mt-0.5"
-            aria-label="返回期初库存"
-          >
+          <Button variant="ghost" size="icon" className="mt-0.5" aria-label="返回期初库存">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
@@ -77,6 +77,8 @@ export default async function NewOpeningStockPage({
         }))}
         locations={locations}
         presetSkuIds={(skuIds ?? "").split(",").filter(Boolean)}
+        createdLocationId={createdLocationId}
+        returnTo={returnTo}
       />
     </div>
   );

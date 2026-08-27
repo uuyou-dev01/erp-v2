@@ -305,7 +305,7 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
   description: string | null;
   meta: SkuCatalogMeta;
   variantAttributes: Record<string, unknown>;
-  parentSku: { id: string; code: string; name: string } | null;
+  parentSku: { id: string; code: string; name: string; imageUrl: string | null } | null;
   childSkus: Array<{ id: string; code: string; name: string }>;
   inventorySections: {
     newStockLots: Array<{
@@ -842,7 +842,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
   const sku = await prisma.sKU.findUnique({
     where: { id },
     include: {
-      parentSku: { select: { id: true, code: true, name: true } },
+      parentSku: { select: { id: true, code: true, name: true, imageUrl: true } },
       childSkus: {
         select: { id: true, code: true, name: true },
         orderBy: { code: "asc" },

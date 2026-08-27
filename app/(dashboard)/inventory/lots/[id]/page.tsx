@@ -15,6 +15,7 @@ import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { Package, MapPin, DollarSign, Activity } from "lucide-react";
 import { LotSplitForm } from "@/components/inventory/lot-split-form";
 import { BackButton } from "@/components/shared/back-button";
+import { InventoryLotDeleteButton } from "@/components/inventory/inventory-lot-delete-button";
 
 export const dynamic = "force-dynamic";
 
@@ -51,12 +52,20 @@ export default async function InventoryLotDetailPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start gap-3">
-        <BackButton label="" fallbackHref="/inventory/lots" className="mt-0.5 shrink-0" />
-        <div>
-          <h1 className="text-3xl font-bold">入库库存详情</h1>
-          <p className="text-muted-foreground">查看库存来源、成本和交易历史</p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <BackButton label="" fallbackHref="/inventory/lots" className="mt-0.5 shrink-0" />
+          <div>
+            <h1 className="text-3xl font-bold">入库库存详情</h1>
+            <p className="text-muted-foreground">查看库存来源、成本和交易历史</p>
+          </div>
         </div>
+        <InventoryLotDeleteButton
+          id={id}
+          skuCode={lot.sku.code}
+          storeId={storeId}
+          redirectAfterDelete="/inventory/lots"
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

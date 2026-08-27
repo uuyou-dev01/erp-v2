@@ -53,6 +53,34 @@ describe("report valid sales status filters", () => {
         orderData("RETURNED", "300", "30", "15"),
       ],
     });
+    await prisma.logisticsCost.createMany({
+      data: [
+        {
+          storeId,
+          sourceType: "PURCHASE_ORDER",
+          sourceId: `${runId}_purchase`,
+          amount: "2",
+          currency: "CNY",
+          occurredAt: new Date("2026-06-20T12:00:00.000Z"),
+        },
+        {
+          storeId,
+          sourceType: "INBOUND_SHIPMENT",
+          sourceId: `${runId}_transfer`,
+          amount: "3",
+          currency: "CNY",
+          occurredAt: new Date("2026-06-21T12:00:00.000Z"),
+        },
+        {
+          storeId,
+          sourceType: "CONSOLIDATION_BATCH",
+          sourceId: `${runId}_consolidation`,
+          amount: "4",
+          currency: "CNY",
+          occurredAt: new Date("2026-06-22T12:00:00.000Z"),
+        },
+      ],
+    });
   });
 
   afterAll(async () => {
@@ -70,8 +98,9 @@ describe("report valid sales status filters", () => {
         revenue: 100,
         platformFee: 10,
         shippingFee: 5,
+        logisticsFee: 9,
         purchaseCost: 0,
-        profit: 85,
+        profit: 76,
       },
     ]);
   });
@@ -93,6 +122,9 @@ describe("report valid sales status filters", () => {
     await expect(getFeeDetails(storeId, range)).resolves.toEqual({
       platformFee: "10.00",
       shippingFee: "5.00",
+      purchaseShippingFee: "2.00",
+      transferShippingFee: "3.00",
+      consolidationShippingFee: "4.00",
       agentFee: "0.00",
     });
   });

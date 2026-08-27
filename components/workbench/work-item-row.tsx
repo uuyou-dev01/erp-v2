@@ -27,7 +27,9 @@ interface WorkItemRowProps {
   onClick?: () => void;
 }
 
-const QUEUE_META: Partial<Record<WorkItem["queue"], { icon: LucideIcon; className: string; badge: string; mark: string }>> = {
+const QUEUE_META: Partial<
+  Record<WorkItem["queue"], { icon: LucideIcon; className: string; badge: string; mark: string }>
+> = {
   missingLogistics: {
     icon: Truck,
     className: "text-blue-600",
@@ -136,12 +138,11 @@ export function WorkItemRow({
   const visibleLines = lineItems.slice(0, 4);
   const hiddenLineCount = Math.max(0, lineItems.length - visibleLines.length);
 
-  const canCancelPurchase = item.entityType === "purchaseOrder" && item.queue === "missingLogistics";
+  const canCancelPurchase =
+    item.entityType === "purchaseOrder" && item.queue === "missingLogistics";
   const tracking = trackingLabel(item);
   const physicalStateLabel =
-    typeof item.metadata?.physicalStateLabel === "string"
-      ? item.metadata.physicalStateLabel
-      : null;
+    typeof item.metadata?.physicalStateLabel === "string" ? item.metadata.physicalStateLabel : null;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -182,15 +183,26 @@ export function WorkItemRow({
             {item.currentStatusLabel}
           </Badge>
           {item.lifecycleStage && (
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground"
+            >
               {physicalStateLabel ?? LIFECYCLE_LABELS[item.lifecycleStage]}
             </Badge>
           )}
           {item.taskId && (
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-emerald-700">
+            <Badge
+              variant="outline"
+              className="h-5 px-1.5 text-[10px] font-normal text-emerald-700"
+            >
               {item.taskAssignedToName ? `负责人 ${item.taskAssignedToName}` : "待指派"}
             </Badge>
           )}
+          {item.taskFulfillmentLocationNames?.length ? (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-blue-700">
+              发货仓 {item.taskFulfillmentLocationNames.join("、")}
+            </Badge>
+          ) : null}
           {item.exceptionMessage && <ExceptionBadge message={item.exceptionMessage} />}
           <span className="text-xs text-muted-foreground">
             {[item.subtitle ?? QUEUE_LABELS[item.queue], tracking, waitingLabel(item.waitingSince)]
@@ -205,9 +217,7 @@ export function WorkItemRow({
                 key={line.id}
                 className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground"
               >
-                <span className="min-w-0 truncate">
-                  {line.title}
-                </span>
+                <span className="min-w-0 truncate">{line.title}</span>
                 <span className="shrink-0 tabular-nums">
                   x{compactNumber(line.quantity)} · {compactNumber(line.unitPrice)}
                 </span>

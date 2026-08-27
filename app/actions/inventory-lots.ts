@@ -12,6 +12,7 @@ import {
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 /**
  * 获取 store 内每个 SKU 的可售/转运/暂存库存细分（plain object 版，可跨 server action 边界传输）
@@ -314,31 +315,158 @@ export async function convertLotToItemUnitAction(data: ConvertLotToItemUnitInput
 }
 
 export async function deleteInventoryLot(id: string) {
-  // Check if lot has any stock ledger entries besides the initial inbound
-  const ledgerCount = await prisma.stockLedger.count({
-    where: {
-      entityType: "LOT",
-      entityId: id,
+  const lot = await prisma.inventoryLot.findUnique({
+    where: { id },
+    select: { storeId: true },
+  });
+  if (!lot) throw new Error("库存批次不存在或已被删除");
+  await deleteInventoryLotForStore(id, lot.storeId);
+}
+
+export interface InventoryLotDeletionImpact {
+  canDelete: boolean;
+  skuId: string;
+  skuCode: string;
+  blockers: Array<{
+    key: "ledgers" | "orders" | "fulfillment" | "splits" | "sourceDocuments" | "returns";
+    label: string;
+    count: number;
+    description: string;
+  }>;
+}
+
+async function buildInventoryLotDeletionImpact(
+  id: string,
+  storeId: string
+): Promise<InventoryLotDeletionImpact> {
+  const lot = await prisma.inventoryLot.findFirst({
+    where: { id, storeId },
+    select: {
+      skuId: true,
+      sku: { select: { code: true } },
+      _count: { select: { allocations: true } },
     },
   });
+  if (!lot) throw new Error("库存批次不存在或无权访问");
 
+  const [
+    ledgerCount,
+    fulfillmentCount,
+    sourceSplitCount,
+    targetSplitCount,
+    quickEntryCount,
+    openingStockCount,
+    returnCount,
+  ] = await Promise.all([
+    prisma.stockLedger.count({
+      where: { storeId, entityType: "LOT", entityId: id },
+    }),
+    prisma.fulfillmentInventoryAllocation.count({ where: { lotId: id } }),
+    prisma.inventorySplit.count({ where: { storeId, sourceType: "LOT", sourceId: id } }),
+    prisma.inventorySplitLine.count({ where: { targetType: "LOT", targetId: id } }),
+    prisma.quickEntry.count({ where: { storeId, generatedLotId: id } }),
+    prisma.openingStockLine.count({ where: { generatedLotId: id } }),
+    prisma.afterSalesReceipt.count({ where: { returnedLotId: id } }),
+  ]);
+
+  const blockers: InventoryLotDeletionImpact["blockers"] = [];
   if (ledgerCount > 1) {
-    throw new Error("Cannot delete lot with transaction history. Set status to CONSUMED instead.");
+    blockers.push({
+      key: "ledgers",
+      label: "库存流水",
+      count: ledgerCount,
+      description: "该批次已发生盘点、出库、转运或拆分等变动，必须保留用于库存追溯。",
+    });
+  }
+  if (lot._count.allocations > 0) {
+    blockers.push({
+      key: "orders",
+      label: "销售分配",
+      count: lot._count.allocations,
+      description: "该批次已被销售订单引用，删除会破坏订单成本记录。",
+    });
+  }
+  if (fulfillmentCount > 0) {
+    blockers.push({
+      key: "fulfillment",
+      label: "履约占用",
+      count: fulfillmentCount,
+      description: "该批次已进入履约流程，需要保留来源关系。",
+    });
+  }
+  const splitCount = sourceSplitCount + targetSplitCount;
+  if (splitCount > 0) {
+    blockers.push({
+      key: "splits",
+      label: "拆分记录",
+      count: splitCount,
+      description: "该批次属于拆分链路，删除会中断成本追溯。",
+    });
+  }
+  const sourceDocumentCount = quickEntryCount + openingStockCount;
+  if (sourceDocumentCount > 0) {
+    blockers.push({
+      key: "sourceDocuments",
+      label: "来源单据",
+      count: sourceDocumentCount,
+      description: "该批次由快速录入或期初库存单据生成，应从来源单据处理。",
+    });
+  }
+  if (returnCount > 0) {
+    blockers.push({
+      key: "returns",
+      label: "售后退回",
+      count: returnCount,
+      description: "该批次由售后退回形成，需要保留售后追溯关系。",
+    });
   }
 
-  // Delete in transaction (lot and its initial ledger entry)
+  return {
+    canDelete: blockers.length === 0,
+    skuId: lot.skuId,
+    skuCode: lot.sku.code,
+    blockers,
+  };
+}
+
+export async function getInventoryLotDeletionImpactAction(id: string, storeId: string) {
+  try {
+    const context = await requireUserContext({ storeId });
+    const impact = await buildInventoryLotDeletionImpact(id, context.activeStoreId);
+    return actionSuccess({ impact });
+  } catch (error) {
+    return toActionFailure(error, "无法检查库存批次关联数据，请重试");
+  }
+}
+
+async function deleteInventoryLotForStore(id: string, storeId: string) {
+  const context = await requireUserContext({ storeId });
+  const impact = await buildInventoryLotDeletionImpact(id, context.activeStoreId);
+  if (!impact.canDelete) {
+    throw new Error("该批次已有库存或业务历史，不能删除。请保留批次并停用对应 SKU。");
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.stockLedger.deleteMany({
-      where: {
-        entityType: "LOT",
-        entityId: id,
-      },
+      where: { storeId: context.activeStoreId, entityType: "LOT", entityId: id },
     });
-
-    await tx.inventoryLot.delete({
-      where: { id },
+    const deleted = await tx.inventoryLot.deleteMany({
+      where: { id, storeId: context.activeStoreId },
     });
+    if (deleted.count === 0) throw new Error("库存批次不存在或已被删除");
   });
 
   revalidatePath("/inventory/lots");
+  revalidatePath(`/inventory/lots/${id}`);
+  revalidatePath("/inventory/skus");
+  revalidatePath(`/inventory/skus/${impact.skuId}`);
+}
+
+export async function deleteInventoryLotAction(id: string, storeId: string) {
+  try {
+    await deleteInventoryLotForStore(id, storeId);
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "删除库存批次失败，请重试");
+  }
 }

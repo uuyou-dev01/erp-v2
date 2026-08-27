@@ -15,6 +15,7 @@ interface PnLRow {
   revenue: number;
   platformFee: number;
   shippingFee: number;
+  logisticsFee: number;
   purchaseCost: number;
   profit: number;
 }
@@ -42,10 +43,10 @@ export function CsvExportButton({ overview, pnl }: CsvExportButtonProps) {
     lines.push(`业务概览,上架总数,${overview.listing.totalCount}`);
     lines.push("");
 
-    lines.push("月份,收入,平台费,运费,采购成本,利润");
+    lines.push("月份,收入,平台费,销售履约运费,采购/转仓/集运费,采购成本,利润");
     pnl.forEach((row) => {
       lines.push(
-        `${row.month},${row.revenue.toFixed(2)},${row.platformFee.toFixed(2)},${row.shippingFee.toFixed(2)},${row.purchaseCost.toFixed(2)},${row.profit.toFixed(2)}`,
+        `${row.month},${row.revenue.toFixed(2)},${row.platformFee.toFixed(2)},${row.shippingFee.toFixed(2)},${row.logisticsFee.toFixed(2)},${row.purchaseCost.toFixed(2)},${row.profit.toFixed(2)}`,
       );
     });
 

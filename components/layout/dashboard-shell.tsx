@@ -17,6 +17,7 @@ export function DashboardShell({
   activeOrganizationId,
   account,
   role,
+  collaboration,
 }: {
   children: React.ReactNode;
   stores: Array<{ id: string; name: string }>;
@@ -29,6 +30,10 @@ export function DashboardShell({
     organizationName: string;
   };
   role: string;
+  collaboration: {
+    hasWarehouseCollaboration: boolean;
+    pendingTaskCount: number;
+  };
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -52,10 +57,12 @@ export function DashboardShell({
           role={role}
           mobileOpen={mobileMenuOpen}
           onMobileClose={() => setMobileMenuOpen(false)}
+          collaboration={collaboration}
         />
       </Suspense>
       <div className="flex min-w-0 flex-1 flex-col">
         <Header
+          role={role}
           stores={stores}
           activeStoreId={activeStoreId}
           organizations={organizations}

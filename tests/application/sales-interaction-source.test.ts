@@ -46,4 +46,20 @@ describe("sales interaction source hygiene", () => {
     expect(dialogSource).toMatch(/actualSalePrice:\s*form\.actualSalePrice \|\| undefined/);
     expect(pageSource).toContain("defaultSalePrice={order.totalPaid.toString()}");
   });
+
+  it("keeps the sales list action-first and exposes resale operations", () => {
+    const pageSource = readFileSync(
+      join(process.cwd(), "app/(dashboard)/sales/page.tsx"),
+      "utf8"
+    );
+
+    expect(pageSource).toContain("订单工作视图");
+    expect(pageSource).toContain("待我处理");
+    expect(pageSource).toContain("协作中");
+    expect(pageSource).toContain("我方代卖");
+    expect(pageSource).toContain("下一步");
+    expect(pageSource).not.toContain("地区订单结构");
+    expect(pageSource).not.toContain("平台订单结构");
+    expect(pageSource).not.toContain("订单状态说明");
+  });
 });

@@ -28,17 +28,6 @@ function revalidatePartnerSurfaces(id?: string) {
   if (id) revalidatePath(`/settings/partners?partnerId=${id}`);
 }
 
-async function resolveLinkedOrganizationId(code?: string) {
-  const normalized = code?.trim().toUpperCase();
-  if (!normalized) return null;
-  const organization = await prisma.organization.findUnique({
-    where: { code: normalized },
-    select: { id: true },
-  });
-  if (!organization) throw new Error("没有找到该经营主体代码，请让对方确认代码后再关联");
-  return organization.id;
-}
-
 export async function getPartners(storeId?: string) {
   const context = await requireUserContext(storeId ? { storeId } : undefined);
   const partners = await prisma.partner.findMany({
@@ -47,6 +36,15 @@ export async function getPartners(storeId?: string) {
       organization: { select: { id: true, name: true, code: true } },
       tradingRelationships: {
         orderBy: { updatedAt: "desc" },
+      },
+      organizationConnections: {
+        select: {
+          id: true,
+          status: true,
+          targetOrganization: { select: { name: true, collaborationCode: true } },
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 1,
       },
     },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
@@ -86,19 +84,16 @@ export async function createPartnerAction(data: {
   serviceFeeRate?: string;
   settlementCurrency?: string;
   relationshipNotes?: string;
-  organizationCode?: string;
 }) {
   try {
     const context = await requireUserContext(data.storeId ? { storeId: data.storeId } : undefined);
     const code = normalizeCode(data.code);
     const name = data.name.trim();
     if (!name) throw new Error("合作方名称不能为空");
-    const organizationId = await resolveLinkedOrganizationId(data.organizationCode);
 
     const partner = await prisma.partner.create({
       data: {
         storeId: context.activeStoreId,
-        organizationId,
         code,
         name,
         type: data.type || "SUPPLIER",
@@ -141,7 +136,6 @@ export async function updatePartnerAction(
     contactPhone?: string;
     defaultCurrency?: string;
     notes?: string;
-    organizationCode?: string;
   }
 ) {
   try {
@@ -150,13 +144,11 @@ export async function updatePartnerAction(
     const context = await requireUserContext({ storeId: data.storeId ?? existing.storeId });
     const name = data.name.trim();
     if (!name) throw new Error("合作方名称不能为空");
-    const organizationId = await resolveLinkedOrganizationId(data.organizationCode);
 
     const partner = await prisma.partner.update({
       where: { id },
       data: {
         storeId: context.activeStoreId,
-        organizationId,
         code: normalizeCode(data.code),
         name,
         type: data.type || "SUPPLIER",

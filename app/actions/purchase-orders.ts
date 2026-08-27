@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { recordWork } from "@/lib/application/work-records";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
 import { createInboundInventoryLot, createInboundItemUnit } from "@/lib/application/inventory";
@@ -10,7 +11,7 @@ import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { hasLocationCapability } from "@/lib/auth/scope-access";
 import { ensureSystemChargeCategories } from "@/lib/application/multi-party-foundation";
-import { convertMoney } from "@/lib/fx";
+import { convertMoney, getLatestFxRate } from "@/lib/fx";
 import {
   itemConditionReadyForSale,
   normalizeItemConditionType,
@@ -745,6 +746,132 @@ export async function updatePurchaseOrderStatus(
   }
 }
 
+export async function updatePurchaseOrderBusinessDateAction(id: string, dateInput: string) {
+  try {
+    const normalizedDate = dateInput.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+      throw new Error("请填写有效的采购日期");
+    }
+    const businessDate = new Date(`${normalizedDate}T00:00:00.000Z`);
+    if (
+      Number.isNaN(businessDate.getTime()) ||
+      businessDate.toISOString().slice(0, 10) !== normalizedDate
+    ) {
+      throw new Error("请填写有效的采购日期");
+    }
+
+    const order = await prisma.purchaseOrder.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        storeId: true,
+        orderedAt: true,
+        receivedAt: true,
+        currency: true,
+        fxRate: true,
+        costAllocationStatus: true,
+        store: { select: { currency: true } },
+        _count: { select: { inboundShipments: true } },
+      },
+    });
+    if (!order) throw new Error("采购单不存在");
+
+    const context = await requireUserContext({ storeId: order.storeId });
+    const canRefreshFx =
+      order.costAllocationStatus === "PENDING" &&
+      order.currency.toUpperCase() !== order.store.currency.toUpperCase();
+    const refreshedFxRate = canRefreshFx
+      ? await getLatestFxRate(order.currency, order.store.currency, businessDate)
+      : null;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const linkedEntries = await tx.quickEntry.findMany({
+        where: { storeId: order.storeId, generatedPurchaseOrderId: id },
+        select: { id: true },
+      });
+      const linkedEntryIds = linkedEntries.map((entry) => entry.id);
+      const syncDerivedReceiptDate =
+        linkedEntryIds.length > 0 &&
+        Boolean(order.receivedAt) &&
+        order._count.inboundShipments === 0;
+
+      await tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          orderedAt: businessDate,
+          receivedAt: syncDerivedReceiptDate ? businessDate : undefined,
+          fxRate: refreshedFxRate?.toFixed(8),
+        },
+      });
+
+      if (linkedEntryIds.length > 0) {
+        await tx.quickEntry.updateMany({
+          where: { id: { in: linkedEntryIds } },
+          data: { purchaseDate: businessDate },
+        });
+        await tx.inventoryLot.updateMany({
+          where: { sourceType: "QUICK_ENTRY", sourceId: { in: linkedEntryIds } },
+          data: { receivedAt: businessDate },
+        });
+        await tx.stockLedger.updateMany({
+          where: {
+            storeId: order.storeId,
+            refType: "QUICK_ENTRY",
+            refId: { in: linkedEntryIds },
+            reason: "INBOUND_PURCHASE",
+          },
+          data: { occurredAt: businessDate },
+        });
+      }
+
+      await tx.activityLog.create({
+        data: {
+          organizationId: context.organizationId,
+          storeId: order.storeId,
+          actorId: context.userId,
+          action: "PURCHASE_BUSINESS_DATE_CORRECTED",
+          refType: "PURCHASE_ORDER",
+          refId: id,
+          before: {
+            orderedAt: order.orderedAt?.toISOString() ?? null,
+            receivedAt: order.receivedAt?.toISOString() ?? null,
+            fxRate: order.fxRate?.toString() ?? null,
+          },
+          after: {
+            orderedAt: businessDate.toISOString(),
+            receivedAt: syncDerivedReceiptDate
+              ? businessDate.toISOString()
+              : (order.receivedAt?.toISOString() ?? null),
+            fxRate: refreshedFxRate?.toFixed(8) ?? order.fxRate?.toString() ?? null,
+            linkedQuickEntryCount: linkedEntryIds.length,
+          },
+          message: `采购业务日期修正为 ${normalizedDate}`,
+        },
+      });
+
+      return {
+        linkedQuickEntryCount: linkedEntryIds.length,
+        syncedReceiptDate: syncDerivedReceiptDate,
+      };
+    });
+
+    revalidatePath("/procurement");
+    revalidatePath(`/procurement/${id}`);
+    revalidatePath("/workbench");
+    revalidatePath("/inventory");
+    revalidatePath("/reports");
+    return actionSuccess({
+      id,
+      orderedAt: businessDate.toISOString(),
+      ...result,
+      fxRateUpdated: Boolean(refreshedFxRate),
+      costRatePreserved: order.costAllocationStatus !== "PENDING",
+    });
+  } catch (error) {
+    return toActionFailure(error, "修改采购日期失败，请重试");
+  }
+}
+
 export async function cancelPurchaseOrder(id: string) {
   const order = await prisma.purchaseOrder.findUnique({
     where: { id },
@@ -1082,6 +1209,29 @@ export async function receivePurchaseOrder(data: ReceivePurchaseOrderInput) {
           message: `执行人完成采购 ${order.orderNo} 收货`,
         },
       });
+      await recordWork(tx, {
+        organizationId: access.context.organizationId,
+        storeId: order.storeId,
+        userId: access.context.userId,
+        code: "RECEIVE_PURCHASE",
+        name: "采购收货",
+        quantity: order.lines.reduce(
+          (sum, line) => sum.plus(line.quantity.toString()),
+          new Decimal(0)
+        ),
+        unit: "件",
+        sourceType: "PURCHASE_ORDER",
+        sourceId: order.id,
+        relationshipType: "MEMBER",
+        locationId: data.locationId,
+        executorOrganizationId: access.context.organizationId,
+        dedupeKey: `PURCHASE_RECEIVED:${order.id}`,
+        occurredAt: data.receivedAt,
+        metadata: {
+          locationId: data.locationId,
+          externalService: access.externalService,
+        },
+      });
     }
   });
 
@@ -1298,7 +1448,9 @@ export async function inspectExternalPurchaseReceiptAction(data: {
           tx.organization.findUniqueOrThrow({ where: { id: providerOrganizationId } }),
           tx.user.findUniqueOrThrow({ where: { id: access.context.userId } }),
         ]);
-        const beneficiaryStore = await tx.store.findUnique({ where: { id: beneficiary.storeId } });
+        const beneficiaryStore = beneficiary.storeId
+          ? await tx.store.findUnique({ where: { id: beneficiary.storeId } })
+          : null;
         const providerStore =
           beneficiaryStore?.organizationId === providerOrganizationId
             ? beneficiaryStore

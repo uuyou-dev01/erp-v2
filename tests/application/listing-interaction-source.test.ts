@@ -34,4 +34,39 @@ describe("listing interaction source hygiene", () => {
     expect(itemListSource).toContain("查看单件详情");
     expect(coverageCardSource).toContain("returnTo={currentHref}");
   });
+
+  it("keeps quick sale compact, uses guided choices, and explains warehouse notification", () => {
+    const source = readFileSync(
+      join(process.cwd(), "components/listing/quick-sell-button.tsx"),
+      "utf8"
+    );
+
+    expect(source).toContain("成交与费用");
+    expect(source).toContain("发货安排");
+    expect(source).toContain("客户与平台订单");
+    expect(source).toContain("手续费计算方式");
+    expect(source).toContain("更多客户信息（选填）");
+    expect(source).toContain("确认登记并创建发货任务");
+    expect(source).toContain("并通知所选仓库中具备发货权限的账号");
+    expect(source).toContain('role="dialog"');
+    expect(source).toContain('role="alert"');
+  });
+
+  it("groups listing platforms by market before offering platform filters", () => {
+    const toolbarSource = readFileSync(
+      join(process.cwd(), "components/listing/listing-ops-toolbar.tsx"),
+      "utf8"
+    );
+    const pageSource = readFileSync(
+      join(process.cwd(), "app/(dashboard)/listing/page.tsx"),
+      "utf8"
+    );
+
+    expect(toolbarSource).toContain("全部地区");
+    expect(toolbarSource).toContain("visiblePlatformGroups");
+    expect(toolbarSource).toContain("inferMarketFromPlatform");
+    expect(toolbarSource).toContain("筛选平台：");
+    expect(pageSource).toContain("activeMarket");
+    expect(pageSource).toContain("country: platform.country");
+  });
 });

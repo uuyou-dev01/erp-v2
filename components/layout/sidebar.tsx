@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Box, ChevronLeft, ChevronRight, ChevronDown, X, Plus } from "lucide-react";
+import {
+  Box,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  X,
+  Plus,
+  PackageCheck,
+} from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
 import {
@@ -11,12 +19,7 @@ import {
   type SellablePalletNavItem,
 } from "@/app/actions/sellable-pallets";
 import type { QueueCounts } from "@/lib/application/next-actions";
-import {
-  operationsNavigation,
-  settingsAreaRoutes,
-  settingsNavigation,
-  type NavItem,
-} from "@/config/navigation";
+import { operationsNavigation, settingsAreaRoutes, type NavItem } from "@/config/navigation";
 import { canUseQuickEntry, isNavigationHrefAllowed } from "@/lib/auth/permissions";
 
 interface SidebarProps {
@@ -24,6 +27,10 @@ interface SidebarProps {
   onMobileClose?: () => void;
   storeId: string;
   role: string;
+  collaboration: {
+    hasWarehouseCollaboration: boolean;
+    pendingTaskCount: number;
+  };
 }
 
 function CountBadge({ count, critical }: { count: number; critical?: boolean }) {
@@ -95,33 +102,33 @@ function NavLink({
   );
 }
 
-export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarProps) {
+export function Sidebar({
+  mobileOpen,
+  onMobileClose,
+  storeId,
+  role,
+  collaboration,
+}: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>(["库存看板", "设置"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["库存管理"]);
   const [counts, setCounts] = useState<QueueCounts | null>(null);
   const [sellablePallets, setSellablePallets] = useState<SellablePalletNavItem[]>([]);
   const visibleOperationsNavigation = useMemo(
-    () => operationsNavigation.map((group) => ({
-      ...group,
-      items: group.items.flatMap((item) => {
-        const submenu = item.submenu?.filter((sub) => isNavigationHrefAllowed(role, sub.href));
-        if (!isNavigationHrefAllowed(role, item.href) && !submenu?.length) return [];
-        return [{ ...item, submenu }];
-      }),
-    })).filter((group) => group.items.length > 0),
-    [role],
+    () =>
+      operationsNavigation
+        .map((group) => ({
+          ...group,
+          items: group.items.flatMap((item) => {
+            const submenu = item.submenu?.filter((sub) => isNavigationHrefAllowed(role, sub.href));
+            if (!isNavigationHrefAllowed(role, item.href) && !submenu?.length) return [];
+            return [{ ...item, submenu }];
+          }),
+        }))
+        .filter((group) => group.items.length > 0),
+    [role]
   );
-  const visibleSettingsNavigation = useMemo(
-    () => settingsNavigation.flatMap((item) => {
-      const submenu = item.submenu?.filter((sub) => isNavigationHrefAllowed(role, sub.href));
-      if (!isNavigationHrefAllowed(role, item.href) && !submenu?.length) return [];
-      return [{ ...item, submenu }];
-    }),
-    [role],
-  );
-
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -129,13 +136,11 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
       isNavigationHrefAllowed(role, "/inventory/sellable")
         ? getSellablePalletNavItems(storeId)
         : Promise.resolve([]),
-    ]).then(
-      ([queueCounts, palletItems]) => {
-        if (cancelled) return;
-        setCounts(queueCounts);
-        setSellablePallets(palletItems);
-      }
-    );
+    ]).then(([queueCounts, palletItems]) => {
+      if (cancelled) return;
+      setCounts(queueCounts);
+      setSellablePallets(palletItems);
+    });
     return () => {
       cancelled = true;
     };
@@ -230,6 +235,8 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+          aria-expanded={!collapsed}
           className="hidden h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent md:inline-flex"
         >
           {collapsed ? (
@@ -242,6 +249,7 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
           <button
             type="button"
             onClick={onMobileClose}
+            aria-label="关闭侧边栏"
             className="inline-flex h-7 w-7 items-center justify-center rounded-md md:hidden"
           >
             <X className="h-4 w-4" />
@@ -261,7 +269,32 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
         </div>
       )}
 
-      <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+      {collaboration.hasWarehouseCollaboration ? (
+        <div className="border-b border-sidebar-border p-2">
+          <Link
+            href="/collaboration/tasks"
+            onClick={handleNavClick}
+            title={collapsed ? "仓库协作任务" : undefined}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+              collapsed && "justify-center px-2",
+              collaboration.pendingTaskCount > 0
+                ? "bg-primary/10 font-medium text-primary hover:bg-primary/15"
+                : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
+            )}
+          >
+            <PackageCheck className="h-4 w-4 shrink-0" />
+            {!collapsed ? (
+              <>
+                <span className="flex-1 truncate">仓库协作任务</span>
+                <CountBadge count={collaboration.pendingTaskCount} />
+              </>
+            ) : null}
+          </Link>
+        </div>
+      ) : null}
+
+      <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto p-2">
         {visibleOperationsNavigation.map((group) => (
           <div key={group.title}>
             {!collapsed && (
@@ -274,11 +307,11 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
                 const dynamicSubmenu = item.href === "/inventory/sellable" ? sellablePallets : null;
                 if (dynamicSubmenu && !collapsed) {
                   const isActive = isBranchActive(item);
+                  const isExpanded = expandedItems.includes(item.name);
+                  const marketViews = dynamicSubmenu.filter((sub) => sub.href !== item.href);
                   return (
                     <div key={item.href}>
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(item.name)}
+                      <div
                         className={cn(
                           "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
                           isActive
@@ -286,18 +319,57 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
                             : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         )}
                       >
-                        <item.icon className={navIconClass(isActive)} />
-                        <span className="flex-1 text-left">{item.name}</span>
-                        <ChevronDown
-                          className={cn(
-                            "h-3 w-3 opacity-50",
-                            expandedItems.includes(item.name) && "rotate-180"
-                          )}
-                        />
-                      </button>
-                      {expandedItems.includes(item.name) && dynamicSubmenu.length > 0 && (
+                        <Link
+                          href={item.href}
+                          onClick={handleNavClick}
+                          className="flex min-w-0 flex-1 items-center gap-2"
+                        >
+                          <item.icon className={navIconClass(isActive)} />
+                          <span className="flex-1 truncate text-left">{item.name}</span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(item.name)}
+                          aria-label={`${isExpanded ? "收起" : "展开"}${item.name}`}
+                          aria-expanded={isExpanded}
+                          className="-mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-sidebar-accent"
+                        >
+                          <ChevronDown
+                            className={cn("h-3 w-3 opacity-50", isExpanded && "rotate-180")}
+                          />
+                        </button>
+                      </div>
+                      {isExpanded && (
                         <div className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
-                          {dynamicSubmenu.map((sub) => (
+                          {item.submenu?.map((sub) => (
+                            <Link
+                              key={sub.href}
+                              href={sub.href}
+                              onClick={handleNavClick}
+                              aria-current={isHrefActive(sub.href, true) ? "page" : undefined}
+                              className={cn(
+                                "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                                isHrefActive(sub.href, true)
+                                  ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              <span className="flex-1 truncate">{sub.name}</span>
+                              <CountBadge
+                                count={sub.badgeKey && counts ? counts[sub.badgeKey] : 0}
+                                critical={
+                                  sub.badgeKey === "exception" ||
+                                  sub.badgeKey === "inspectionException"
+                                }
+                              />
+                            </Link>
+                          ))}
+                          {marketViews.length > 0 && (
+                            <p className="px-2 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                              可售市场视图
+                            </p>
+                          )}
+                          {marketViews.map((sub) => (
                             <Link
                               key={sub.href}
                               href={sub.href}
@@ -321,11 +393,10 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
                 }
                 if (item.submenu && !collapsed) {
                   const isActive = isBranchActive(item);
+                  const isExpanded = expandedItems.includes(item.name);
                   return (
                     <div key={item.href}>
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(item.name)}
+                      <div
                         className={cn(
                           "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
                           isActive
@@ -333,16 +404,27 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
                             : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         )}
                       >
-                        <item.icon className={navIconClass(isActive)} />
-                        <span className="flex-1 text-left">{item.name}</span>
-                        <ChevronDown
-                          className={cn(
-                            "h-3 w-3 opacity-50",
-                            expandedItems.includes(item.name) && "rotate-180"
-                          )}
-                        />
-                      </button>
-                      {expandedItems.includes(item.name) && (
+                        <Link
+                          href={item.href}
+                          onClick={handleNavClick}
+                          className="flex min-w-0 flex-1 items-center gap-2"
+                        >
+                          <item.icon className={navIconClass(isActive)} />
+                          <span className="flex-1 truncate text-left">{item.name}</span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(item.name)}
+                          aria-label={`${isExpanded ? "收起" : "展开"}${item.name}`}
+                          aria-expanded={isExpanded}
+                          className="-mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-sidebar-accent"
+                        >
+                          <ChevronDown
+                            className={cn("h-3 w-3 opacity-50", isExpanded && "rotate-180")}
+                          />
+                        </button>
+                      </div>
+                      {isExpanded && (
                         <div className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
                           {item.submenu.map((sub) => (
                             <Link
@@ -389,93 +471,6 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role }: SidebarPro
             </div>
           </div>
         ))}
-
-        <div>
-          {!collapsed && (
-            <button
-              type="button"
-              onClick={() => toggleExpand("设置")}
-              className="mb-1 flex w-full items-center justify-between px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
-            >
-              设置
-              <ChevronDown
-                className={cn("h-3 w-3 transition", expandedItems.includes("设置") && "rotate-180")}
-              />
-            </button>
-          )}
-          {(collapsed || expandedItems.includes("设置")) && (
-            <div className="space-y-0.5">
-              {visibleSettingsNavigation.map((item) => {
-                const isActive = (settingsAreaRoutes[item.href] ?? [item.href]).some(
-                  (route) => pathname === route || pathname.startsWith(`${route}/`)
-                );
-                const hasSubmenu = "submenu" in item && item.submenu;
-                if (hasSubmenu && !collapsed) {
-                  return (
-                    <div key={item.name}>
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(item.name)}
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
-                          isActive
-                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                            : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
-                        )}
-                      >
-                        <item.icon className={navIconClass(isActive)} />
-                        <span className="flex-1 text-left">{item.name}</span>
-                        <ChevronDown
-                          className={cn(
-                            "h-3 w-3 opacity-50",
-                            expandedItems.includes(item.name) && "rotate-180"
-                          )}
-                        />
-                      </button>
-                      {expandedItems.includes(item.name) && (
-                        <div className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
-                          {item.submenu!.map((sub) => (
-                            <Link
-                              key={sub.href}
-                              href={sub.href}
-                              onClick={handleNavClick}
-                              className={cn(
-                                "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                                isHrefActive(sub.href)
-                                  ? "font-medium text-foreground"
-                                  : "text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              {sub.name}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    onClick={handleNavClick}
-                    className={cn(
-                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
-                      collapsed && "justify-center",
-                      isActive
-                        ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent"
-                    )}
-                    title={collapsed ? item.name : undefined}
-                  >
-                    <item.icon className={navIconClass(isActive)} />
-                    {!collapsed && item.name}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
       </nav>
     </div>
   );

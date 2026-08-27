@@ -5,9 +5,17 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: () => undefined,
+  }),
+}));
+
 import {
   convertLotToItemUnitAction,
   createInventoryLotAction,
+  deleteInventoryLotAction,
+  getInventoryLotDeletionImpactAction,
   getInventoryLots,
 } from "@/app/actions/inventory-lots";
 import { createInboundItemUnit } from "@/lib/application/inventory";
@@ -15,9 +23,11 @@ import { createInboundItemUnit } from "@/lib/application/inventory";
 const runId = `inventory_lots_${Date.now()}`;
 const organizationCode = `org_${runId}`;
 const storeId = `store_${runId}`;
+const userEmail = `${runId}@example.com`;
 
 describe("inventory lot action values", () => {
   beforeAll(async () => {
+    process.env.ERP_DEV_USER_EMAIL = userEmail;
     const organization = await prisma.organization.create({
       data: {
         code: organizationCode,
@@ -25,7 +35,7 @@ describe("inventory lot action values", () => {
       },
     });
 
-    await prisma.store.create({
+    const store = await prisma.store.create({
       data: {
         id: storeId,
         organizationId: organization.id,
@@ -34,11 +44,143 @@ describe("inventory lot action values", () => {
         currency: "CNY",
       },
     });
+
+    const user = await prisma.user.create({
+      data: {
+        email: userEmail,
+        name: "Inventory Lot Action Tester",
+        password: "test",
+        role: "OWNER",
+        storeId: store.id,
+      },
+    });
+    await prisma.membership.create({
+      data: {
+        organizationId: organization.id,
+        userId: user.id,
+        role: "OWNER",
+        status: "ACTIVE",
+      },
+    });
+    await prisma.storeAccess.create({
+      data: { storeId: store.id, userId: user.id, role: "OWNER" },
+    });
   });
 
   afterAll(async () => {
     await prisma.store.deleteMany({ where: { id: storeId } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
+    await prisma.user.deleteMany({ where: { email: userEmail } });
+    delete process.env.ERP_DEV_USER_EMAIL;
+  });
+
+  it("deletes an unused lot with only its initial inbound ledger", async () => {
+    const sku = await prisma.sKU.create({
+      data: { storeId, code: `SKU_${runId}_DELETE_EMPTY_LOT`, name: "Deletable lot SKU" },
+    });
+    const location = await prisma.location.create({
+      data: {
+        storeId,
+        code: `WH_${runId}_DELETE_EMPTY_LOT`,
+        name: "Deletable Lot Warehouse",
+        type: "WAREHOUSE",
+        region: "CN_SHANGHAI",
+      },
+    });
+    const lot = await prisma.inventoryLot.create({
+      data: {
+        storeId,
+        skuId: sku.id,
+        locationId: location.id,
+        unitCost: "10",
+        costCurrency: "CNY",
+        sourceType: "PURCHASE",
+        sourceId: `${runId}_MANUAL_LOT`,
+        receivedAt: new Date(),
+      },
+    });
+    await prisma.stockLedger.create({
+      data: {
+        storeId,
+        entityType: "LOT",
+        entityId: lot.id,
+        locationId: location.id,
+        deltaQty: "1",
+        reason: "INBOUND_PURCHASE",
+      },
+    });
+
+    const impact = await getInventoryLotDeletionImpactAction(lot.id, storeId);
+    expect(impact.success).toBe(true);
+    if (!impact.success) return;
+    expect(impact.impact.canDelete).toBe(true);
+
+    const result = await deleteInventoryLotAction(lot.id, storeId);
+    expect(result.success).toBe(true);
+    await expect(prisma.inventoryLot.findUnique({ where: { id: lot.id } })).resolves.toBeNull();
+    await expect(
+      prisma.stockLedger.count({ where: { entityType: "LOT", entityId: lot.id } })
+    ).resolves.toBe(0);
+  });
+
+  it("keeps a lot that already has inventory history and explains the blocker", async () => {
+    const sku = await prisma.sKU.create({
+      data: { storeId, code: `SKU_${runId}_KEEP_HISTORY_LOT`, name: "Historical lot SKU" },
+    });
+    const location = await prisma.location.create({
+      data: {
+        storeId,
+        code: `WH_${runId}_KEEP_HISTORY_LOT`,
+        name: "Historical Lot Warehouse",
+        type: "WAREHOUSE",
+        region: "CN_SHANGHAI",
+      },
+    });
+    const lot = await prisma.inventoryLot.create({
+      data: {
+        storeId,
+        skuId: sku.id,
+        locationId: location.id,
+        unitCost: "10",
+        costCurrency: "CNY",
+        sourceType: "PURCHASE",
+        sourceId: `${runId}_HISTORY_LOT`,
+        receivedAt: new Date(),
+      },
+    });
+    await prisma.stockLedger.createMany({
+      data: [
+        {
+          storeId,
+          entityType: "LOT",
+          entityId: lot.id,
+          locationId: location.id,
+          deltaQty: "1",
+          reason: "INBOUND_PURCHASE",
+        },
+        {
+          storeId,
+          entityType: "LOT",
+          entityId: lot.id,
+          locationId: location.id,
+          deltaQty: "-1",
+          reason: "ADJUST",
+        },
+      ],
+    });
+
+    const impact = await getInventoryLotDeletionImpactAction(lot.id, storeId);
+    expect(impact.success).toBe(true);
+    if (!impact.success) return;
+    expect(impact.impact.canDelete).toBe(false);
+    expect(impact.impact.blockers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "ledgers", count: 2 })])
+    );
+
+    const result = await deleteInventoryLotAction(lot.id, storeId);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error).toContain("不能删除");
+    await expect(prisma.inventoryLot.findUnique({ where: { id: lot.id } })).resolves.not.toBeNull();
   });
 
   it("returns on-hand quantity and inventory value from stock ledger quantity", async () => {
@@ -96,10 +238,10 @@ describe("inventory lot action values", () => {
     });
 
     const lots = await getInventoryLots(storeId);
+    const resultLot = lots.find((item) => item.id === lot.id);
 
-    expect(lots).toHaveLength(1);
-    expect(lots[0].onHandQuantity).toBe("3");
-    expect(lots[0].inventoryValue).toBe("300.00");
+    expect(resultLot?.onHandQuantity).toBe("3");
+    expect(resultLot?.inventoryValue).toBe("300.00");
   });
 
   it("returns a structured failure when creating a lot with invalid quantity", async () => {
@@ -236,9 +378,7 @@ describe("inventory lot action values", () => {
       expect(result.error).toContain("可用数量不足");
     }
 
-    await expect(
-      prisma.itemUnit.findFirst({ where: { sourceId: lot.id } })
-    ).resolves.toBeNull();
+    await expect(prisma.itemUnit.findFirst({ where: { sourceId: lot.id } })).resolves.toBeNull();
     await expect(
       prisma.inventorySplit.findFirst({ where: { sourceId: lot.id } })
     ).resolves.toBeNull();

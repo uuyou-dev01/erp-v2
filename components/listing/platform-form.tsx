@@ -10,9 +10,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { createPlatformAction, updatePlatformAction } from "@/app/actions/platforms";
 import { COUNTRIES, CURRENCIES } from "@/lib/i18n";
 import { AlertCircle, Plus, Trash2 } from "lucide-react";
+import { returnPathWithCreatedId } from "@/lib/application/return-navigation";
 
 interface PlatformFormProps {
   storeId: string;
+  returnTo?: string | null;
   initialData?: {
     id: string;
     code: string;
@@ -48,7 +50,7 @@ function createEmptyShippingRule(currency = "JPY"): ShippingRuleForm {
   };
 }
 
-export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
+export function PlatformForm({ storeId, initialData, returnTo }: PlatformFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -122,7 +124,10 @@ export function PlatformForm({ storeId, initialData }: PlatformFormProps) {
         return;
       }
 
-      router.push("/listing/platforms");
+      const returnHref = initialData
+        ? null
+        : returnPathWithCreatedId(returnTo, "createdPlatformId", result.id);
+      router.push(returnHref ?? "/listing/platforms");
       router.refresh();
     } catch (error) {
       setSubmitError(

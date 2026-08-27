@@ -40,7 +40,7 @@ function iso(value?: Date | null) {
   return value ? value.toISOString() : undefined;
 }
 
-function derivePurchaseOrderItem(order: {
+export function derivePurchaseOrderItem(order: {
   id: string;
   orderNo: string;
   status: string;
@@ -78,7 +78,12 @@ function derivePurchaseOrderItem(order: {
     entityType: "purchaseOrder" as const,
     entityId: order.id,
     title: `${order.supplierName ?? order.orderNo} · ${itemCount} 个商品 · ${totalQty} 件`,
-    subtitle: `${order.orderNo} · ${order.currency} ${order.totalAmount.toString()}`,
+    subtitle: [
+      `${order.orderNo} · ${order.currency} ${order.totalAmount.toString()}`,
+      order.destinationLocation?.name ? `→ ${order.destinationLocation.name}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
     waitingSince: waitingSince.toISOString(),
     detailHref: `/procurement/${order.id}`,
     lineItems,
@@ -90,6 +95,7 @@ function derivePurchaseOrderItem(order: {
       currency: order.currency,
       totalAmount: order.totalAmount.toString(),
       trackingNo: order.trackingNo,
+      destinationLocationName: order.destinationLocation?.name ?? null,
     },
   };
 
@@ -114,9 +120,10 @@ function derivePurchaseOrderItem(order: {
       (shipment.status === "DELIVERED" && !shipment.receivedAt)
   );
 
+  const isShippedWithoutTracking = order.status === "SHIPPED" && !order.trackingNo?.trim();
   if (
     (order.status === "ORDERED" || order.status === "SHIPPED") &&
-    order.trackingNo?.trim() &&
+    (order.trackingNo?.trim() || isShippedWithoutTracking) &&
     order.lines.length > 0 &&
     !hasShipmentTask
   ) {
@@ -125,10 +132,10 @@ function derivePurchaseOrderItem(order: {
       id: `po-${order.id}-receive`,
       queue: "pendingArrival",
       currentStatus: order.status,
-      currentStatusLabel: "待确认收货",
+      currentStatusLabel: isShippedWithoutTracking ? "运输中 · 运单待补" : "待确认收货",
       primaryAction: "receivePurchase",
       primaryActionLabel: ACTION_LABELS.receivePurchase,
-      priority: "normal",
+      priority: isShippedWithoutTracking ? "warning" : "normal",
       metadata: { ...base.metadata, trackingNo: order.trackingNo },
     };
   }
@@ -519,9 +526,7 @@ function deriveReturnInspectionItem(item: {
   const failedInspection = operationalState.workflowReason === "INSPECTION_FAILED";
   const canReleaseDirectly =
     operationalState.canReleaseToSale &&
-    ["CUSTOMER_RETURN_QC", "PURCHASE_QC", "INVENTORY_QC"].includes(
-      operationalState.workflowReason
-    );
+    ["CUSTOMER_RETURN_QC", "PURCHASE_QC", "INVENTORY_QC"].includes(operationalState.workflowReason);
 
   return {
     id: `iu-${item.id}-return-check`,
@@ -542,7 +547,7 @@ function deriveReturnInspectionItem(item: {
       ? ACTION_LABELS.resolveException
       : canReleaseDirectly
         ? "检验并放行"
-        : operationalState.nextActionLabel ?? ACTION_LABELS.viewDetails,
+        : (operationalState.nextActionLabel ?? ACTION_LABELS.viewDetails),
     priority: failedInspection ? "critical" : "warning",
     waitingSince: (item.updatedAt ?? item.createdAt).toISOString(),
     detailHref: `/inventory/items/${item.id}`,
@@ -1101,6 +1106,174 @@ export interface WorkItemDetail extends WorkItem {
   lifecycle: LifecycleEvent[];
   shipments: ShipmentLeg[];
   actionContext: Record<string, string | null>;
+  fulfillmentContext?: ShipmentFulfillmentContext;
+}
+
+export interface ShipmentFulfillmentAllocation {
+  id: string;
+  allocationType: "LOT" | "ITEM_UNIT";
+  inventoryId: string;
+  inventoryReference: string;
+  skuCode: string;
+  skuName: string;
+  quantity: string;
+  locationId: string;
+  locationCode: string;
+  locationName: string;
+  remainingAfterShipment: string | null;
+}
+
+export interface ShipmentFulfillmentLocation {
+  id: string;
+  code: string;
+  name: string;
+  quantity: string;
+}
+
+export interface ShipmentFulfillmentContext {
+  allocations: ShipmentFulfillmentAllocation[];
+  locations: ShipmentFulfillmentLocation[];
+  totalQuantity: string;
+  isMultiLocation: boolean;
+  isComplete: boolean;
+}
+
+type ShipmentAllocationSource = {
+  id: string;
+  allocationType: string;
+  quantity: { toString(): string };
+  status: string;
+  orderLine: { sku: { code: string; name: string } };
+  inventoryLot: {
+    id: string;
+    batchLabel: string | null;
+    location: { id: string; code: string; name: string };
+  } | null;
+  itemUnit: {
+    id: string;
+    unitCode: string | null;
+    labelCode: string | null;
+    location: { id: string; code: string; name: string };
+  } | null;
+};
+
+type ShipmentLedgerSource = {
+  entityType: string;
+  entityId: string;
+  deltaQty: { toString(): string };
+};
+
+function compactQuantity(value: Decimal) {
+  return value.toDecimalPlaces(4).toString();
+}
+
+export function buildShipmentFulfillmentContext(
+  sourceAllocations: ShipmentAllocationSource[],
+  ledgers: ShipmentLedgerSource[]
+): ShipmentFulfillmentContext {
+  const activeAllocations = sourceAllocations.filter((allocation) =>
+    RESERVING_ALLOCATION_STATUSES.includes(
+      allocation.status as (typeof RESERVING_ALLOCATION_STATUSES)[number]
+    )
+  );
+  const ledgerBalanceByInventory = new Map<string, Decimal>();
+  for (const ledger of ledgers) {
+    const key = `${ledger.entityType}:${ledger.entityId}`;
+    ledgerBalanceByInventory.set(
+      key,
+      (ledgerBalanceByInventory.get(key) ?? new Decimal(0)).plus(ledger.deltaQty.toString())
+    );
+  }
+
+  let mappedAllocationCount = 0;
+  const grouped = new Map<
+    string,
+    Omit<ShipmentFulfillmentAllocation, "id" | "quantity" | "remainingAfterShipment"> & {
+      ids: string[];
+      quantity: Decimal;
+    }
+  >();
+  for (const allocation of activeAllocations) {
+    const inventory = allocation.inventoryLot ?? allocation.itemUnit;
+    if (!inventory) continue;
+    mappedAllocationCount += 1;
+    const isLot = Boolean(allocation.inventoryLot);
+    const key = `${isLot ? "LOT" : "ITEM_UNIT"}:${inventory.id}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.ids.push(allocation.id);
+      existing.quantity = existing.quantity.plus(allocation.quantity.toString());
+      continue;
+    }
+    grouped.set(key, {
+      ids: [allocation.id],
+      allocationType: isLot ? "LOT" : "ITEM_UNIT",
+      inventoryId: inventory.id,
+      inventoryReference: isLot
+        ? allocation.inventoryLot?.batchLabel || `批次 ${inventory.id.slice(-8)}`
+        : allocation.itemUnit?.unitCode ||
+          allocation.itemUnit?.labelCode ||
+          `单件 ${inventory.id.slice(-8)}`,
+      skuCode: allocation.orderLine.sku.code,
+      skuName: allocation.orderLine.sku.name,
+      quantity: new Decimal(allocation.quantity.toString()),
+      locationId: inventory.location.id,
+      locationCode: inventory.location.code,
+      locationName: inventory.location.name,
+    });
+  }
+
+  const allocations = Array.from(grouped.entries()).map(([key, allocation]) => {
+    const balance = ledgerBalanceByInventory.get(key);
+    return {
+      id: allocation.ids.join(","),
+      allocationType: allocation.allocationType,
+      inventoryId: allocation.inventoryId,
+      inventoryReference: allocation.inventoryReference,
+      skuCode: allocation.skuCode,
+      skuName: allocation.skuName,
+      quantity: compactQuantity(allocation.quantity),
+      locationId: allocation.locationId,
+      locationCode: allocation.locationCode,
+      locationName: allocation.locationName,
+      remainingAfterShipment: balance
+        ? compactQuantity(Decimal.max(balance.minus(allocation.quantity), 0))
+        : null,
+    } satisfies ShipmentFulfillmentAllocation;
+  });
+
+  const locationMap = new Map<string, ShipmentFulfillmentLocation & { amount: Decimal }>();
+  for (const allocation of allocations) {
+    const existing = locationMap.get(allocation.locationId);
+    if (existing) {
+      existing.amount = existing.amount.plus(allocation.quantity);
+      existing.quantity = compactQuantity(existing.amount);
+      continue;
+    }
+    const amount = new Decimal(allocation.quantity);
+    locationMap.set(allocation.locationId, {
+      id: allocation.locationId,
+      code: allocation.locationCode,
+      name: allocation.locationName,
+      quantity: compactQuantity(amount),
+      amount,
+    });
+  }
+  const locations = Array.from(locationMap.values()).map(
+    ({ amount: _amount, ...location }) => location
+  );
+  const totalQuantity = allocations.reduce(
+    (sum, allocation) => sum.plus(allocation.quantity),
+    new Decimal(0)
+  );
+
+  return {
+    allocations,
+    locations,
+    totalQuantity: compactQuantity(totalQuantity),
+    isMultiLocation: locations.length > 1,
+    isComplete: activeAllocations.length > 0 && mappedAllocationCount === activeAllocations.length,
+  };
 }
 
 export interface ProductTicketActivity {
@@ -1198,11 +1371,51 @@ export async function getWorkItemDetail(
   if (entityType === "customerOrder") {
     const order = await prisma.customerOrder.findUnique({
       where: { id: entityId },
-      include: { platform: true, lines: { include: { sku: true, allocations: true } } },
+      include: {
+        platform: true,
+        lines: {
+          include: {
+            sku: true,
+            allocations: {
+              include: {
+                inventoryLot: { include: { location: true } },
+                itemUnit: { include: { location: true } },
+              },
+            },
+          },
+        },
+      },
     });
     if (!order) return null;
     const item = deriveCustomerOrderItem(order);
     if (!item) return null;
+    const allocationSources = order.lines.flatMap((line) =>
+      line.allocations.map((allocation) => ({
+        ...allocation,
+        orderLine: { sku: line.sku },
+      }))
+    );
+    const lotIds = allocationSources
+      .map((allocation) => allocation.inventoryLot?.id)
+      .filter((id): id is string => Boolean(id));
+    const itemUnitIds = allocationSources
+      .map((allocation) => allocation.itemUnit?.id)
+      .filter((id): id is string => Boolean(id));
+    const inventoryLedgers =
+      lotIds.length || itemUnitIds.length
+        ? await prisma.stockLedger.findMany({
+            where: {
+              OR: [
+                ...(lotIds.length ? [{ entityType: "LOT", entityId: { in: lotIds } }] : []),
+                ...(itemUnitIds.length
+                  ? [{ entityType: "ITEM_UNIT", entityId: { in: itemUnitIds } }]
+                  : []),
+              ],
+            },
+            select: { entityType: true, entityId: true, deltaQty: true },
+          })
+        : [];
+    const fulfillmentContext = buildShipmentFulfillmentContext(allocationSources, inventoryLedgers);
     return {
       ...item,
       lifecycle: buildLifecycleEvents({
@@ -1212,8 +1425,11 @@ export async function getWorkItemDetail(
         currentQueue: item.queue,
       }),
       shipments: [],
+      fulfillmentContext,
       actionContext: {
         trackingNo: order.trackingNo,
+        orderNumber: order.orderNumber,
+        shippingCountry: order.shippingCountry,
         currency: order.currency,
         platformFee: order.platformFee.toString(),
         shippingFee: order.shippingFee.toString(),
@@ -1335,6 +1551,7 @@ export async function getWorkItemDetail(
       actionContext: {
         trackingNo: order.trackingNo,
         carrier: order.carrier,
+        currency: order.currency,
         etaDate: iso(order.etaDate) ?? null,
         currentLocationText: order.destinationLocation?.name ?? null,
       },

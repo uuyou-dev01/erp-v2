@@ -34,6 +34,13 @@ import {
 } from "@/lib/application/workbench-pending-listing";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { INCOMPLETE_TASK_STATUSES } from "@/lib/application/tasks";
+import { grantsLocationCapability } from "@/lib/auth/scope-access";
+import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
+import {
+  LOGISTICS_COST_SOURCE_TYPES,
+  normalizeLogisticsCostInput,
+  saveLogisticsShippingCost,
+} from "@/lib/application/logistics-cost";
 
 function clean(value?: string | null) {
   return value?.trim() || undefined;
@@ -79,6 +86,20 @@ function workItemRef(item: WorkItem) {
   return { refType: "QUICK_ENTRY", refId: item.entityId };
 }
 
+function taskFulfillmentLocationIds(task: {
+  fulfillmentLocationId: string | null;
+  metadata: unknown;
+}) {
+  if (task.fulfillmentLocationId) return [task.fulfillmentLocationId];
+  if (!task.metadata || typeof task.metadata !== "object" || Array.isArray(task.metadata)) {
+    return [];
+  }
+  const ids = (task.metadata as Record<string, unknown>).fulfillmentLocationIds;
+  return Array.isArray(ids)
+    ? Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && Boolean(id))))
+    : [];
+}
+
 async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<WorkItem[]> {
   if (items.length === 0) return items;
 
@@ -92,6 +113,43 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
     orderBy: { createdAt: "asc" },
   });
 
+  const orderIdsMissingTaskLocation = tasks
+    .filter(
+      (task) =>
+        task.type === "SHIP_ORDER" &&
+        task.refType === "CUSTOMER_ORDER" &&
+        taskFulfillmentLocationIds(task).length === 0
+    )
+    .map((task) => task.refId);
+  const fallbackAllocations = orderIdsMissingTaskLocation.length
+    ? await prisma.orderAllocation.findMany({
+        where: {
+          orderLine: { orderId: { in: orderIdsMissingTaskLocation } },
+          status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+        },
+        select: {
+          orderLine: { select: { orderId: true } },
+          inventoryLot: { select: { locationId: true } },
+          itemUnit: { select: { locationId: true } },
+        },
+      })
+    : [];
+  const fallbackLocationIdsByOrder = new Map<string, Set<string>>();
+  for (const allocation of fallbackAllocations) {
+    const locationId = allocation.itemUnit?.locationId ?? allocation.inventoryLot?.locationId;
+    if (!locationId) continue;
+    const ids = fallbackLocationIdsByOrder.get(allocation.orderLine.orderId) ?? new Set<string>();
+    ids.add(locationId);
+    fallbackLocationIdsByOrder.set(allocation.orderLine.orderId, ids);
+  }
+  const resolvedTaskLocationIds = (task: (typeof tasks)[number]) => {
+    const explicitIds = taskFulfillmentLocationIds(task);
+    if (explicitIds.length) return explicitIds;
+    return task.type === "SHIP_ORDER" && task.refType === "CUSTOMER_ORDER"
+      ? Array.from(fallbackLocationIdsByOrder.get(task.refId) ?? [])
+      : [];
+  };
+
   const userIds = Array.from(
     new Set(
       tasks.flatMap((task) => [task.assignedToId, task.createdById]).filter(Boolean) as string[]
@@ -104,6 +162,14 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
       })
     : [];
   const userNameById = new Map(users.map((user) => [user.id, user.name || user.email]));
+  const locationIds = Array.from(new Set(tasks.flatMap(resolvedTaskLocationIds)));
+  const locations = locationIds.length
+    ? await prisma.location.findMany({
+        where: { id: { in: locationIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const locationNameById = new Map(locations.map((location) => [location.id, location.name]));
 
   const taskByRef = new Map<string, (typeof tasks)[number]>();
   for (const task of tasks) {
@@ -115,6 +181,10 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
     const ref = workItemRef(item);
     const task = taskByRef.get(`${ref.refType}:${ref.refId}`);
     if (!task) return item;
+    const fulfillmentLocationIds = resolvedTaskLocationIds(task);
+    const fulfillmentLocationNames = fulfillmentLocationIds.map(
+      (locationId) => locationNameById.get(locationId) ?? "未命名仓库"
+    );
     return {
       ...item,
       taskId: task.id,
@@ -127,6 +197,12 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
       taskCreatedById: task.createdById,
       taskCreatedByName: userNameById.get(task.createdById) ?? "系统",
       taskDueAt: task.dueAt?.toISOString() ?? null,
+      taskFulfillmentLocationId: task.fulfillmentLocationId,
+      taskFulfillmentLocationName: task.fulfillmentLocationId
+        ? (locationNameById.get(task.fulfillmentLocationId) ?? "未命名仓库")
+        : null,
+      taskFulfillmentLocationIds: fulfillmentLocationIds,
+      taskFulfillmentLocationNames: fulfillmentLocationNames,
     };
   });
 }
@@ -175,28 +251,96 @@ export async function getWorkbenchRecentActivity(
 
 export async function getWorkbenchAssignableMembers(storeId: string | undefined) {
   const context = await requireUserContext({ storeId });
-  return prisma.user.findMany({
-    where: {
-      memberships: {
-        some: {
-          organizationId: context.organizationId,
-          status: "ACTIVE",
+  const [members, fulfillers] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        memberships: {
+          some: {
+            organizationId: context.organizationId,
+            status: "ACTIVE",
+          },
         },
+        storeAccesses: { some: { storeId: context.activeStoreId } },
       },
-      storeAccesses: {
-        some: {
-          storeId: context.activeStoreId,
+      select: { id: true, name: true, email: true, role: true },
+      orderBy: [{ name: "asc" }, { email: "asc" }],
+    }),
+    prisma.locationFulfiller.findMany({
+      where: {
+        organizationId: context.organizationId,
+        status: "ACTIVE",
+        userId: { not: null },
+        location: { storeId: context.activeStoreId },
+      },
+      select: {
+        userId: true,
+        role: true,
+        isDefault: true,
+        locationId: true,
+        user: { select: { name: true, email: true } },
+      },
+      orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+    }),
+  ]);
+  const memberLocationAccesses = members.length
+    ? await prisma.locationAccess.findMany({
+        where: {
+          userId: { in: members.map((member) => member.id) },
+          location: { storeId: context.activeStoreId },
         },
+        select: { userId: true, locationId: true, role: true, permissions: true },
+      })
+    : [];
+
+  type AssignableOption = {
+    id: string;
+    name: string | null;
+    email: string;
+    role: string;
+    relationship: "MEMBER" | "WAREHOUSE_COLLABORATOR";
+    locationIds: string[];
+    defaultLocationIds: string[];
+  };
+  const shippingLocationIdsByUser = new Map<string, string[]>();
+  for (const access of memberLocationAccesses) {
+    if (!grantsLocationCapability(access, "ship")) continue;
+    shippingLocationIdsByUser.set(access.userId, [
+      ...(shippingLocationIdsByUser.get(access.userId) ?? []),
+      access.locationId,
+    ]);
+  }
+  const options = new Map<string, AssignableOption>(
+    members.map((member) => [
+      member.id,
+      {
+        ...member,
+        relationship: "MEMBER" as const,
+        locationIds: shippingLocationIdsByUser.get(member.id) ?? [],
+        defaultLocationIds: [] as string[],
       },
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-    },
-    orderBy: [{ name: "asc" }, { email: "asc" }],
-  });
+    ])
+  );
+  for (const fulfiller of fulfillers) {
+    if (!fulfiller.userId || !fulfiller.user) continue;
+    const existing = options.get(fulfiller.userId);
+    if (existing) {
+      existing.locationIds.push(fulfiller.locationId);
+      if (fulfiller.isDefault) existing.defaultLocationIds.push(fulfiller.locationId);
+      continue;
+    }
+    options.set(fulfiller.userId, {
+      id: fulfiller.userId,
+      name: fulfiller.user.name,
+      email: fulfiller.user.email,
+      role: fulfiller.role,
+      relationship: "WAREHOUSE_COLLABORATOR" as const,
+      locationIds: [fulfiller.locationId],
+      defaultLocationIds: fulfiller.isDefault ? [fulfiller.locationId] : [],
+    });
+  }
+  return Array.from(options.values()).sort((a, b) =>
+    (a.name || a.email).localeCompare(b.name || b.email, "zh-CN")
+  );
 }
 
 export async function getWorkbenchWorkItemDetail(
@@ -211,7 +355,7 @@ export async function getWorkbenchWorkItemDetail(
   const pendingItem = pendingItems.find((item) =>
     entityType === "itemUnit"
       ? item.type === "ITEM_UNIT" && item.itemUnitId === entityId
-      : item.type === "SKU" && item.skuId === entityId,
+      : item.type === "SKU" && item.skuId === entityId
   );
   return pendingItem ? applyPendingListingContext(detail, pendingItem) : detail;
 }
@@ -231,6 +375,8 @@ export async function bulkUpdatePurchaseOrderLogistics(
     carrier?: string;
     etaDate?: string;
     destinationLocationId?: string;
+    shippingCost?: string;
+    shippingCurrency?: string;
     note?: string;
   }
 ) {
@@ -248,9 +394,19 @@ export async function bulkUpdatePurchaseOrderLogistics(
   let failed = 0;
   for (const id of ids) {
     try {
+      const order = await prisma.purchaseOrder.findUnique({
+        where: { id },
+        select: { storeId: true, currency: true },
+      });
+      if (!order) throw new Error("采购单不存在");
+      const shippingCost = normalizeLogisticsCostInput(
+        { amount: payload.shippingCost, currency: payload.shippingCurrency },
+        order.currency,
+      );
+      const shippedAt = new Date();
       await markPurchaseAsShipped({
         purchaseOrderId: id,
-        shippedAt: new Date(),
+        shippedAt,
         trackingNo: payload.purchaseTrackingNo?.trim() || undefined,
         carrier: payload.carrier?.trim() || undefined,
         etaDate: etaDate && !Number.isNaN(etaDate.getTime()) ? etaDate : undefined,
@@ -258,6 +414,18 @@ export async function bulkUpdatePurchaseOrderLogistics(
         shipmentNote: payload.note?.trim() || undefined,
         shipmentMode: "purchase_only",
       });
+      if (shippingCost) {
+        await saveLogisticsShippingCost(prisma, {
+          storeId: order.storeId,
+          sourceType: LOGISTICS_COST_SOURCE_TYPES.purchase,
+          sourceId: id,
+          amount: shippingCost.amount.toFixed(4),
+          currency: shippingCost.currency,
+          fallbackCurrency: order.currency,
+          occurredAt: shippedAt,
+          note: "批量登记采购卖家发货邮费",
+        });
+      }
       success += 1;
     } catch {
       failed += 1;
@@ -400,6 +568,8 @@ export async function bulkTransferPurchases(input: {
   trackingNo?: string;
   carrier?: string;
   etaDate?: string;
+  shippingCost?: string;
+  shippingCurrency?: string;
   note?: string;
 }) {
   const ids = Array.from(new Set(input.purchaseOrderIds)).filter(Boolean);
@@ -415,6 +585,8 @@ export async function bulkTransferPurchases(input: {
         toLocationId: input.toLocationId,
         trackingNo: clean(input.trackingNo),
         carrier: clean(input.carrier),
+        shippingCost: clean(input.shippingCost),
+        shippingCurrency: clean(input.shippingCurrency),
         etaDate: optionalInputDate(input.etaDate),
         note: clean(input.note),
       });

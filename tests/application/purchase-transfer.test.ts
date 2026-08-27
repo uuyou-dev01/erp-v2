@@ -269,12 +269,28 @@ describe("purchase disposition transfer inventory", () => {
         { entityType: "ITEM_UNIT", entityId: unit.id },
       ],
       trackingNo: `GENERIC_${runId}`,
+      shippingCost: "18.5",
+      shippingCurrency: "CNY",
     });
-    const lockedLines = await prisma.inboundShipmentInventoryLine.findMany({
-      where: { shipmentId: shipment.id },
-      orderBy: { entityType: "asc" },
-    });
+    const [lockedLines, logisticsCost] = await Promise.all([
+      prisma.inboundShipmentInventoryLine.findMany({
+        where: { shipmentId: shipment.id },
+        orderBy: { entityType: "asc" },
+      }),
+      prisma.logisticsCost.findUnique({
+        where: {
+          storeId_sourceType_sourceId_feeType: {
+            storeId,
+            sourceType: "INBOUND_SHIPMENT",
+            sourceId: shipment.id,
+            feeType: "SHIPPING",
+          },
+        },
+      }),
+    ]);
     expect(lockedLines.map((line) => line.entityType)).toEqual(["ITEM_UNIT", "LOT"]);
+    expect(logisticsCost).toMatchObject({ currency: "CNY" });
+    expect(logisticsCost?.amount.toString()).toBe("18.5");
     const inTransitStock = await getSkuStockBreakdown(storeId, skuId);
     expect(inTransitStock.inTransitQty).toBeGreaterThanOrEqual(4);
     expect(

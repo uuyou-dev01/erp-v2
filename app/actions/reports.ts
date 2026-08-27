@@ -638,41 +638,47 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
     1,
   );
 
-  const orders = await prisma.customerOrder.findMany({
-    where: {
-      storeId,
-      orderDate: { gte: startDate },
-      orderStatus: { in: VALID_SALES_STATUS_FILTER },
-    },
-    select: {
-      orderDate: true,
-      currency: true,
-      totalPaid: true,
-      platformFee: true,
-      shippingFee: true,
-      lines: {
-        select: {
-          allocations: {
-            select: {
-              costAmount: true,
-              inventoryLot: {
-                select: {
-                  costCurrency: true,
-                  receivedAt: true,
+  const [orders, logisticsCosts] = await Promise.all([
+    prisma.customerOrder.findMany({
+      where: {
+        storeId,
+        orderDate: { gte: startDate },
+        orderStatus: { in: VALID_SALES_STATUS_FILTER },
+      },
+      select: {
+        orderDate: true,
+        currency: true,
+        totalPaid: true,
+        platformFee: true,
+        shippingFee: true,
+        lines: {
+          select: {
+            allocations: {
+              select: {
+                costAmount: true,
+                inventoryLot: {
+                  select: {
+                    costCurrency: true,
+                    receivedAt: true,
+                  },
                 },
-              },
-              itemUnit: {
-                select: {
-                  costCurrency: true,
-                  createdAt: true,
+                itemUnit: {
+                  select: {
+                    costCurrency: true,
+                    createdAt: true,
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.logisticsCost.findMany({
+      where: { storeId, occurredAt: { gte: startDate } },
+      select: { amount: true, currency: true, occurredAt: true },
+    }),
+  ]);
 
   const monthlyData = new Map<
     string,
@@ -680,6 +686,7 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
       revenue: Decimal;
       platformFee: Decimal;
       shippingFee: Decimal;
+      logisticsFee: Decimal;
       purchaseCost: Decimal;
     }
   >();
@@ -695,8 +702,20 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
       revenue: new Decimal(0),
       platformFee: new Decimal(0),
       shippingFee: new Decimal(0),
+      logisticsFee: new Decimal(0),
       purchaseCost: new Decimal(0),
     });
+  }
+
+  for (const cost of logisticsCosts) {
+    const key = cost.occurredAt.toISOString().slice(0, 7);
+    const entry = monthlyData.get(key);
+    if (!entry) continue;
+    entry.logisticsFee = entry.logisticsFee.plus(
+      await converter.convertToBase(cost.amount.toString(), cost.currency, {
+        effectiveAt: cost.occurredAt,
+      }),
+    );
   }
 
   for (const order of orders) {
@@ -745,10 +764,12 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
       revenue: data.revenue.toNumber(),
       platformFee: data.platformFee.toNumber(),
       shippingFee: data.shippingFee.toNumber(),
+      logisticsFee: data.logisticsFee.toNumber(),
       purchaseCost: data.purchaseCost.toNumber(),
       profit: data.revenue
         .minus(data.platformFee)
         .minus(data.shippingFee)
+        .minus(data.logisticsFee)
         .minus(data.purchaseCost)
         .toNumber(),
     }));
@@ -828,25 +849,39 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
       ? { gte: range.dateFrom, lte: range.dateTo }
       : undefined;
 
-  const orders = await prisma.customerOrder.findMany({
-    where: {
-      storeId,
-      ...(dateFilter ? { orderDate: dateFilter } : {}),
-      orderStatus: { in: VALID_SALES_STATUS_FILTER },
-    },
-    select: {
-      platformFee: true,
-      shippingFee: true,
-      shippingProviderFeeRate: true,
-      totalPaid: true,
-      currency: true,
-      orderDate: true,
-    },
-  });
+  const [orders, logisticsCosts] = await Promise.all([
+    prisma.customerOrder.findMany({
+      where: {
+        storeId,
+        ...(dateFilter ? { orderDate: dateFilter } : {}),
+        orderStatus: { in: VALID_SALES_STATUS_FILTER },
+      },
+      select: {
+        platformFee: true,
+        shippingFee: true,
+        shippingProviderFeeRate: true,
+        totalPaid: true,
+        currency: true,
+        orderDate: true,
+      },
+    }),
+    prisma.logisticsCost.findMany({
+      where: {
+        storeId,
+        ...(dateFilter ? { occurredAt: dateFilter } : {}),
+      },
+      select: { sourceType: true, amount: true, currency: true, occurredAt: true },
+    }),
+  ]);
 
   let totalPlatformFee = new Decimal(0);
   let totalShippingFee = new Decimal(0);
   let totalAgentFee = new Decimal(0);
+  const logisticsBySource = {
+    purchaseShippingFee: new Decimal(0),
+    transferShippingFee: new Decimal(0),
+    consolidationShippingFee: new Decimal(0),
+  };
 
   for (const order of orders) {
     totalPlatformFee = totalPlatformFee.plus(
@@ -871,9 +906,28 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
     }
   }
 
+  for (const cost of logisticsCosts) {
+    const amount = await converter.convertToBase(cost.amount.toString(), cost.currency, {
+      effectiveAt: cost.occurredAt,
+    });
+    if (cost.sourceType === "PURCHASE_ORDER") {
+      logisticsBySource.purchaseShippingFee =
+        logisticsBySource.purchaseShippingFee.plus(amount);
+    } else if (cost.sourceType === "INBOUND_SHIPMENT") {
+      logisticsBySource.transferShippingFee =
+        logisticsBySource.transferShippingFee.plus(amount);
+    } else if (cost.sourceType === "CONSOLIDATION_BATCH") {
+      logisticsBySource.consolidationShippingFee =
+        logisticsBySource.consolidationShippingFee.plus(amount);
+    }
+  }
+
   return {
     platformFee: totalPlatformFee.toFixed(2),
     shippingFee: totalShippingFee.toFixed(2),
+    purchaseShippingFee: logisticsBySource.purchaseShippingFee.toFixed(2),
+    transferShippingFee: logisticsBySource.transferShippingFee.toFixed(2),
+    consolidationShippingFee: logisticsBySource.consolidationShippingFee.toFixed(2),
     agentFee: totalAgentFee.toFixed(2),
   };
 }

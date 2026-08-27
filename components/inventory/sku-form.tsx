@@ -19,7 +19,7 @@ import {
   type SkuCatalogImage,
 } from "@/lib/application/sku-catalog";
 import type { SkuCatalogRole, SkuIdentitySource } from "@/lib/application/sku-identity";
-import { AlertCircle, X, Plus, Upload, Link as LinkIcon, Star } from "lucide-react";
+import { AlertCircle, ImagePlus, Link as LinkIcon, Plus, Star, Upload, X } from "lucide-react";
 import { t } from "@/lib/i18n";
 
 export interface ParentOption {
@@ -32,6 +32,8 @@ export interface ParentOption {
   categoryId?: string | null;
   category: string | null;
   brand: string | null;
+  imageUrl?: string | null;
+  attributes?: unknown;
   _count: { childSkus: number };
 }
 
@@ -174,7 +176,7 @@ export function SKUForm({
 }: SKUFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [uploadMode, setUploadMode] = useState<"url" | "file">("url");
+  const [uploadMode, setUploadMode] = useState<"url" | "file">("file");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [imageUrlInput, setImageUrlInput] = useState("");
@@ -198,7 +200,6 @@ export function SKUForm({
     category: initialData?.category || "",
     brand: initialData?.brand || "",
     description: initialData?.description || "",
-    imageUrl: initialData?.imageUrl || "",
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -216,6 +217,11 @@ export function SKUForm({
     () => parentOptions.find((p) => p.id === formData.parentSkuId),
     [parentOptions, formData.parentSkuId]
   );
+  const inheritedParentCoverUrl = useMemo(() => {
+    if (!isVariant || !selectedParent) return null;
+    const parentMeta = parseSkuCatalogMeta(selectedParent.attributes, selectedParent.imageUrl);
+    return resolveCoverImageUrl(parentMeta, selectedParent.imageUrl);
+  }, [isVariant, selectedParent]);
   const selectedParentAxes = useMemo(
     () => stringArrayFromUnknown(selectedParent?.variantAxes),
     [selectedParent]
@@ -321,14 +327,11 @@ export function SKUForm({
         series: isVariant ? undefined : catalog.series || null,
         notes: catalog.notes || null,
         tags,
-        images: catalog.images.length > 0 ? catalog.images : undefined,
+        images: catalog.images,
       });
 
       const attributesPayload = { ...merged, ...variantObj };
-      const coverUrl = resolveCoverImageUrl(
-        parseSkuCatalogMeta(attributesPayload),
-        formData.imageUrl
-      );
+      const coverUrl = resolveCoverImageUrl(parseSkuCatalogMeta(attributesPayload));
       const variantAxes = splitVariantAxes(formData.variantAxesInput).slice(0, 1);
       const variantValues =
         formData.catalogRole === "VARIANT" &&
@@ -419,7 +422,7 @@ export function SKUForm({
   const cardHeaderClass = compact ? "py-3" : undefined;
   const cardTitleClass = compact ? "text-sm font-medium" : undefined;
   const submitLabel = initialData
-    ? t("sku.update")
+    ? "保存修改"
     : isGroup
       ? "创建商品组"
       : isVariant
@@ -481,6 +484,181 @@ export function SKUForm({
           </CardContent>
         </Card>
       ) : null}
+
+      <Card className="border-primary/30 bg-primary/[0.02]">
+        <CardHeader className={cardHeaderClass}>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className={cardTitleClass}>
+                <span className="flex items-center gap-2">
+                  <ImagePlus className="h-4 w-4 text-primary" />
+                  {isVariant ? "当前变体图片" : isGroup ? "商品组主图" : "商品图片"}
+                </span>
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isVariant
+                  ? "上传后只用于当前变体；未上传时使用所属商品组主图。"
+                  : isGroup
+                    ? "商品组主图默认用于所有没有单独图片的变体。"
+                    : "第一张图片会自动设为封面，也可以添加多张后切换封面。"}
+              </p>
+            </div>
+            {initialData ? <Badge variant="secondary">编辑重点</Badge> : null}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {isVariant && catalog.images.length === 0 && inheritedParentCoverUrl ? (
+            <div className="flex items-center gap-3 rounded-md border border-dashed bg-background p-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={inheritedParentCoverUrl}
+                alt="继承的商品组主图"
+                className="h-20 w-20 rounded-md object-cover"
+              />
+              <div>
+                <Badge variant="outline">继承商品组</Badge>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  当前变体没有专属图片，正在显示商品组主图。
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={uploadMode === "file" ? "default" : "outline"}
+              size="sm"
+              onClick={() => {
+                setUploadError(null);
+                setUploadMode("file");
+              }}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              上传图片
+            </Button>
+            <Button
+              type="button"
+              variant={uploadMode === "url" ? "default" : "outline"}
+              size="sm"
+              onClick={() => {
+                setUploadError(null);
+                setUploadMode("url");
+              }}
+            >
+              <LinkIcon className="mr-2 h-4 w-4" />
+              图片网址
+            </Button>
+          </div>
+
+          {uploadMode === "url" ? (
+            <div className="flex gap-2">
+              <Input
+                value={imageUrlInput}
+                onChange={(e) => setImageUrlInput(e.target.value)}
+                placeholder="https://example.com/image.jpg"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  if (!imageUrlInput.trim()) return;
+                  setUploadError(null);
+                  setCatalog((current) => ({
+                    ...current,
+                    images: [
+                      ...current.images,
+                      {
+                        url: imageUrlInput.trim(),
+                        isCover: current.images.length === 0,
+                      },
+                    ],
+                  }));
+                  setImageUrlInput("");
+                }}
+              >
+                添加
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Input
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                onChange={handleFileChange}
+                disabled={uploading}
+              />
+              <p className="text-xs text-muted-foreground">
+                {uploading ? t("sku.image_uploading") : t("sku.image_upload_hint")}
+              </p>
+            </div>
+          )}
+
+          {uploadError ? (
+            <p role="alert" className="text-xs text-destructive">
+              {uploadError}
+            </p>
+          ) : null}
+
+          {catalog.images.length > 0 ? (
+            <div className="flex flex-wrap gap-3">
+              {catalog.images.map((img, index) => (
+                <div
+                  key={`${img.url}-${index}`}
+                  className="relative rounded-lg border bg-background p-2"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.url} alt="" className="h-24 w-24 rounded object-cover" />
+                  {img.isCover ? (
+                    <Badge className="absolute left-2 top-2 text-[10px]">封面</Badge>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="absolute left-2 top-2 h-7 px-2 text-[10px]"
+                      onClick={() =>
+                        setCatalog((current) => ({
+                          ...current,
+                          images: current.images.map((item, imageIndex) => ({
+                            ...item,
+                            isCover: imageIndex === index,
+                          })),
+                        }))
+                      }
+                    >
+                      <Star className="mr-0.5 h-3 w-3" />
+                      设为封面
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1 h-7 w-7 bg-background/80"
+                    aria-label={`删除第 ${index + 1} 张图片`}
+                    onClick={() =>
+                      setCatalog((current) => {
+                        const next = current.images.filter((_, imageIndex) => imageIndex !== index);
+                        if (next.length > 0 && !next.some((image) => image.isCover)) {
+                          next[0] = { ...next[0], isCover: true };
+                        }
+                        return { ...current, images: next };
+                      })
+                    }
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <p className="text-xs font-medium text-muted-foreground">
+            选择图片后，请点击下方“{submitLabel}”才会写入商品档案。
+          </p>
+        </CardContent>
+      </Card>
 
       {!isGroup ? (
         <Card>
@@ -703,134 +881,6 @@ export function SKUForm({
                 placeholder={t("sku.description_placeholder")}
                 rows={3}
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label>图片（多图，可设封面）</Label>
-              <div className="flex flex-wrap gap-2 mb-2">
-                <Button
-                  type="button"
-                  variant={uploadMode === "url" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    setUploadError(null);
-                    setUploadMode("url");
-                  }}
-                >
-                  <LinkIcon className="mr-2 h-4 w-4" />
-                  网址
-                </Button>
-                <Button
-                  type="button"
-                  variant={uploadMode === "file" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    setUploadError(null);
-                    setUploadMode("file");
-                  }}
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  上传
-                </Button>
-              </div>
-
-              {uploadMode === "url" ? (
-                <div className="flex gap-2">
-                  <Input
-                    value={imageUrlInput}
-                    onChange={(e) => setImageUrlInput(e.target.value)}
-                    placeholder="https://example.com/image.jpg"
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      if (!imageUrlInput.trim()) return;
-                      setUploadError(null);
-                      setCatalog((c) => ({
-                        ...c,
-                        images: [
-                          ...c.images,
-                          {
-                            url: imageUrlInput.trim(),
-                            isCover: c.images.length === 0,
-                          },
-                        ],
-                      }));
-                      setImageUrlInput("");
-                    }}
-                  >
-                    添加
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <Input
-                    type="file"
-                    accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
-                    onChange={handleFileChange}
-                    disabled={uploading}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {uploading ? t("sku.image_uploading") : t("sku.image_upload_hint")}
-                  </p>
-                  {uploadError ? (
-                    <p role="alert" className="text-xs text-destructive">
-                      {uploadError}
-                    </p>
-                  ) : null}
-                </>
-              )}
-
-              {catalog.images.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-3">
-                  {catalog.images.map((img, index) => (
-                    <div key={`${img.url}-${index}`} className="relative rounded-lg border p-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.url} alt="" className="h-24 w-24 rounded object-cover" />
-                      {img.isCover ? (
-                        <Badge className="absolute left-2 top-2 text-[10px]">封面</Badge>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="absolute left-2 top-2 h-7 px-2 text-[10px]"
-                          onClick={() =>
-                            setCatalog((c) => ({
-                              ...c,
-                              images: c.images.map((item, i) => ({
-                                ...item,
-                                isCover: i === index,
-                              })),
-                            }))
-                          }
-                        >
-                          <Star className="mr-0.5 h-3 w-3" />
-                          封面
-                        </Button>
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-1 top-1 h-7 w-7"
-                        onClick={() =>
-                          setCatalog((c) => {
-                            const next = c.images.filter((_, i) => i !== index);
-                            if (next.length > 0 && !next.some((n) => n.isCover)) {
-                              next[0] = { ...next[0], isCover: true };
-                            }
-                            return { ...c, images: next };
-                          })
-                        }
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
             </div>
 
             <details className="rounded-md border bg-muted/20 px-3 py-2">
@@ -1181,7 +1231,13 @@ export function SKUForm({
         </div>
       ) : null}
 
-      <div className="flex gap-2">
+      <div
+        className={
+          compact
+            ? "sticky bottom-0 z-10 -mx-4 flex gap-2 border-t bg-background/95 px-4 py-3 shadow-[0_-8px_20px_-16px_rgba(0,0,0,0.35)] backdrop-blur"
+            : "flex gap-2"
+        }
+      >
         <Button type="submit" disabled={loading || uploading}>
           {loading ? t("common.saving") : submitLabel}
         </Button>

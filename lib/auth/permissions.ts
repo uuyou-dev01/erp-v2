@@ -20,21 +20,22 @@ const ROLE_RANK: Record<string, number> = {
   VIEWER: 10,
 };
 
-export function hasRoleAtLeast(
-  role: string | null | undefined,
-  minimum: string
-) {
+export function hasRoleAtLeast(role: string | null | undefined, minimum: string) {
   return (ROLE_RANK[role ?? ""] ?? 0) >= (ROLE_RANK[minimum] ?? 0);
 }
 
 export function canViewInventoryCost(role: string | null | undefined) {
-  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.FINANCE])
-    .has(role ?? "");
+  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.FINANCE]).has(role ?? "");
 }
 
 export function canUseQuickEntry(role: string | null | undefined) {
-  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.LISTING])
-    .has(role ?? "");
+  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.LISTING]).has(role ?? "");
+}
+
+export function canShipOrders(role: string | null | undefined) {
+  return new Set<string>([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.FULFILLMENT]).has(
+    role ?? ""
+  );
 }
 
 export function isNavigationHrefAllowed(role: string | null | undefined, href: string) {
@@ -49,6 +50,7 @@ export function isNavigationHrefAllowed(role: string | null | undefined, href: s
       "/inventory/items",
       "/sales/after-sales",
       "/finance/wallet",
+      "/reports/workload",
       "/settings/personal",
     ],
     LISTING: [
@@ -62,6 +64,7 @@ export function isNavigationHrefAllowed(role: string | null | undefined, href: s
       "/marketplace",
       "/resale",
       "/finance/wallet",
+      "/reports/workload",
       "/settings/personal",
     ],
     FINANCE: [
@@ -77,10 +80,11 @@ export function isNavigationHrefAllowed(role: string | null | undefined, href: s
       "/notifications",
       "/inventory/sellable",
       "/marketplace",
+      "/reports/workload",
       "/settings/personal",
     ],
   };
   return (allowedPrefixesByRole[role ?? ""] ?? []).some(
-    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
   );
 }

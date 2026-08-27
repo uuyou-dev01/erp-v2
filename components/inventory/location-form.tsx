@@ -24,11 +24,16 @@ import {
 } from "@/lib/inventory/location-fulfillment";
 import { t } from "@/lib/i18n";
 import { AlertCircle, Info } from "lucide-react";
+import {
+  locationReturnPathWithCreatedId,
+  safeLocationReturnPath,
+} from "@/lib/application/location-create-navigation";
 
 interface LocationFormProps {
   storeId: string;
   mode?: "page" | "dialog";
-  onSuccess?: () => void;
+  returnTo?: string | null;
+  onSuccess?: (locationId: string) => void;
   onCancel?: () => void;
   initialData?: {
     id: string;
@@ -57,10 +62,21 @@ function generateLocationCode(type: LocationType) {
   return `${prefixMap[type]}-${suffix}`;
 }
 
+function locationCodePlaceholder(type: LocationType) {
+  const prefixMap: Record<LocationType, string> = {
+    WAREHOUSE: "WH",
+    FORWARDER: "FW",
+    PERSON: "PR",
+    TRANSIT: "TR",
+  };
+  return `${prefixMap[type]}-自动生成`;
+}
+
 export function LocationForm({
   storeId,
   initialData,
   mode = "page",
+  returnTo,
   onSuccess,
   onCancel,
 }: LocationFormProps) {
@@ -88,7 +104,7 @@ export function LocationForm({
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const generatedCodeHint = useMemo(() => generateLocationCode(formData.type), [formData.type]);
+  const generatedCodeHint = useMemo(() => locationCodePlaceholder(formData.type), [formData.type]);
   const canDirectFulfill = formData.capabilities.includes("DIRECT_FULFILLMENT");
 
   useEffect(() => {
@@ -101,11 +117,25 @@ export function LocationForm({
     setFormData((prev) => ({ ...prev, code: generateLocationCode(prev.type) }));
   }, [isCreateMode, formData.code]);
 
-  const handleSaved = () => {
+  const safeReturnTo = safeLocationReturnPath(returnTo);
+
+  const handleSaved = (locationId: string) => {
     if (mode === "dialog") {
-      onSuccess?.();
+      onSuccess?.(locationId);
+      const returnHref = locationReturnPathWithCreatedId(safeReturnTo, locationId);
+      if (returnHref) {
+        router.push(returnHref);
+      }
       router.refresh();
       return;
+    }
+    if (!initialData) {
+      const returnHref = locationReturnPathWithCreatedId(safeReturnTo, locationId);
+      if (returnHref) {
+        router.push(returnHref);
+        router.refresh();
+        return;
+      }
     }
     router.push("/inventory/locations");
     router.refresh();
@@ -160,7 +190,7 @@ export function LocationForm({
         setSubmitError(result.error);
         return;
       }
-      handleSaved();
+      handleSaved(result.id);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "保存仓库位置失败，请重试");
     } finally {

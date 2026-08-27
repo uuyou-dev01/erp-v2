@@ -17,6 +17,7 @@ interface MonthlyPnLData {
   revenue: number;
   platformFee: number;
   shippingFee: number;
+  logisticsFee: number;
   purchaseCost: number;
   profit: number;
 }
@@ -53,7 +54,8 @@ export function MonthlyPnLChart({ data }: MonthlyPnLChartProps) {
         <Legend />
         <Bar dataKey="revenue" name="收入" fill="#3B82F6" radius={[4, 4, 0, 0]} />
         <Bar dataKey="platformFee" name="平台费" fill="#EC4899" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="shippingFee" name="运费" fill="#9CA3AF" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="shippingFee" name="销售履约运费" fill="#9CA3AF" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="logisticsFee" name="采购/转仓/集运费" fill="#F59E0B" radius={[4, 4, 0, 0]} />
         <Bar dataKey="profit" name="利润" radius={[4, 4, 0, 0]}>
           {data.map((entry, index) => (
             <Cell

@@ -1,10 +1,11 @@
 import { requireUserContext } from "@/lib/auth/user-context";
+import Link from "next/link";
 import { getCustomerOrderById } from "@/app/actions/customer-orders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { notFound } from "next/navigation";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
-import { AddOrderLineForm } from "@/components/sales/add-order-line-form";
+import { AddOrderLineDialog } from "@/components/sales/add-order-line-dialog";
 import { AllocateInventoryForm } from "@/components/sales/allocate-inventory-form";
 import { ConfirmOrderButton } from "@/components/sales/confirm-order-button";
 import { MarkOrderShippedButton } from "@/components/sales/mark-order-shipped-button";
@@ -17,6 +18,8 @@ import {
   TrendingUp,
   TrendingDown,
   Store,
+  Handshake,
+  ExternalLink,
 } from "lucide-react";
 import Decimal from "decimal.js";
 import {
@@ -25,6 +28,7 @@ import {
 } from "@/lib/application/order-detail-profit";
 import { BackButton } from "@/components/shared/back-button";
 import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
+import { canShipOrders } from "@/lib/auth/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -55,13 +59,27 @@ export default async function CustomerOrderDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { activeStoreId: storeId } = await requireUserContext();
+  const context = await requireUserContext();
+  const { activeStoreId: storeId } = context;
   const { id } = await params;
   const order = await getCustomerOrderById(id);
 
   if (!order) {
     notFound();
   }
+
+  const resale = order.resaleListing;
+  const fulfillmentRequest = order.fulfillmentRequests[0];
+  const resaleSettlement =
+    fulfillmentRequest?.settlements.find((settlement) => settlement.status !== "VOID") ??
+    order.settlements.find((settlement) => settlement.status !== "VOID");
+  const orderItemCount = order.lines.length || (resale?.supplyOfferItem ? 1 : 0);
+  const channelAccount = order.salesChannelAccount ?? resale?.salesChannelAccount;
+  const supplyPartnerName =
+    resale?.supplyOffer.providerOrganization?.name ??
+    resale?.supplyOffer.organization?.name ??
+    resale?.supplyOffer.ownerPartner?.name ??
+    "供货方待确认";
 
   const canEdit = order.orderStatus === "DRAFT";
   const canConfirm =
@@ -136,7 +154,7 @@ export default async function CustomerOrderDetailPage({
         </div>
         <div className="flex items-center gap-2">
           {canConfirm && <ConfirmOrderButton orderId={order.id} />}
-          {order.orderStatus === "CONFIRMED" && (
+          {order.orderStatus === "CONFIRMED" && canShipOrders(context.role) && (
             <MarkOrderShippedButton orderId={order.id} defaultTrackingNo={order.trackingNo} />
           )}
           {order.orderStatus === "SHIPPED" && !order.settledAt && (
@@ -183,7 +201,7 @@ export default async function CustomerOrderDetailPage({
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{order.lines.length}</div>
+            <div className="text-2xl font-bold">{orderItemCount}</div>
           </CardContent>
         </Card>
 
@@ -195,7 +213,7 @@ export default async function CustomerOrderDetailPage({
           <CardContent>
             <div className="text-sm font-medium">{order.platform?.name || "未指定"}</div>
             <p className="text-xs text-muted-foreground">
-              收货地：
+              {channelAccount ? `${channelAccount.name} · ` : ""}收货地：
               {order.shippingCountry
                 ? fulfillmentDestinationLabel(order.shippingCountry)
                 : "未指定"}
@@ -204,53 +222,151 @@ export default async function CustomerOrderDetailPage({
         </Card>
       </div>
 
-      {/* 利润分解 */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <CardTitle>利润分解</CardTitle>
-            {netProfit.gte(0) ? (
-              <TrendingUp className="h-4 w-4 text-green-600" />
-            ) : (
-              <TrendingDown className="h-4 w-4 text-red-600" />
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {profitItems.map((item) => (
-              <div key={item.label} className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{item.label}</span>
-                <span className={item.color}>
-                  {item.value.lt(0) ? "- " : ""}
-                  {formatCurrency(item.value.abs(), order.currency)}
+      {resale ? (
+        <Card className="border-primary/20">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Handshake className="h-4 w-4 text-primary" />
+                <CardTitle>代卖业务与协作履约</CardTitle>
+              </div>
+              <Badge>我方代卖</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 text-sm md:grid-cols-2 xl:grid-cols-4">
+              <div>
+                <p className="text-xs text-muted-foreground">来源货盘</p>
+                <Link href={`/marketplace/${resale.supplyOffer.id}`} className="mt-1 inline-flex items-center gap-1 font-medium hover:underline">
+                  {resale.supplyOffer.title}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">供货方</p>
+                <p className="mt-1 font-medium">{supplyPartnerName}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">履约协作</p>
+                {fulfillmentRequest ? (
+                  <Link href={`/fulfillment/requests/${fulfillmentRequest.id}`} className="mt-1 inline-flex items-center gap-1 font-medium hover:underline">
+                    {fulfillmentRequest.requestNo} · {fulfillmentRequest.status}
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Link>
+                ) : (
+                  <p className="mt-1 font-medium text-destructive">履约请求缺失</p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">合作结算</p>
+                {resaleSettlement ? (
+                  <Link href={`/finance/settlements/${resaleSettlement.id}`} className="mt-1 inline-flex items-center gap-1 font-medium hover:underline">
+                    {resaleSettlement.settlementNo} · {resaleSettlement.status}
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Link>
+                ) : (
+                  <p className="mt-1 font-medium">
+                    {order.orderStatus === "SHIPPED" || order.orderStatus === "DELIVERED"
+                      ? "待生成结算"
+                      : "发货后生成"}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-3 border-t pt-4 text-sm sm:grid-cols-3">
+              <div className="flex items-center justify-between gap-4 sm:block">
+                <span className="text-muted-foreground">销售收入</span>
+                <p className="font-semibold tabular-nums">{formatCurrency(order.totalPaid, order.currency)}</p>
+              </div>
+              <div className="flex items-center justify-between gap-4 sm:block">
+                <span className="text-muted-foreground">平台费</span>
+                <p className="font-semibold tabular-nums">{formatCurrency(order.platformFee, order.currency)}</p>
+              </div>
+              <div className="flex items-center justify-between gap-4 sm:block">
+                <span className="text-muted-foreground">约定供货价</span>
+                <p className="font-semibold tabular-nums">
+                  {resale.supplyUnitPrice
+                    ? formatCurrency(resale.supplyUnitPrice, resale.supplyCurrency || order.currency)
+                    : "按结算单确认"}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              代卖订单的真实收益以合作结算单为准，不按本店库存成本估算。
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <CardTitle>利润分解</CardTitle>
+              {netProfit.gte(0) ? (
+                <TrendingUp className="h-4 w-4 text-green-600" />
+              ) : (
+                <TrendingDown className="h-4 w-4 text-red-600" />
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {profitItems.map((item) => (
+                <div key={item.label} className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{item.label}</span>
+                  <span className={item.color}>
+                    {item.value.lt(0) ? "- " : ""}
+                    {formatCurrency(item.value.abs(), order.currency)}
+                  </span>
+                </div>
+              ))}
+              <div className="border-t pt-3 flex items-center justify-between font-semibold">
+                <span>净利润</span>
+                <span className={netProfit.gte(0) ? "text-green-600" : "text-red-600"}>
+                  {netProfit.lt(0) ? "- " : ""}
+                  {formatCurrency(netProfit.abs(), order.currency)}
                 </span>
               </div>
-            ))}
-            <div className="border-t pt-3 flex items-center justify-between font-semibold">
-              <span>净利润</span>
-              <span className={netProfit.gte(0) ? "text-green-600" : "text-red-600"}>
-                {netProfit.lt(0) ? "- " : ""}
-                {formatCurrency(netProfit.abs(), order.currency)}
-              </span>
+              {order.platform && (
+                <p className="text-xs text-muted-foreground pt-1">
+                  平台费率 {platformFeeRate.times(100).toFixed(2)}% · 运费按实际配送方式记录
+                </p>
+              )}
             </div>
-            {order.platform && (
-              <p className="text-xs text-muted-foreground pt-1">
-                平台费率 {platformFeeRate.times(100).toFixed(2)}% · 运费按实际配送方式记录
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <CardTitle>订单明细</CardTitle>
+          {canEdit ? (
+            <AddOrderLineDialog orderId={order.id} currency={order.currency} storeId={storeId} />
+          ) : null}
         </CardHeader>
         <CardContent>
-          {order.lines.length === 0 ? (
+          {order.lines.length === 0 && resale?.supplyOfferItem ? (
+            <div className="rounded-lg border p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">{resale.supplyOfferItem.title}</p>
+                    <Badge variant="outline">货盘商品</Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {resale.supplyOfferItem.variantCode || resale.supplyOfferItem.sku?.code || "未设置规格编码"}
+                  </p>
+                </div>
+                <div className="text-right text-sm">
+                  <p>数量：<strong>{fulfillmentRequest ? formatQuantity(fulfillmentRequest.quantity) : "-"}</strong></p>
+                  <p className="mt-1 text-muted-foreground">
+                    金额：{formatCurrency(order.subtotal, order.currency)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : order.lines.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
-              暂无商品。请在下方添加商品。
+              暂无商品。可使用右上角“添加商品”补充订单明细。
             </div>
           ) : (
             <div className="space-y-6">
@@ -353,17 +469,6 @@ export default async function CustomerOrderDetailPage({
         </CardContent>
       </Card>
 
-      {canEdit && (
-        <Card>
-          <CardHeader>
-            <CardTitle>添加商品</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <AddOrderLineForm orderId={order.id} currency={order.currency} storeId={storeId} />
-          </CardContent>
-        </Card>
-      )}
-
       {order.orderStatus === "CONFIRMED" && (
         <Card className="border-green-500/50 bg-green-500/5">
           <CardContent className="pt-6">
@@ -372,7 +477,9 @@ export default async function CustomerOrderDetailPage({
               <div className="space-y-1 text-sm">
                 <p className="font-medium">订单已确认，待发货</p>
                 <p className="text-muted-foreground">
-                  库存已预留，确认发货后将扣减库存。 确认时间：
+                  {resale
+                    ? "货盘数量已预留，发货进度由协作履约同步。"
+                    : "库存已预留，确认发货后将扣减库存。"} 确认时间：
                   {order.confirmedAt && new Date(order.confirmedAt).toLocaleDateString("zh-CN")}
                 </p>
               </div>

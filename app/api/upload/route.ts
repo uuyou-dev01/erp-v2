@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
+import { requireAuthenticatedUser } from "@/lib/auth/user-context";
 
 export async function POST(request: NextRequest) {
   try {
+    await requireAuthenticatedUser();
     const formData = await request.formData();
     const file = formData.get("file") as File;
 
@@ -24,10 +26,7 @@ export async function POST(request: NextRequest) {
     // Validate file size (max 5MB)
     const maxSize = 5 * 1024 * 1024;
     if (file.size > maxSize) {
-      return NextResponse.json(
-        { error: "File too large. Maximum size is 5MB." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "File too large. Maximum size is 5MB." }, { status: 400 });
     }
 
     const bytes = await file.arrayBuffer();

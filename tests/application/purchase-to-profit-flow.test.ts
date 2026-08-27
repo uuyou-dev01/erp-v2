@@ -41,6 +41,7 @@ const userEmail = `${runId}@example.com`;
 let skuId = "";
 let locationId = "";
 let platformId = "";
+let organizationId = "";
 
 describe("purchase to profit business flow", () => {
   beforeAll(async () => {
@@ -54,6 +55,7 @@ describe("purchase to profit business flow", () => {
         name: "Flow Test Organization",
       },
     });
+    organizationId = organization.id;
 
     const store = await prisma.store.create({
       data: {
@@ -223,6 +225,53 @@ describe("purchase to profit business flow", () => {
     expect(order.netRevenue?.toString()).toBe("150");
     expect(order.lines[0].allocations[0].status).toBe("SHIPPED");
     expect(order.lines[0].allocations[0].costAmount.toString()).toBe("100");
+
+    const shipmentTask = await prisma.task.findFirstOrThrow({
+      where: {
+        organizationId,
+        storeId,
+        type: "SHIP_ORDER",
+        refType: "CUSTOMER_ORDER",
+        refId: sale.orderId,
+      },
+      include: { dispatch: { include: { request: true } } },
+    });
+    expect(shipmentTask.status).toBe("DONE");
+    expect(shipmentTask.dispatch?.status).toBe("COMPLETED");
+    expect(shipmentTask.dispatch?.request.status).toBe("CLOSED");
+
+    const outboundLedgerWhere = {
+      refType: "ORDER_LINE",
+      refId: order.lines[0].id,
+      reason: "OUTBOUND_SALE",
+    } as const;
+    await expect(prisma.stockLedger.count({ where: outboundLedgerWhere })).resolves.toBe(1);
+    await expect(
+      markOrderShipped(sale.orderId, { trackingNo: `TRK_DUPLICATE_${runId}` })
+    ).rejects.toThrow("只有已确认订单可以标记发货");
+    await expect(prisma.stockLedger.count({ where: outboundLedgerWhere })).resolves.toBe(1);
+    await expect(
+      prisma.workRecord.count({
+        where: { storeId, taskId: shipmentTask.id, workCode: "SHIP_ORDER" },
+      })
+    ).resolves.toBe(1);
+
+    const workRecords = await prisma.workRecord.findMany({
+      where: {
+        storeId,
+        workCode: { in: ["RECEIVE_PURCHASE", "SHIP_ORDER"] },
+      },
+      select: { workCode: true, quantity: true, unit: true },
+      orderBy: { occurredAt: "asc" },
+    });
+    expect(workRecords.map((record) => ({
+      workCode: record.workCode,
+      quantity: record.quantity.toString(),
+      unit: record.unit,
+    }))).toEqual([
+      { workCode: "RECEIVE_PURCHASE", quantity: "2", unit: "件" },
+      { workCode: "SHIP_ORDER", quantity: "1", unit: "件" },
+    ]);
 
     const metrics = await getDashboardMonthlyMetrics(storeId, {
       dateFrom: new Date("2026-06-01T00:00:00.000Z"),

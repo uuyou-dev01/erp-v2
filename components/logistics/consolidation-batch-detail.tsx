@@ -20,6 +20,9 @@ interface Batch {
   status: string;
   outboundTrackingNo: string | null;
   carrier: string | null;
+  storeCurrency: string;
+  shippingCost: string | null;
+  shippingCurrency: string;
   note: string | null;
   lines: Array<{
     id: string;
@@ -70,6 +73,10 @@ export function ConsolidationBatchDetail({
   const [isPending, startTransition] = useTransition();
   const [trackingNo, setTrackingNo] = useState(batch.outboundTrackingNo ?? "");
   const [carrier, setCarrier] = useState(batch.carrier ?? "");
+  const [shippingCost, setShippingCost] = useState(batch.shippingCost ?? "");
+  const [shippingCurrency, setShippingCurrency] = useState(
+    batch.shippingCurrency || batch.storeCurrency,
+  );
   const [statusError, setStatusError] = useState<string | null>(null);
   const [toLocationId, setToLocationId] = useState(batch.toLocation?.id ?? "");
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -87,6 +94,8 @@ export function ConsolidationBatchDetail({
         const result = await updateConsolidationStatusAction(batch.id, status, {
           outboundTrackingNo: trackingNo,
           carrier,
+          shippingCost,
+          shippingCurrency,
         });
         if (!result.success) {
           setStatusError(result.error);
@@ -275,6 +284,32 @@ export function ConsolidationBatchDetail({
             <Label>承运商</Label>
             <Input value={carrier} onChange={(e) => setCarrier(e.target.value)} />
           </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_100px]">
+            <div className="space-y-2">
+              <Label htmlFor="consolidation-shipping-cost">集运邮费</Label>
+              <Input
+                id="consolidation-shipping-cost"
+                inputMode="decimal"
+                value={shippingCost}
+                onChange={(event) => setShippingCost(event.target.value)}
+                placeholder="可选，填实际支付金额"
+                disabled={batch.status === "RECEIVED"}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="consolidation-shipping-currency">币种</Label>
+              <Input
+                id="consolidation-shipping-currency"
+                value={shippingCurrency}
+                onChange={(event) => setShippingCurrency(event.target.value.toUpperCase())}
+                maxLength={3}
+                disabled={batch.status === "RECEIVED"}
+              />
+            </div>
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            发出时记入物流成本台账，并计入当月报表的集运物流费。
+          </p>
           {inventoryIssues.length > 0 ? (
             <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 p-3">
               <div className="flex gap-2">

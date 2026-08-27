@@ -4,7 +4,16 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { ClipboardCheck, Layers3, PackagePlus, Pencil, Trash2, Workflow, X } from "lucide-react";
+import {
+  ClipboardCheck,
+  Layers3,
+  MoreHorizontal,
+  PackagePlus,
+  Pencil,
+  Trash2,
+  Workflow,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SKUForm, type ParentOption } from "@/components/inventory/sku-form";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -20,6 +29,7 @@ interface SKUDetailActionsProps {
   parentOptions: ParentOption[];
   returnHref?: string;
   initialEditOpen?: boolean;
+  groupImageEditHref?: string;
   structureSku?: SkuStructureTarget;
   sku: {
     id: string;
@@ -48,12 +58,14 @@ export function SKUDetailActions({
   sku,
   returnHref = "/inventory/skus",
   initialEditOpen = false,
+  groupImageEditHref,
   structureSku,
 }: SKUDetailActionsProps) {
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(initialEditOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [structureOpen, setStructureOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -97,43 +109,88 @@ export function SKUDetailActions({
             </Button>
           </Link>
         ) : (
-          <>
-            <Link href={buildProductStocktakeHref({ skuCode: sku.code })}>
-              <Button size="sm">
-                <ClipboardCheck className="mr-1 h-3.5 w-3.5" />
-                调整库存
-              </Button>
-            </Link>
-            <Link href={`/inventory/opening-stock/new?skuIds=${sku.id}`}>
-              <Button variant="outline" size="sm">
-                <PackagePlus className="mr-1 h-3.5 w-3.5" />
-                录入期初库存
-              </Button>
-            </Link>
-          </>
+          <Link href={buildProductStocktakeHref({ skuCode: sku.code })}>
+            <Button size="sm">
+              <ClipboardCheck className="mr-1 h-3.5 w-3.5" />
+              调整库存
+            </Button>
+          </Link>
         )}
         <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
           <Pencil className="mr-1 h-3.5 w-3.5" />
-          编辑
+          {sku.catalogRole === "VARIANT"
+            ? "编辑当前变体"
+            : sku.catalogRole === "GROUP"
+              ? "编辑商品组"
+              : "编辑档案"}
         </Button>
-        {(structureSku?.catalogRole || sku.catalogRole) !== "VARIANT" ? (
-          <Button variant="outline" size="sm" onClick={() => setStructureOpen(true)}>
-            <Workflow className="mr-1 h-3.5 w-3.5" />
-            调整结构
+        <div className="relative">
+          <Button
+            variant="outline"
+            size="sm"
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((open) => !open)}
+          >
+            <MoreHorizontal className="mr-1 h-3.5 w-3.5" />
+            更多
           </Button>
-        ) : null}
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-red-600 hover:text-red-700"
-          onClick={() => {
-            setDeleteError(null);
-            setDeleteOpen(true);
-          }}
-        >
-          <Trash2 className="mr-1 h-3.5 w-3.5" />
-          删除
-        </Button>
+          {moreOpen ? (
+            <div
+              role="menu"
+              className="absolute right-0 top-full z-30 mt-1 w-48 rounded-md border bg-background p-1 shadow-lg"
+            >
+              {sku.catalogRole !== "GROUP" ? (
+                <Link
+                  href={`/inventory/opening-stock/new?skuIds=${sku.id}`}
+                  className="flex items-center rounded-sm px-2.5 py-2 text-xs hover:bg-muted"
+                  onClick={() => setMoreOpen(false)}
+                >
+                  <PackagePlus className="mr-2 h-3.5 w-3.5" />
+                  录入期初库存
+                </Link>
+              ) : null}
+              {groupImageEditHref ? (
+                <Link
+                  href={groupImageEditHref}
+                  className="flex items-center rounded-sm px-2.5 py-2 text-xs hover:bg-muted"
+                  onClick={() => setMoreOpen(false)}
+                >
+                  <Pencil className="mr-2 h-3.5 w-3.5" />
+                  编辑商品组档案
+                </Link>
+              ) : null}
+              {(structureSku?.catalogRole || sku.catalogRole) !== "VARIANT" ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center rounded-sm px-2.5 py-2 text-left text-xs hover:bg-muted"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setStructureOpen(true);
+                  }}
+                >
+                  <Workflow className="mr-2 h-3.5 w-3.5" />
+                  调整商品结构
+                </button>
+              ) : null}
+              <div className="my-1 border-t" />
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center rounded-sm px-2.5 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+                onClick={() => {
+                  setMoreOpen(false);
+                  setDeleteError(null);
+                  setDeleteOpen(true);
+                }}
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                删除商品档案
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {editOpen &&
@@ -143,7 +200,13 @@ export function SKUDetailActions({
             <div className="absolute inset-0 bg-black/50" onClick={closeEdit} />
             <div className="relative z-10 flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg border bg-background shadow-lg">
               <div className="flex shrink-0 items-center justify-between border-b px-4 py-2.5">
-                <h2 className="text-sm font-semibold">编辑商品档案</h2>
+                <h2 className="text-sm font-semibold">
+                  {sku.catalogRole === "VARIANT"
+                    ? "编辑当前变体"
+                    : sku.catalogRole === "GROUP"
+                      ? "编辑商品组档案"
+                      : "编辑 SKU 档案"}
+                </h2>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={closeEdit}>
                   <X className="h-4 w-4" />
                 </Button>

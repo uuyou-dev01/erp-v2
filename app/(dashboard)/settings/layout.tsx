@@ -1,9 +1,11 @@
 import { SettingsNav } from "@/components/settings/settings-nav";
+import { requireUserContext } from "@/lib/auth/user-context";
 
-export default function SettingsLayout({ children }: { children: React.ReactNode }) {
+export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
+  const context = await requireUserContext();
   return (
     <div className="mx-auto w-full max-w-5xl">
-      <SettingsNav />
+      <SettingsNav role={context.role} />
       {children}
     </div>
   );

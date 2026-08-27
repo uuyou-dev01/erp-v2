@@ -90,6 +90,8 @@ export async function getSKUParentOptions(storeId: string, excludeId?: string) {
       categoryId: true,
       category: true,
       brand: true,
+      imageUrl: true,
+      attributes: true,
       _count: { select: { childSkus: true } },
     },
     orderBy: { code: "asc" },
@@ -1329,11 +1331,23 @@ export async function updateSkuQuickInfoAction(data: UpdateSkuQuickInfoInput) {
   }
 }
 
-export async function deleteSKU(id: string) {
-  const related = await prisma.sKU.findUnique({
+export interface SKUDeletionImpact {
+  canDelete: boolean;
+  hasBusinessHistory: boolean;
+  references: Array<{
+    key: "variants" | "lots" | "items" | "listings" | "sales" | "purchases";
+    label: string;
+    count: number;
+    href: string;
+  }>;
+}
+
+async function getSKUDeletionRecord(id: string) {
+  return prisma.sKU.findUnique({
     where: { id },
     select: {
       storeId: true,
+      code: true,
       _count: {
         select: {
           childSkus: true,
@@ -1346,6 +1360,76 @@ export async function deleteSKU(id: string) {
       },
     },
   });
+}
+
+function buildSKUDeletionImpact(
+  id: string,
+  code: string,
+  counts: NonNullable<Awaited<ReturnType<typeof getSKUDeletionRecord>>>["_count"]
+): SKUDeletionImpact {
+  const query = encodeURIComponent(code);
+  const allReferences: SKUDeletionImpact["references"] = [
+    {
+      key: "variants",
+      label: "规格 SKU",
+      count: counts.childSkus,
+      href: `/inventory/skus/${id}`,
+    },
+    {
+      key: "lots",
+      label: "库存批次",
+      count: counts.inventoryLots,
+      href: `/inventory/lots?query=${query}`,
+    },
+    {
+      key: "items",
+      label: "单品库存",
+      count: counts.itemUnits,
+      href: `/inventory/items?query=${query}`,
+    },
+    {
+      key: "listings",
+      label: "刊登记录",
+      count: counts.listings,
+      href: `/listing?query=${query}`,
+    },
+    {
+      key: "sales",
+      label: "销售记录",
+      count: counts.orderLines,
+      href: `/sales?query=${query}`,
+    },
+    {
+      key: "purchases",
+      label: "采购记录",
+      count: counts.purchaseLines,
+      href: `/procurement?query=${query}`,
+    },
+  ];
+  const references = allReferences.filter((reference) => reference.count > 0);
+
+  return {
+    canDelete: references.length === 0,
+    hasBusinessHistory: counts.orderLines > 0 || counts.purchaseLines > 0,
+    references,
+  };
+}
+
+export async function getSKUDeletionImpactAction(id: string) {
+  try {
+    const related = await getSKUDeletionRecord(id);
+    if (!related) throw new Error("SKU不存在或已被删除");
+    await requireUserContext({ storeId: related.storeId });
+    return actionSuccess({
+      impact: buildSKUDeletionImpact(id, related.code, related._count),
+    });
+  } catch (error) {
+    return toActionFailure(error, "无法检查SKU关联数据，请重试");
+  }
+}
+
+export async function deleteSKU(id: string) {
+  const related = await getSKUDeletionRecord(id);
 
   if (!related) {
     throw new Error("SKU不存在或已被删除");
@@ -1356,15 +1440,13 @@ export async function deleteSKU(id: string) {
     throw new Error("该商品组下仍有规格 SKU，请先删除或迁移规格 SKU 后再删除商品组。");
   }
 
-  const relationCount =
-    related._count.inventoryLots +
-    related._count.itemUnits +
-    related._count.listings +
-    related._count.orderLines +
-    related._count.purchaseLines;
+  const impact = buildSKUDeletionImpact(id, related.code, related._count);
 
-  if (relationCount > 0) {
-    throw new Error("该SKU已有库存、采购、销售或刊登记录，不能直接删除。请先处理关联业务数据。");
+  if (!impact.canDelete) {
+    if (impact.hasBusinessHistory) {
+      throw new Error("该SKU已有采购或销售历史，不能删除。请停用SKU以保留订单、成本与利润追溯。");
+    }
+    throw new Error("该SKU仍有关联库存或刊登记录，请先处理关联数据；无需继续使用时可停用SKU。");
   }
 
   await prisma.sKU.delete({

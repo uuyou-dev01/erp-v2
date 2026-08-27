@@ -22,7 +22,7 @@ test("collaboration surfaces render without app errors", async ({ page }) => {
   await expect(sidebar.getByRole("link", { name: "集运物流" })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "库存管理" })).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "销售订单" })).toBeVisible();
-  await expect(sidebar.getByRole("link", { name: "团队工作量" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "工作量" })).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "个人设置" })).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "企业设置" })).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "系统设置" })).toBeVisible();
@@ -31,9 +31,9 @@ test("collaboration surfaces render without app errors", async ({ page }) => {
   await expect(page.locator("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: "通知" })).toBeVisible();
 
-  await page.goto("/reports/team");
+  await page.goto("/reports/workload");
   await expect(page.locator("main")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "团队工作量" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "工作量中心" })).toBeVisible();
 
   await page.goto("/settings/personal");
   await expect(page.getByRole("heading", { name: "个人设置" })).toBeVisible();

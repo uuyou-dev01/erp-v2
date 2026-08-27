@@ -8,6 +8,11 @@ import {
   type InventoryTransferLineInput,
 } from "@/lib/application/inventory-transfer";
 import { prisma } from "@/lib/prisma";
+import {
+  LOGISTICS_COST_SOURCE_TYPES,
+  normalizeLogisticsCostInput,
+  saveLogisticsShippingCost,
+} from "@/lib/application/logistics-cost";
 
 export interface DispatchInventoryTransferInput {
   storeId: string;
@@ -25,6 +30,8 @@ export interface DispatchInventoryTransferInput {
   customsCurrency?: string;
   taxAmount?: string;
   taxCurrency?: string;
+  shippingCost?: string;
+  shippingCurrency?: string;
   etaDate?: Date;
   note?: string;
 }
@@ -33,13 +40,21 @@ export async function dispatchInventoryTransfer(input: DispatchInventoryTransfer
   if (input.fromLocationId === input.toLocationId) {
     throw new Error("目标位置不能与当前所在位置相同");
   }
-  const locations = await prisma.location.count({
-    where: {
-      storeId: input.storeId,
-      id: { in: [input.fromLocationId, input.toLocationId] },
-    },
-  });
+  const [locations, store] = await Promise.all([
+    prisma.location.count({
+      where: {
+        storeId: input.storeId,
+        id: { in: [input.fromLocationId, input.toLocationId] },
+      },
+    }),
+    prisma.store.findUnique({ where: { id: input.storeId }, select: { currency: true } }),
+  ]);
   if (locations !== 2) throw new Error("起运位置或目标位置不存在，请重新选择");
+  if (!store) throw new Error("店铺不存在");
+  const shippingCost = normalizeLogisticsCostInput(
+    { amount: input.shippingCost, currency: input.shippingCurrency },
+    store.currency,
+  );
 
   const shipment = await prisma.$transaction(async (tx) => {
     const created = await tx.inboundShipment.create({
@@ -70,6 +85,18 @@ export async function dispatchInventoryTransfer(input: DispatchInventoryTransfer
       fromLocationId: input.fromLocationId,
       lines: input.lines,
     });
+    if (shippingCost) {
+      await saveLogisticsShippingCost(tx, {
+        storeId: input.storeId,
+        sourceType: LOGISTICS_COST_SOURCE_TYPES.transfer,
+        sourceId: created.id,
+        amount: shippingCost.amount.toFixed(4),
+        currency: shippingCost.currency,
+        fallbackCurrency: store.currency,
+        occurredAt: created.shippedAt ?? new Date(),
+        note: input.note,
+      });
+    }
     return created;
   });
 
@@ -158,6 +185,8 @@ export async function dispatchPurchaseTransfer(input: {
   customsCurrency?: string;
   taxAmount?: string;
   taxCurrency?: string;
+  shippingCost?: string;
+  shippingCurrency?: string;
   etaDate?: Date;
   note?: string;
 }) {
@@ -214,6 +243,8 @@ export async function dispatchPurchaseTransfer(input: {
     customsCurrency: input.customsCurrency,
     taxAmount: input.taxAmount,
     taxCurrency: input.taxCurrency,
+    shippingCost: input.shippingCost,
+    shippingCurrency: input.shippingCurrency,
     etaDate: input.etaDate,
     note: input.note,
   });

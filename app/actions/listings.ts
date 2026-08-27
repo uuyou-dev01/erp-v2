@@ -16,7 +16,9 @@ import { resolvePlatformListingDefaults } from "@/lib/platform-defaults";
 import { requiresSellableStockForListing } from "@/lib/core-platforms";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { completeTasksForRef, createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
+import { ensureShipOrderTaskDispatch } from "@/lib/application/shipping-dispatch-lifecycle";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
+import { getOrderFulfillmentLocationIds } from "@/lib/application/location-fulfillment-roster";
 import {
   inferMarketFromPlatform,
   locationMatchesMarket,
@@ -33,7 +35,8 @@ function revalidateListingSurfaces(listingId?: string) {
   revalidatePath("/inventory/coverage/pending");
   revalidatePath("/inventory/sellable");
   revalidatePath("/inventory/sold");
-  revalidatePath("/reports/team");
+  revalidatePath("/reports/workload");
+  revalidatePath("/reports/team-performance");
   if (listingId) revalidatePath(`/listing/${listingId}`);
 }
 
@@ -828,16 +831,33 @@ export async function quickSellListing(data: {
     });
 
     const context = await requireUserContext({ storeId: saleResult.storeId });
-    await createTaskIfMissing({
-      organizationId: context.organizationId,
-      storeId: saleResult.storeId,
-      type: TASK_TYPE.SHIP_ORDER,
-      title: `发货订单 ${saleResult.orderNumber}`,
-      description: "Listing 快速售出后自动生成的打包/发货任务。",
-      refType: "CUSTOMER_ORDER",
-      refId: saleResult.orderId,
-      createdById: context.userId,
-    });
+    const fulfillmentLocationIds = await getOrderFulfillmentLocationIds(saleResult.orderId);
+    const fulfillmentLocationId =
+      fulfillmentLocationIds.length === 1 ? fulfillmentLocationIds[0] : null;
+    if (fulfillmentLocationId) {
+      await ensureShipOrderTaskDispatch({
+        organizationId: context.organizationId,
+        storeId: saleResult.storeId,
+        orderId: saleResult.orderId,
+        orderNumber: saleResult.orderNumber,
+        createdById: context.userId,
+        locationId: fulfillmentLocationId,
+        description: "Listing 快速售出后自动生成的打包/发货任务。",
+      });
+    } else {
+      await createTaskIfMissing({
+        organizationId: context.organizationId,
+        storeId: saleResult.storeId,
+        type: TASK_TYPE.SHIP_ORDER,
+        title: `发货订单 ${saleResult.orderNumber}`,
+        description: "订单包含多个来源仓库，需要先拆分或重新分配库存。",
+        refType: "CUSTOMER_ORDER",
+        refId: saleResult.orderId,
+        createdById: context.userId,
+        fulfillmentLocationId: null,
+        metadata: { fulfillmentLocationIds, assignmentMode: "MULTI_LOCATION_MANUAL" },
+      });
+    }
 
     revalidateListingSurfaces();
     revalidatePath("/sales");

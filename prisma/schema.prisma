@@ -9,33 +9,95 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CollaborationScopeType {
+  ORGANIZATION
+  LOCATION
+  ROLE
+  USER
+}
+
+enum CollaborationAcceptancePolicy {
+  FIRST_ACCEPT
+  DIRECT_ACCEPT
+  AUTHORIZED_APPROVAL
+}
+
+enum CollaborationRequestStatus {
+  OPEN
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  CANCELLED
+  EXPIRED
+  CLOSED
+}
+
+enum CollaborationResponseDecision {
+  ACCEPT
+  REJECT
+  APPROVE
+  DENY
+}
+
+enum CollaborationEventType {
+  REQUESTED
+  RESPONSE_RECORDED
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  CANCELLED
+  EXPIRED
+  CLOSED
+  TASK_DISPATCHED
+  TASK_ACCEPTED
+  TASK_REJECTED
+  TASK_RETURNED
+  TASK_COMPLETED
+}
+
+enum TaskDispatchStatus {
+  QUEUED
+  CLAIMED
+  COMPLETED
+  CANCELLED
+}
+
 // ============================================
 // CORE: Store & Multi-tenancy
 // ============================================
 
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  code      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(cuid())
+  name              String
+  code              String   @unique
+  collaborationCode String   @unique @default(cuid())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   stores                      Store[]
   memberships                 Membership[]
   productCategories           ProductCategory[]
   inventoryPools              InventoryPool[]
   salesChannelAccounts        SalesChannelAccount[]
-  operatedLocations           Location[]            @relation("LocationOperator")
-  serviceAgreementsAsClient   ServiceAgreement[]    @relation("ServiceAgreementClient")
-  serviceAgreementsAsProvider ServiceAgreement[]    @relation("ServiceAgreementProvider")
+  operatedLocations           Location[]               @relation("LocationOperator")
+  serviceAgreementsAsClient   ServiceAgreement[]       @relation("ServiceAgreementClient")
+  serviceAgreementsAsProvider ServiceAgreement[]       @relation("ServiceAgreementProvider")
+  serviceAgreementsProposed   ServiceAgreement[]       @relation("ServiceAgreementProposer")
   chargeCategories            ChargeCategory[]
   channelStatements           ChannelStatement[]
   afterSalesCases             AfterSalesCase[]
-  ownedSupplyOffers           SupplyOffer[]         @relation("SupplyOfferOwnerOrganization")
-  providedSupplyOffers        SupplyOffer[]         @relation("SupplyOfferProviderOrganization")
-  supplyOfferChannels         SupplyOfferChannel[]  @relation("SupplyOfferChannelSellerOrganization")
-  partnerProfiles             Partner[]             @relation("PartnerOrganization")
-  offerVisibilityRules        OfferVisibility[]     @relation("OfferVisibilityOrganization")
+  ownedSupplyOffers           SupplyOffer[]            @relation("SupplyOfferOwnerOrganization")
+  providedSupplyOffers        SupplyOffer[]            @relation("SupplyOfferProviderOrganization")
+  supplyOfferChannels         SupplyOfferChannel[]     @relation("SupplyOfferChannelSellerOrganization")
+  partnerProfiles             Partner[]                @relation("PartnerOrganization")
+  offerVisibilityRules        OfferVisibility[]        @relation("OfferVisibilityOrganization")
+  invitations                 OrganizationInvitation[]
+  connectionsRequested        OrganizationConnection[] @relation("OrganizationConnectionRequester")
+  connectionsReceived         OrganizationConnection[] @relation("OrganizationConnectionTarget")
+  locationFulfillers          LocationFulfiller[]
+  workTypes                   WorkType[]
+  workRecords                 WorkRecord[]
+  collaborationRequests       CollaborationRequest[]
 
   @@map("organizations")
 }
@@ -83,10 +145,13 @@ model Store {
   quickEntries             QuickEntry[]
   inboundShipments         InboundShipment[]
   consolidationBatches     ConsolidationBatch[]
+  logisticsCosts           LogisticsCost[]
   inspectionEvents         InspectionEvent[]
   inventoryPool            InventoryPool?
   shippingLanes            ShippingLane[]
   supplyOfferChannels      SupplyOfferChannel[]
+  invitationScopes         OrganizationInvitationStore[]
+  workRecords              WorkRecord[]
 
   @@index([organizationId])
   @@map("stores")
@@ -98,16 +163,26 @@ model User {
   name      String?
   password  String
   role      String   @default("USER")
-  storeId   String
+  storeId   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  store                 Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  memberships           Membership[]
-  storeAccesses         StoreAccess[]
-  inventoryPoolAccesses InventoryPoolAccess[]
-  channelAccesses       ChannelAccess[]
-  locationAccesses      LocationAccess[]
+  store                        Store?                   @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  memberships                  Membership[]
+  storeAccesses                StoreAccess[]
+  inventoryPoolAccesses        InventoryPoolAccess[]
+  channelAccesses              ChannelAccess[]
+  locationAccesses             LocationAccess[]
+  invitationsSent              OrganizationInvitation[] @relation("OrganizationInvitationInviter")
+  invitationsAccepted          OrganizationInvitation[] @relation("OrganizationInvitationAcceptor")
+  connectionsRequested         OrganizationConnection[] @relation("OrganizationConnectionRequesterUser")
+  connectionsResponded         OrganizationConnection[] @relation("OrganizationConnectionResponderUser")
+  locationFulfillerAssignments LocationFulfiller[]      @relation("LocationFulfillerUser")
+  locationFulfillerInvitations LocationFulfiller[]      @relation("LocationFulfillerInviter")
+  serviceAgreementsAccepted    ServiceAgreement[]       @relation("ServiceAgreementAcceptor")
+  workRecords                  WorkRecord[]
+  collaborationRequestsCreated CollaborationRequest[]    @relation("CollaborationRequestCreator")
+  taskDispatchesClaimed         TaskDispatch[]            @relation("TaskDispatchClaimedBy")
 
   @@index([storeId])
   @@map("users")
@@ -130,6 +205,44 @@ model Membership {
   @@map("memberships")
 }
 
+model OrganizationInvitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  role           String
+  tokenHash      String    @unique
+  status         String    @default("PENDING") // PENDING, ACCEPTED, REVOKED, EXPIRED
+  expiresAt      DateTime
+  invitedById    String
+  acceptedById   String?
+  acceptedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User                          @relation("OrganizationInvitationInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  acceptedBy   User?                         @relation("OrganizationInvitationAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  storeScopes  OrganizationInvitationStore[]
+
+  @@index([organizationId, status])
+  @@index([email, status])
+  @@index([expiresAt])
+  @@map("organization_invitations")
+}
+
+model OrganizationInvitationStore {
+  id           String @id @default(cuid())
+  invitationId String
+  storeId      String
+
+  invitation OrganizationInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  store      Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([invitationId, storeId])
+  @@index([storeId])
+  @@map("organization_invitation_stores")
+}
+
 model StoreAccess {
   id          String   @id @default(cuid())
   storeId     String
@@ -148,28 +261,32 @@ model StoreAccess {
 }
 
 model Task {
-  id             String    @id @default(cuid())
-  organizationId String
-  storeId        String
-  type           String
-  status         String    @default("OPEN")
-  priority       String    @default("NORMAL")
-  title          String
-  description    String?   @db.Text
-  refType        String
-  refId          String
-  createdById    String
-  assignedToId   String?
-  delegatedToId  String?
-  completedById  String?
-  assignedAt     DateTime?
-  dueAt          DateTime?
-  startedAt      DateTime?
-  completedAt    DateTime?
-  cancelledAt    DateTime?
-  metadata       Json?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  organizationId        String
+  storeId               String
+  type                  String
+  status                String    @default("OPEN")
+  priority              String    @default("NORMAL")
+  title                 String
+  description           String?   @db.Text
+  refType               String
+  refId                 String
+  createdById           String
+  assignedToId          String?
+  delegatedToId         String?
+  completedById         String?
+  assignedAt            DateTime?
+  dueAt                 DateTime?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  cancelledAt           DateTime?
+  fulfillmentLocationId String?
+  metadata              Json?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  workRecords WorkRecord[]
+  dispatch    TaskDispatch?
 
   @@index([organizationId])
   @@index([storeId])
@@ -178,7 +295,194 @@ model Task {
   @@index([assignedToId])
   @@index([completedById])
   @@index([refType, refId])
+  @@index([fulfillmentLocationId, status])
   @@map("tasks")
+}
+
+/// 通用协作协议请求。scopeType + scopeRef 构成多态参与方，支持组织、仓库、角色或个人。
+model CollaborationRequest {
+  id                 String                        @id @default(cuid())
+  organizationId     String
+  protocol           String
+  protocolVersion    Int                           @default(1)
+  kind               String
+  status             CollaborationRequestStatus    @default(OPEN)
+  acceptancePolicy   CollaborationAcceptancePolicy
+  requesterScopeType CollaborationScopeType
+  requesterScopeRef  String
+  targetScopeType    CollaborationScopeType
+  targetScopeRef     String
+  parentRequestId    String?
+  idempotencyKey     String
+  payload            Json?
+  expiresAt          DateTime?
+  resolvedAt         DateTime?
+  resolutionCode     String?
+  cancelledAt        DateTime?
+  createdById        String
+  createdAt          DateTime                      @default(now())
+  updatedAt          DateTime                      @updatedAt
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User                     @relation("CollaborationRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  parent       CollaborationRequest?    @relation("CollaborationRequestChildren", fields: [parentRequestId], references: [id], onDelete: SetNull)
+  children     CollaborationRequest[]   @relation("CollaborationRequestChildren")
+  responses    CollaborationResponse[]
+  events       CollaborationEvent[]
+  dispatches   TaskDispatch[]
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, status, createdAt])
+  @@index([protocol, kind, status])
+  @@index([targetScopeType, targetScopeRef, status])
+  @@index([parentRequestId])
+  @@index([expiresAt, status])
+  @@map("collaboration_requests")
+}
+
+/// 不可变、幂等的协作响应；同一响应方可通过不同幂等键记录审批、领取等独立决定。
+model CollaborationResponse {
+  id                 String                        @id @default(cuid())
+  requestId          String
+  responderScopeType CollaborationScopeType
+  responderScopeRef  String
+  decision           CollaborationResponseDecision
+  idempotencyKey     String
+  payload            Json?
+  respondedAt        DateTime                      @default(now())
+  createdAt          DateTime                      @default(now())
+
+  request CollaborationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  events  CollaborationEvent[]
+
+  @@unique([requestId, idempotencyKey])
+  @@index([requestId, responderScopeType, responderScopeRef])
+  @@index([requestId, decision, respondedAt])
+  @@map("collaboration_responses")
+}
+
+/// 协作协议的追加式事件流；dedupeKey 保证调用方重试不会重复记事件。
+model CollaborationEvent {
+  id             String                 @id @default(cuid())
+  requestId      String
+  responseId     String?
+  dispatchId     String?
+  type           CollaborationEventType
+  actorScopeType CollaborationScopeType?
+  actorScopeRef  String?
+  dedupeKey      String
+  payload        Json?
+  occurredAt     DateTime               @default(now())
+  createdAt      DateTime               @default(now())
+
+  request  CollaborationRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  response CollaborationResponse? @relation(fields: [responseId], references: [id], onDelete: SetNull)
+  dispatch TaskDispatch?           @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
+
+  @@unique([requestId, dedupeKey])
+  @@index([requestId, occurredAt])
+  @@index([responseId])
+  @@index([dispatchId])
+  @@map("collaboration_events")
+}
+
+/// 一个现有 Task 可选地绑定一个协议派发；协议请求本身也可独立派发。
+model TaskDispatch {
+  id                   String                 @id @default(cuid())
+  requestId            String
+  taskId               String?                @unique
+  targetScopeType      CollaborationScopeType
+  targetScopeRef       String
+  requiredCapability   String?
+  capabilityLocationId String?
+  status               TaskDispatchStatus     @default(QUEUED)
+  idempotencyKey       String
+  claimedByUserId      String?
+  claimedAt            DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  metadata             Json?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  request            CollaborationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  task               Task?                @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  claimedBy          User?                @relation("TaskDispatchClaimedBy", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  capabilityLocation Location?            @relation(fields: [capabilityLocationId], references: [id], onDelete: SetNull)
+  events             CollaborationEvent[]
+
+  @@unique([requestId, idempotencyKey])
+  @@index([requestId, status])
+  @@index([targetScopeType, targetScopeRef, status])
+  @@index([claimedByUserId, status])
+  @@index([capabilityLocationId])
+  @@map("task_dispatches")
+}
+
+/// 可由组织扩展的工作类型。统计和后续计件规则读取数据，不依赖代码中的固定枚举。
+model WorkType {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  code               String
+  name               String
+  unit               String
+  status             String   @default("ACTIVE") // ACTIVE, ARCHIVED
+  pointsPerUnit      Decimal? @db.Decimal(19, 4)
+  settlementRate     Decimal? @db.Decimal(19, 4)
+  settlementCurrency String?
+  metadata           Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  records      WorkRecord[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+  @@map("work_types")
+}
+
+/// 追加式工作量事实。金额不写入这里；之后可按工作类型、数量和有效期规则计算。
+model WorkRecord {
+  id                     String   @id @default(cuid())
+  organizationId         String
+  storeId                String
+  userId                 String
+  workTypeId             String
+  taskId                 String?
+  sourceType             String
+  sourceId               String
+  workCode               String
+  workName               String
+  quantity               Decimal  @db.Decimal(19, 4)
+  unit                   String
+  relationshipType       String   @default("UNKNOWN") // SELF, MEMBER, WAREHOUSE_COLLABORATOR, PARTNER_ORGANIZATION, UNKNOWN
+  locationId             String?
+  executorOrganizationId String?
+  status                 String   @default("CONFIRMED") // CONFIRMED, VOID
+  dedupeKey              String
+  occurredAt             DateTime @default(now())
+  metadata               Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store        Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workType     WorkType     @relation(fields: [workTypeId], references: [id], onDelete: Restrict)
+  task         Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, occurredAt])
+  @@index([storeId, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([workTypeId, occurredAt])
+  @@index([relationshipType, occurredAt])
+  @@index([locationId, occurredAt])
+  @@index([executorOrganizationId, occurredAt])
+  @@index([sourceType, sourceId])
+  @@index([taskId])
+  @@map("work_records")
 }
 
 model Notification {
@@ -197,7 +501,11 @@ model Notification {
   priority       String    @default("NORMAL")
   dedupeKey      String?
   readAt         DateTime?
+  resolvedAt     DateTime?
+  resolutionCode String?
+  resolvedById   String?
   createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   outbox NotificationOutbox?
 
@@ -208,6 +516,7 @@ model Notification {
   @@index([actorId])
   @@index([taskId])
   @@index([readAt])
+  @@index([resolvedAt])
   @@map("notifications")
 }
 
@@ -830,11 +1139,44 @@ model Location {
   capabilities         LocationCapability[]
   shippingLanesFrom    ShippingLane[]       @relation("ShippingLaneFrom")
   shippingLanesTo      ShippingLane[]       @relation("ShippingLaneTo")
+  fulfillers           LocationFulfiller[]
+  taskDispatches       TaskDispatch[]
 
   @@unique([storeId, code])
   @@index([storeId])
   @@index([operatorOrganizationId])
   @@map("locations")
+}
+
+/// 仓库级发货协作人。协作人只获得被邀请仓库的发货权限，不自动成为企业成员。
+model LocationFulfiller {
+  id             String    @id @default(cuid())
+  organizationId String
+  locationId     String
+  userId         String?
+  email          String
+  role           String    @default("OPERATOR") // MANAGER, OPERATOR, BACKUP
+  status         String    @default("INVITED") // INVITED, ACTIVE, SUSPENDED
+  isDefault      Boolean   @default(false)
+  tokenHash      String?   @unique
+  expiresAt      DateTime?
+  invitedById    String
+  acceptedAt     DateTime?
+  suspendedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location     Location     @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  user         User?        @relation("LocationFulfillerUser", fields: [userId], references: [id], onDelete: SetNull)
+  invitedBy    User         @relation("LocationFulfillerInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@unique([locationId, email])
+  @@index([organizationId, status])
+  @@index([locationId, status, isDefault])
+  @@index([userId, status])
+  @@index([expiresAt])
+  @@map("location_fulfillers")
 }
 
 /// 仓库节点的运营能力。地区只表示物理位置，能力决定节点能执行哪些动作。
@@ -1363,20 +1705,48 @@ model Partner {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  store                Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  organization         Organization?         @relation("PartnerOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
-  tradingRelationships TradingRelationship[]
-  ownedSupplyOffers    SupplyOffer[]         @relation("SupplyOfferOwnerPartner")
-  visibilityRules      OfferVisibility[]
-  settlements          Settlement[]
-  supplyOfferChannels  SupplyOfferChannel[]
-  purchaseOrders       PurchaseOrder[]
+  store                   Store                    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  organization            Organization?            @relation("PartnerOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
+  tradingRelationships    TradingRelationship[]
+  ownedSupplyOffers       SupplyOffer[]            @relation("SupplyOfferOwnerPartner")
+  visibilityRules         OfferVisibility[]
+  settlements             Settlement[]
+  supplyOfferChannels     SupplyOfferChannel[]
+  purchaseOrders          PurchaseOrder[]
+  organizationConnections OrganizationConnection[]
 
   @@unique([storeId, code])
   @@index([storeId])
   @@index([organizationId])
   @@index([status])
   @@map("partners")
+}
+
+model OrganizationConnection {
+  id                      String    @id @default(cuid())
+  requesterOrganizationId String
+  targetOrganizationId    String
+  initiatingPartnerId     String?
+  pairKey                 String    @unique
+  status                  String    @default("PENDING") // PENDING, ACTIVE, REJECTED, ENDED
+  requestedById           String
+  respondedById           String?
+  respondedAt             DateTime?
+  endedAt                 DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  requesterOrganization Organization      @relation("OrganizationConnectionRequester", fields: [requesterOrganizationId], references: [id], onDelete: Restrict)
+  targetOrganization    Organization      @relation("OrganizationConnectionTarget", fields: [targetOrganizationId], references: [id], onDelete: Restrict)
+  initiatingPartner     Partner?          @relation(fields: [initiatingPartnerId], references: [id], onDelete: SetNull)
+  requestedBy           User              @relation("OrganizationConnectionRequesterUser", fields: [requestedById], references: [id], onDelete: Restrict)
+  respondedBy           User?             @relation("OrganizationConnectionResponderUser", fields: [respondedById], references: [id], onDelete: SetNull)
+  offerVisibilityRules  OfferVisibility[]
+
+  @@index([requesterOrganizationId, status])
+  @@index([targetOrganizationId, status])
+  @@index([initiatingPartnerId])
+  @@map("organization_connections")
 }
 
 model TradingRelationship {
@@ -1932,23 +2302,26 @@ model SupplyOfferItem {
 }
 
 model OfferVisibility {
-  id                   String   @id @default(cuid())
-  offerId              String
-  partnerId            String?
-  viewerStoreId        String?
-  viewerOrganizationId String?
-  scope                String   @default("PARTNER") // PARTNER, STORE
-  createdAt            DateTime @default(now())
+  id                       String   @id @default(cuid())
+  offerId                  String
+  partnerId                String?
+  viewerStoreId            String?
+  viewerOrganizationId     String?
+  organizationConnectionId String?
+  scope                    String   @default("PARTNER") // PARTNER, STORE
+  createdAt                DateTime @default(now())
 
-  offer              SupplyOffer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  partner            Partner?      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  viewerStore        Store?        @relation("OfferVisibilityStore", fields: [viewerStoreId], references: [id], onDelete: Cascade)
-  viewerOrganization Organization? @relation("OfferVisibilityOrganization", fields: [viewerOrganizationId], references: [id], onDelete: Cascade)
+  offer                  SupplyOffer             @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  partner                Partner?                @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  viewerStore            Store?                  @relation("OfferVisibilityStore", fields: [viewerStoreId], references: [id], onDelete: Cascade)
+  viewerOrganization     Organization?           @relation("OfferVisibilityOrganization", fields: [viewerOrganizationId], references: [id], onDelete: Cascade)
+  organizationConnection OrganizationConnection? @relation(fields: [organizationConnectionId], references: [id], onDelete: SetNull)
 
   @@index([offerId])
   @@index([partnerId])
   @@index([viewerStoreId])
   @@index([viewerOrganizationId])
+  @@index([organizationConnectionId])
   @@map("offer_visibility")
 }
 
@@ -2128,6 +2501,29 @@ model ConsolidationBatchLine {
   @@unique([sourceType, sourceId])
   @@index([batchId])
   @@map("consolidation_batch_lines")
+}
+
+/// 可追溯到采购、转仓或集运单据的实际物流支出。
+/// 销售订单向客户结算的 shippingFee 仍保留在 CustomerOrder，避免收支口径混淆。
+model LogisticsCost {
+  id         String   @id @default(cuid())
+  storeId    String
+  sourceType String // PURCHASE_ORDER, INBOUND_SHIPMENT, CONSOLIDATION_BATCH
+  sourceId   String
+  feeType    String   @default("SHIPPING")
+  amount     Decimal  @db.Decimal(19, 4)
+  currency   String
+  occurredAt DateTime @default(now())
+  note       String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, sourceType, sourceId, feeType])
+  @@index([storeId, occurredAt])
+  @@index([sourceType, sourceId])
+  @@map("logistics_costs")
 }
 
 model InspectionEvent {
@@ -2337,31 +2733,38 @@ model LocationAccess {
 }
 
 model ServiceAgreement {
-  id                     String    @id @default(cuid())
-  clientOrganizationId   String
-  providerOrganizationId String
-  inventoryPoolId        String?
-  locationId             String?
-  serviceTypes           Json
-  settlementCurrency     String
-  paymentTermsDays       Int       @default(0)
-  status                 String    @default("ACTIVE") // DRAFT, ACTIVE, PAUSED, ENDED
-  effectiveFrom          DateTime?
-  effectiveTo            DateTime?
-  notes                  String?   @db.Text
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  id                       String    @id @default(cuid())
+  clientOrganizationId     String
+  providerOrganizationId   String
+  inventoryPoolId          String?
+  locationId               String?
+  serviceTypes             Json
+  settlementCurrency       String
+  paymentTermsDays         Int       @default(0)
+  status                   String    @default("ACTIVE") // DRAFT, ACTIVE, PAUSED, ENDED
+  effectiveFrom            DateTime?
+  effectiveTo              DateTime?
+  notes                    String?   @db.Text
+  proposedByOrganizationId String?
+  acceptedById             String?
+  acceptedAt               DateTime?
+  version                  Int       @default(1)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  clientOrganization   Organization   @relation("ServiceAgreementClient", fields: [clientOrganizationId], references: [id], onDelete: Restrict)
-  providerOrganization Organization   @relation("ServiceAgreementProvider", fields: [providerOrganizationId], references: [id], onDelete: Restrict)
-  inventoryPool        InventoryPool? @relation(fields: [inventoryPoolId], references: [id], onDelete: SetNull)
-  location             Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  chargeRules          ChargeRule[]
+  clientOrganization     Organization   @relation("ServiceAgreementClient", fields: [clientOrganizationId], references: [id], onDelete: Restrict)
+  providerOrganization   Organization   @relation("ServiceAgreementProvider", fields: [providerOrganizationId], references: [id], onDelete: Restrict)
+  inventoryPool          InventoryPool? @relation(fields: [inventoryPoolId], references: [id], onDelete: SetNull)
+  location               Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  proposedByOrganization Organization?  @relation("ServiceAgreementProposer", fields: [proposedByOrganizationId], references: [id], onDelete: Restrict)
+  acceptedBy             User?          @relation("ServiceAgreementAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  chargeRules            ChargeRule[]
 
   @@index([clientOrganizationId, status])
   @@index([providerOrganizationId, status])
   @@index([inventoryPoolId])
   @@index([locationId])
+  @@index([proposedByOrganizationId, status])
   @@map("service_agreements")
 }
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { LogIn, LogOut, UserRound } from "lucide-react";
 import { clearCurrentUser } from "@/app/actions/session";
 import { AccountSettingsForm } from "@/components/settings/account-settings-form";
@@ -7,14 +8,26 @@ import { PageHeader } from "@/components/ui/page-header";
 import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { cn } from "@/lib/utils";
+import { MyOrganizations } from "@/components/settings/my-organizations";
 
 export const dynamic = "force-dynamic";
 
 export default async function PersonalSettingsPage() {
-  const context = await requireUserContext();
+  const context = await requireUserContext().catch(() => redirect("/onboarding"));
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: context.userId },
-    select: { name: true, email: true },
+    select: {
+      name: true,
+      email: true,
+      memberships: {
+        where: { status: "ACTIVE" },
+        select: {
+          role: true,
+          organization: { select: { id: true, name: true, collaborationCode: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+    },
   });
 
   return (
@@ -31,7 +44,15 @@ export default async function PersonalSettingsPage() {
 
       <AccountSettingsForm name={user.name ?? ""} email={user.email} />
 
-      <section className="mt-6 flex flex-col gap-3 rounded-lg border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <MyOrganizations
+        activeOrganizationId={context.organizationId}
+        organizations={user.memberships.map((membership) => ({
+          ...membership.organization,
+          role: membership.role,
+        }))}
+      />
+
+      <section className="flex flex-col gap-3 border-t py-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-sm font-medium">登录与账号</h2>
           <p className="mt-1 text-sm text-muted-foreground">

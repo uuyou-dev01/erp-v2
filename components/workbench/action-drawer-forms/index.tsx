@@ -1,10 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
-import { ExternalLink, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  Loader2,
+  ShieldCheck,
+  UserRound,
+  Warehouse,
+} from "lucide-react";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
+import type { WorkItem } from "@/lib/application/next-actions";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -54,6 +64,7 @@ export type WorkbenchPlatformOption = {
 
 interface ActionFormProps {
   detail: WorkItemDetail;
+  taskItem?: WorkItem | null;
   locations?: WorkbenchLocationOption[];
   consolidationBatches?: ConsolidationBatchOption[];
   pending: boolean;
@@ -101,6 +112,9 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
     ),
     purchaseTrackingNo:
       detail.actionContext.purchaseTrackingNo ?? detail.actionContext.trackingNo ?? "",
+    shippingCost: "",
+    shippingCurrency:
+      detail.actionContext.currency ?? detail.actionContext.purchaseCurrency ?? "CNY",
     note: "",
   });
 
@@ -141,6 +155,37 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
         />
         <p className="text-xs text-muted-foreground">选择这批采购预计送达的仓库/集运仓（含地区）</p>
       </div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+        <div className="space-y-2">
+          <Label htmlFor="purchase-shipping-cost">本段邮费（可选）</Label>
+          <Input
+            id="purchase-shipping-cost"
+            inputMode="decimal"
+            value={form.shippingCost}
+            onChange={(event) =>
+              setForm((value) => ({ ...value, shippingCost: event.target.value }))
+            }
+            placeholder="实际支付金额"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="purchase-shipping-currency">币种</Label>
+          <Input
+            id="purchase-shipping-currency"
+            value={form.shippingCurrency}
+            maxLength={3}
+            onChange={(event) =>
+              setForm((value) => ({
+                ...value,
+                shippingCurrency: event.target.value.toUpperCase(),
+              }))
+            }
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        邮费会记入采购物流成本，并进入费用明细和当月利润报表。
+      </p>
       <div className="space-y-2">
         <Label>备注</Label>
         <Textarea
@@ -207,9 +252,7 @@ export function ConfirmArrivalForm({ detail, locations, pending, run }: ActionFo
         />
       </div>
       <SubmitButton pending={pending}>
-        {detail.primaryAction === "receivePurchase"
-          ? "确认收货并创建库存"
-          : "确认到货并处理库存"}
+        {detail.primaryAction === "receivePurchase" ? "确认收货并创建库存" : "确认到货并处理库存"}
       </SubmitButton>
     </form>
   );
@@ -520,6 +563,8 @@ export function DispositionForm({
     trackingNo: "",
     carrier: "",
     etaDate: "",
+    shippingCost: "",
+    shippingCurrency: detail.actionContext.currency ?? "CNY",
     note: "",
   });
   const [returnForm, setReturnForm] = useState({
@@ -731,7 +776,36 @@ export function DispositionForm({
                 }
               />
             </div>
+            <div className="grid gap-2 sm:grid-cols-[1fr_92px]">
+              <div className="space-y-2">
+                <Label>转仓邮费</Label>
+                <Input
+                  inputMode="decimal"
+                  value={transferForm.shippingCost}
+                  onChange={(event) =>
+                    setTransferForm((value) => ({ ...value, shippingCost: event.target.value }))
+                  }
+                  placeholder="可选"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>币种</Label>
+                <Input
+                  value={transferForm.shippingCurrency}
+                  maxLength={3}
+                  onChange={(event) =>
+                    setTransferForm((value) => ({
+                      ...value,
+                      shippingCurrency: event.target.value.toUpperCase(),
+                    }))
+                  }
+                />
+              </div>
+            </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            转仓邮费会跟随本次物流单进入物流成本台账和当月报表。
+          </p>
           <div className="space-y-2">
             <Label>备注</Label>
             <Textarea
@@ -879,20 +953,162 @@ function proofFromDetail(detail: WorkItemDetail) {
   }
 }
 
-export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
+const SHIPPING_METHOD_OPTIONS = ["平台上门取件", "快递寄送", "自送驿站", "仓库交承运商"] as const;
+
+function quantityLabel(value: string) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2).replace(/0+$/, "");
+}
+
+function ShipmentFulfillmentSummary({
+  detail,
+  assigneeName,
+}: {
+  detail: WorkItemDetail;
+  assigneeName: string;
+}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentQuery = searchParams.toString();
+  const returnTo = `${pathname}${currentQuery ? `?${currentQuery}` : ""}`;
+  const context = detail.fulfillmentContext;
+  if (!context?.allocations.length || !context.isComplete) {
+    return (
+      <div
+        role="alert"
+        className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+      >
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <p className="font-medium">尚未读取到完整的出库库存</p>
+          <p className="mt-1 text-xs leading-5">
+            请先到订单详情完成库存分配；在仓库和库存来源明确前不能确认发货。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section
+      aria-labelledby="shipment-source-title"
+      className="overflow-hidden rounded-lg border border-blue-200 bg-blue-50/50"
+    >
+      <div className="flex items-start justify-between gap-3 border-b border-blue-100 px-3 py-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <Warehouse className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
+          <div className="min-w-0">
+            <h3 id="shipment-source-title" className="text-sm font-semibold text-foreground">
+              本次出库
+            </h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              已按订单库存分配锁定，确认发货时将从以下库存扣减。
+            </p>
+          </div>
+        </div>
+        <Badge variant="outline" className="shrink-0 border-blue-200 bg-background text-blue-700">
+          {context.isMultiLocation ? `${context.locations.length} 个仓库` : "单仓出库"}
+        </Badge>
+      </div>
+
+      <div className="divide-y divide-blue-100">
+        {context.locations.map((location) => (
+          <div
+            key={location.id}
+            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+          >
+            <div className="min-w-0">
+              <p className="truncate font-medium">{location.name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">仓库编码 {location.code}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <Link
+                href={`/inventory/locations/${location.id}?returnTo=${encodeURIComponent(returnTo)}`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
+              >
+                仓库设置
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+              <span className="font-semibold tabular-nums">
+                {quantityLabel(location.quantity)} 件
+              </span>
+            </div>
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+          <div className="flex items-center gap-2">
+            <UserRound className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">任务执行人</span>
+          </div>
+          <span className="font-medium">{assigneeName}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-emerald-700" />
+            <span className="text-muted-foreground">权限校验</span>
+          </div>
+          <span className="font-medium text-emerald-700">提交时按全部出库仓复核</span>
+        </div>
+      </div>
+
+      <details className="group border-t border-blue-100 bg-background/60">
+        <summary className="cursor-pointer list-none px-3 py-2.5 text-xs font-medium text-blue-800 [&::-webkit-details-marker]:hidden">
+          查看 {context.allocations.length} 条库存明细
+        </summary>
+        <div className="divide-y border-t border-blue-100">
+          {context.allocations.map((allocation) => (
+            <div key={allocation.id} className="px-3 py-2.5 text-xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">
+                    {allocation.skuCode} · {allocation.skuName}
+                  </p>
+                  <p className="mt-1 text-muted-foreground">
+                    {allocation.inventoryReference} · {allocation.locationName}
+                  </p>
+                </div>
+                <span className="shrink-0 font-medium tabular-nums">
+                  扣减 {quantityLabel(allocation.quantity)} 件
+                </span>
+              </div>
+              {allocation.remainingAfterShipment !== null ? (
+                <p className="mt-1 text-muted-foreground">
+                  预计扣减后剩余 {quantityLabel(allocation.remainingAfterShipment)} 件
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </details>
+    </section>
+  );
+}
+
+export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProps) {
   const initialProof = proofFromDetail(detail);
+  const initialShippingMethod = initialProof.shippingMethod ?? "";
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [confirmStep, setConfirmStep] = useState(false);
   const [draftHint, setDraftHint] = useState(initialProof.updatedAt ? "已加载暂存内容" : "");
+  const [shippingMethodChoice, setShippingMethodChoice] = useState(
+    SHIPPING_METHOD_OPTIONS.includes(
+      initialShippingMethod as (typeof SHIPPING_METHOD_OPTIONS)[number]
+    )
+      ? initialShippingMethod
+      : initialShippingMethod
+        ? "OTHER"
+        : ""
+  );
   const [checks, setChecks] = useState({
     proofChecked: false,
-    shipperChecked: false,
+    sourceChecked: false,
     shippedConfirmed: false,
   });
   const [form, setForm] = useState({
     shipper: initialProof.shipper ?? "",
-    shippingMethod: initialProof.shippingMethod ?? "",
+    shippingMethod: initialShippingMethod,
     trackingNo: detail.actionContext.trackingNo ?? "",
     pickupCode: initialProof.pickupCode ?? "",
     proofNote: initialProof.proofNote ?? "",
@@ -980,10 +1196,18 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
     persistDraft(next, { silent: true });
   };
 
-  const allChecksPassed = checks.proofChecked && checks.shipperChecked && checks.shippedConfirmed;
+  const fulfillmentContext = detail.fulfillmentContext;
+  const hasCompleteFulfillmentSource = Boolean(
+    fulfillmentContext?.allocations.length && fulfillmentContext.isComplete
+  );
+  const assigneeName =
+    taskItem?.taskAssignedToName ??
+    detail.taskAssignedToName ??
+    "未指派（提交人将记录为实际执行人）";
+  const allChecksPassed = checks.proofChecked && checks.sourceChecked && checks.shippedConfirmed;
 
   const openConfirmStep = () => {
-    setChecks({ proofChecked: false, shipperChecked: false, shippedConfirmed: false });
+    setChecks({ proofChecked: false, sourceChecked: false, shippedConfirmed: false });
     setConfirmStep(true);
   };
 
@@ -991,9 +1215,21 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
     return (
       <div className="space-y-4">
         <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-          <p className="font-medium">发货前请核对以下内容</p>
+          <p className="font-medium">本次发货与库存扣减</p>
           <ul className="mt-2 space-y-1 text-muted-foreground">
-            <li>发货人：{form.shipper.trim() || "未填写"}</li>
+            <li>
+              出库仓：
+              {fulfillmentContext?.locations.map((location) => location.name).join("、") ||
+                "未确定"}
+            </li>
+            <li>
+              扣减数量：
+              {fulfillmentContext
+                ? `${quantityLabel(fulfillmentContext.totalQuantity)} 件`
+                : "未确定"}
+            </li>
+            <li>任务执行人：{assigneeName}</li>
+            <li>现场交接联系人：{form.shipper.trim() || "未填写"}</li>
             <li>发货方式：{form.shippingMethod.trim() || "未填写"}</li>
             <li>取件码：{form.pickupCode.trim() || "未填写"}</li>
             <li>凭证图片：{form.imageUrls.length} 张</li>
@@ -1010,11 +1246,11 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
             label="我已核对取件码 / 二维码等发货凭证"
           />
           <Checkbox
-            checked={checks.shipperChecked}
+            checked={checks.sourceChecked}
             onChange={(event) =>
-              setChecks((value) => ({ ...value, shipperChecked: event.target.checked }))
+              setChecks((value) => ({ ...value, sourceChecked: event.target.checked }))
             }
-            label="我已核对发货人 / 发货方式信息"
+            label="我已核对出库仓、库存明细和任务执行人"
           />
           <Checkbox
             checked={checks.shippedConfirmed}
@@ -1036,7 +1272,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
           </Button>
           <Button
             type="button"
-            disabled={pending || !allChecksPassed}
+            disabled={pending || !allChecksPassed || !hasCompleteFulfillmentSource}
             onClick={() => run(() => submitShipOrder(detail.entityId, payload()))}
           >
             {pending ? (
@@ -1067,44 +1303,73 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
         </p>
       ) : null}
 
+      <ShipmentFulfillmentSummary detail={detail} assigneeName={assigneeName} />
+
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>发货人</Label>
+          <Label htmlFor="shipping-handoff-contact">现场交接联系人（选填）</Label>
           <Input
+            id="shipping-handoff-contact"
             value={form.shipper}
             onChange={(event) => setForm((value) => ({ ...value, shipper: event.target.value }))}
-            placeholder="实际发货方 / 代发人"
+            placeholder="如快递员、仓库现场联系人"
           />
+          <p className="text-xs text-muted-foreground">任务执行人以上方指派记录为准。</p>
         </div>
         <div className="space-y-2">
-          <Label>发货方式</Label>
-          <Input
-            value={form.shippingMethod}
-            onChange={(event) =>
-              setForm((value) => ({ ...value, shippingMethod: event.target.value }))
-            }
-            placeholder="如：平台上门取件、自送驿站"
-          />
+          <Label htmlFor="shipping-method">发货方式</Label>
+          <Select
+            id="shipping-method"
+            value={shippingMethodChoice}
+            onChange={(event) => {
+              const value = event.target.value;
+              setShippingMethodChoice(value);
+              setForm((current) => ({
+                ...current,
+                shippingMethod: value === "OTHER" ? "" : value,
+              }));
+            }}
+          >
+            <option value="">请选择发货方式</option>
+            {SHIPPING_METHOD_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+            <option value="OTHER">其他方式</option>
+          </Select>
+          {shippingMethodChoice === "OTHER" ? (
+            <Input
+              aria-label="其他发货方式"
+              value={form.shippingMethod}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, shippingMethod: event.target.value }))
+              }
+              placeholder="填写具体发货方式"
+            />
+          ) : null}
         </div>
       </div>
       <div className="space-y-2">
-        <Label>运单号</Label>
+        <Label htmlFor="shipping-tracking-no">运单号</Label>
         <Input
+          id="shipping-tracking-no"
           value={form.trackingNo}
           onChange={(event) => setForm((value) => ({ ...value, trackingNo: event.target.value }))}
           placeholder="选填，代发完成后可补"
         />
       </div>
       <div className="space-y-2">
-        <Label>取件码 / 交接码</Label>
+        <Label htmlFor="shipping-pickup-code">取件码 / 交接码</Label>
         <Input
+          id="shipping-pickup-code"
           value={form.pickupCode}
           onChange={(event) => setForm((value) => ({ ...value, pickupCode: event.target.value }))}
           placeholder="平台取件码、代收码、验证码等"
         />
       </div>
       <div className="space-y-2">
-        <Label>发货凭证图片</Label>
+        <Label htmlFor="shipping-proof-images">发货凭证图片</Label>
         <p className="text-xs text-muted-foreground">
           可上传平台二维码、取件截图等；可先暂存，发给代发方后再确认发货
         </p>
@@ -1134,6 +1399,7 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
           </div>
         ) : null}
         <Input
+          id="shipping-proof-images"
           type="file"
           accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
           disabled={pending || uploading}
@@ -1147,26 +1413,31 @@ export function ShipOrderForm({ detail, pending, run }: ActionFormProps) {
         ) : null}
       </div>
       <div className="space-y-2">
-        <Label>发货凭证备注</Label>
+        <Label htmlFor="shipping-proof-note">发货凭证备注</Label>
         <Textarea
+          id="shipping-proof-note"
           value={form.proofNote}
           onChange={(event) => setForm((value) => ({ ...value, proofNote: event.target.value }))}
           placeholder="补充说明，如取件时间、联系人等"
         />
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={pending || uploading}
-          onClick={() => {
-            setDraftHint("已暂存，可继续编辑；代发方发出后再确认发货");
-            persistDraft(form);
-          }}
-        >
-          暂存
-        </Button>
-        <SubmitButton pending={pending || uploading}>确认已发货</SubmitButton>
+      <div className="sticky bottom-0 z-10 -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending || uploading}
+            onClick={() => {
+              setDraftHint("已暂存，可继续编辑；代发方发出后再确认发货");
+              persistDraft(form);
+            }}
+          >
+            暂存
+          </Button>
+          <SubmitButton pending={pending || uploading} disabled={!hasCompleteFulfillmentSource}>
+            确认已发货
+          </SubmitButton>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">
         「暂存」仅保存凭证，不扣库存；发货方实际发出后，再核对并确认发货。
@@ -1194,7 +1465,7 @@ export function ShippedOrderForm({ detail, pending, run }: ActionFormProps) {
       <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-2">
         {shippedAt ? <p>发货时间：{shippedAt}</p> : null}
         <p>运单号：{detail.actionContext.trackingNo?.trim() || "未填写"}</p>
-        {proof.shipper ? <p>发货人：{proof.shipper}</p> : null}
+        {proof.shipper ? <p>现场交接联系人：{proof.shipper}</p> : null}
         {proof.shippingMethod ? <p>发货方式：{proof.shippingMethod}</p> : null}
         {proof.pickupCode ? <p>取件码：{proof.pickupCode}</p> : null}
         {proof.proofNote ? (

@@ -18,9 +18,10 @@ import {
 } from "@/components/ui/table";
 import { notFound } from "next/navigation";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
-import { AddPurchaseLineForm } from "@/components/procurement/add-purchase-line-form";
+import { AddPurchaseLineDialog } from "@/components/procurement/add-purchase-line-dialog";
 import { ReceiveGoodsForm } from "@/components/procurement/receive-goods-form";
 import { PurchaseOrderActions } from "@/components/procurement/purchase-order-actions";
+import { PurchaseOrderBusinessDateEditor } from "@/components/procurement/purchase-order-business-date-editor";
 import { QuickReceiveButton } from "@/components/procurement/quick-receive-button";
 import { DeletePurchaseLineButton } from "@/components/procurement/delete-purchase-line-button";
 import { BackButton } from "@/components/shared/back-button";
@@ -177,8 +178,17 @@ export default async function PurchaseOrderDetailPage({
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-sm">
-              {order.orderedAt ? new Date(order.orderedAt).toLocaleDateString("zh-CN") : "尚未下单"}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm">
+                {order.orderedAt
+                  ? new Date(order.orderedAt).toLocaleDateString("zh-CN")
+                  : "尚未下单"}
+              </div>
+              <PurchaseOrderBusinessDateEditor
+                purchaseOrderId={order.id}
+                orderedAt={order.orderedAt}
+                costAllocationStatus={order.costAllocationStatus}
+              />
             </div>
           </CardContent>
         </Card>
@@ -307,13 +317,20 @@ export default async function PurchaseOrderDetailPage({
       ) : null}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <CardTitle>采购明细</CardTitle>
+          {canEdit ? (
+            <AddPurchaseLineDialog
+              purchaseOrderId={order.id}
+              currency={order.currency}
+              storeId={storeId}
+            />
+          ) : null}
         </CardHeader>
         <CardContent>
           {order.lines.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
-              暂无商品。请在下方添加商品。
+              暂无商品。可使用右上角“添加商品”补充采购明细。
             </div>
           ) : (
             <Table>
@@ -403,21 +420,6 @@ export default async function PurchaseOrderDetailPage({
           )}
         </CardContent>
       </Card>
-
-      {canEdit && (
-        <Card>
-          <CardHeader>
-            <CardTitle>添加商品</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <AddPurchaseLineForm
-              purchaseOrderId={order.id}
-              currency={order.currency}
-              storeId={storeId}
-            />
-          </CardContent>
-        </Card>
-      )}
 
       {canReceive && (
         <Card className="border-green-500/50 bg-green-500/5">

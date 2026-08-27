@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
+import { organizationPairKey } from "@/lib/application/organization-connections";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
@@ -40,7 +41,7 @@ async function createIdentity(label: string, email: string) {
   await prisma.storeAccess.create({ data: { storeId: store.id, userId: user.id, role: "OWNER" } });
   organizationIds.push(organization.id);
   storeIds.push(store.id);
-  return { organization, store };
+  return { organization, store, user };
 }
 
 describe("supply offer organization visibility", () => {
@@ -48,6 +49,18 @@ describe("supply offer organization visibility", () => {
     const owner = await createIdentity("owner", ownerEmail);
     const reseller = await createIdentity("reseller", resellerEmail);
     await createIdentity("outsider", outsiderEmail);
+
+    await prisma.organizationConnection.create({
+      data: {
+        requesterOrganizationId: owner.organization.id,
+        targetOrganizationId: reseller.organization.id,
+        pairKey: organizationPairKey(owner.organization.id, reseller.organization.id),
+        status: "ACTIVE",
+        requestedById: owner.user.id,
+        respondedById: reseller.user.id,
+        respondedAt: new Date(),
+      },
+    });
 
     const location = await prisma.location.create({
       data: {
@@ -113,6 +126,14 @@ describe("supply offer organization visibility", () => {
 
   afterAll(async () => {
     delete process.env.ERP_DEV_USER_EMAIL;
+    await prisma.organizationConnection.deleteMany({
+      where: {
+        OR: [
+          { requesterOrganizationId: { in: organizationIds } },
+          { targetOrganizationId: { in: organizationIds } },
+        ],
+      },
+    });
     await prisma.store.deleteMany({ where: { id: { in: storeIds } } });
     await prisma.organization.deleteMany({ where: { id: { in: organizationIds } } });
   });
@@ -127,6 +148,21 @@ describe("supply offer organization visibility", () => {
 
   it("does not expose the targeted offer to an unrelated organization", async () => {
     process.env.ERP_DEV_USER_EMAIL = outsiderEmail;
+    expect((await getMarketplaceOffers()).map((offer) => offer.id)).not.toContain(offerId);
+    expect(await getSupplyOfferById(offerId)).toBeNull();
+  });
+
+  it("revokes organization-targeted visibility when the source connection ends", async () => {
+    await prisma.organizationConnection.updateMany({
+      where: {
+        OR: [
+          { requesterOrganizationId: organizationIds[0], targetOrganizationId: organizationIds[1] },
+          { requesterOrganizationId: organizationIds[1], targetOrganizationId: organizationIds[0] },
+        ],
+      },
+      data: { status: "ENDED", endedAt: new Date() },
+    });
+    process.env.ERP_DEV_USER_EMAIL = resellerEmail;
     expect((await getMarketplaceOffers()).map((offer) => offer.id)).not.toContain(offerId);
     expect(await getSupplyOfferById(offerId)).toBeNull();
   });

@@ -1,0 +1,1 @@
+ALTER TYPE "CollaborationEventType" ADD VALUE IF NOT EXISTS 'TASK_RETURNED';

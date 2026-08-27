@@ -53,6 +53,8 @@ export function BulkActionToolbar({
   const [purchaseTrackingNo, setPurchaseTrackingNo] = useState("");
   const [destinationLocationId, setDestinationLocationId] = useState("");
   const [logisticsNote, setLogisticsNote] = useState("");
+  const [bulkPurchaseShippingCost, setBulkPurchaseShippingCost] = useState("");
+  const [bulkPurchaseShippingCurrency, setBulkPurchaseShippingCurrency] = useState("CNY");
   const [bulkInboundLocationId, setBulkInboundLocationId] = useState("");
   const [bulkBatchMode, setBulkBatchMode] = useState<"existing" | "new">(
     consolidationBatches.length > 0 ? "existing" : "new"
@@ -63,6 +65,8 @@ export function BulkActionToolbar({
   const [bulkTransferTrackingNo, setBulkTransferTrackingNo] = useState("");
   const [bulkTransferCarrier, setBulkTransferCarrier] = useState("");
   const [bulkTransferEtaDate, setBulkTransferEtaDate] = useState("");
+  const [bulkTransferShippingCost, setBulkTransferShippingCost] = useState("");
+  const [bulkTransferShippingCurrency, setBulkTransferShippingCurrency] = useState("CNY");
   const [bulkTransferNote, setBulkTransferNote] = useState("");
   const [bulkDispositionMode, setBulkDispositionMode] = useState<
     "inbound" | "consolidate" | "transfer" | "return"
@@ -185,6 +189,33 @@ export function BulkActionToolbar({
               </p>
             </div>
           </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_100px]">
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="bulk-purchase-shipping-cost">
+                每张采购单邮费（选填）
+              </Label>
+              <Input
+                id="bulk-purchase-shipping-cost"
+                inputMode="decimal"
+                value={bulkPurchaseShippingCost}
+                onChange={(event) => setBulkPurchaseShippingCost(event.target.value)}
+                placeholder="所选订单将分别记录该金额"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs" htmlFor="bulk-purchase-shipping-currency">
+                币种
+              </Label>
+              <Input
+                id="bulk-purchase-shipping-currency"
+                value={bulkPurchaseShippingCurrency}
+                maxLength={3}
+                onChange={(event) =>
+                  setBulkPurchaseShippingCurrency(event.target.value.toUpperCase())
+                }
+              />
+            </div>
+          </div>
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="bulk-logistics-note">
@@ -205,6 +236,8 @@ export function BulkActionToolbar({
                   bulkUpdatePurchaseOrderLogistics(purchaseOrderIds, {
                     purchaseTrackingNo,
                     destinationLocationId,
+                    shippingCost: bulkPurchaseShippingCost,
+                    shippingCurrency: bulkPurchaseShippingCurrency,
                     note: logisticsNote,
                   })
                 )
@@ -432,6 +465,26 @@ export function BulkActionToolbar({
                   onChange={(event) => setBulkTransferNote(event.target.value)}
                 />
               </div>
+              <div className="grid gap-2 sm:col-span-3 sm:grid-cols-[1fr_100px]">
+                <div className="space-y-1">
+                  <Label className="text-xs">每张转仓单邮费（选填）</Label>
+                  <Input
+                    inputMode="decimal"
+                    value={bulkTransferShippingCost}
+                    onChange={(event) => setBulkTransferShippingCost(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">币种</Label>
+                  <Input
+                    value={bulkTransferShippingCurrency}
+                    maxLength={3}
+                    onChange={(event) =>
+                      setBulkTransferShippingCurrency(event.target.value.toUpperCase())
+                    }
+                  />
+                </div>
+              </div>
               <Button
                 className="self-end"
                 disabled={pending || purchaseOrderIds.length === 0 || !bulkTransferToLocationId}
@@ -442,6 +495,8 @@ export function BulkActionToolbar({
                       toLocationId: bulkTransferToLocationId,
                       trackingNo: bulkTransferTrackingNo,
                       carrier: bulkTransferCarrier,
+                      shippingCost: bulkTransferShippingCost,
+                      shippingCurrency: bulkTransferShippingCurrency,
                       etaDate: bulkTransferEtaDate,
                       note: bulkTransferNote,
                     })

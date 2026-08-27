@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Save,
   TableProperties,
+  Trash2,
 } from "lucide-react";
 import {
   saveQuickEntryBatch,
@@ -20,6 +21,7 @@ import {
 import type { QuickEntryRowInput } from "@/lib/application/quick-entry";
 import { isUsedCondition } from "@/lib/quick-entry-utils";
 import { Badge } from "@/components/ui/badge";
+import { ActionDialog } from "@/components/ui/action-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -51,12 +53,14 @@ interface RecentEntry {
   functionStatus: string | null;
   purchasePrice: string | null;
   purchaseCurrency: string | null;
+  purchaseDate: string | null;
   purchaseTrackingNo: string | null;
   transitTrackingNo: string | null;
   currentLocationText: string | null;
   listingPlatformsText: string | null;
   salePlatformText: string | null;
   salePrice: string | null;
+  saleDate: string | null;
   batchNote: string | null;
   workflowStage: string;
   inspectionResult: string | null;
@@ -129,6 +133,21 @@ function isPositiveQuantity(value?: string | null) {
   return Number.isFinite(quantity) && quantity > 0;
 }
 
+function localDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function serializedDateInputValue(value?: string | null) {
+  if (!value) return "";
+  const dateOnly = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (dateOnly) return dateOnly;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+}
+
 const blankRow = (storeId: string): DraftRow => ({
   localId: createLocalId(),
   storeId,
@@ -144,7 +163,7 @@ const blankRow = (storeId: string): DraftRow => ({
   purchasePrice: "",
   purchaseCurrency: "CNY",
   purchasePlatformText: "",
-  purchaseDate: new Date().toISOString().slice(0, 10),
+  purchaseDate: localDateInputValue(),
   currentLocationText: "",
   listingPlatformsText: "",
   note: "",
@@ -199,7 +218,7 @@ function splitPastedRows(text: string, storeId: string): DraftRow[] {
         purchasePrice: purchasePrice || "",
         purchaseCurrency: purchaseCurrency || "CNY",
         purchasePlatformText: purchasePlatform || "",
-        purchaseDate: purchaseDate || new Date().toISOString().slice(0, 10),
+        purchaseDate: purchaseDate || localDateInputValue(),
         batchNote: batchNote || "",
         listingPlatformsText: listingPlatforms || "",
         purchaseTrackingNo: purchaseTracking || "",
@@ -283,12 +302,14 @@ function PendingEntryPanel({
   const [expanded, setExpanded] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [form, setForm] = useState({
+    purchaseDate: serializedDateInputValue(entry.purchaseDate) || localDateInputValue(),
     purchaseTrackingNo: entry.purchaseTrackingNo ?? "",
     transitTrackingNo: entry.transitTrackingNo ?? "",
     currentLocationText: entry.currentLocationText ?? "",
     listingPlatformsText: entry.listingPlatformsText ?? "",
     salePlatformText: entry.salePlatformText ?? "",
     salePrice: entry.salePrice ?? "",
+    saleDate: serializedDateInputValue(entry.saleDate),
     batchNote: entry.batchNote ?? "",
     conditionType: normalizeItemConditionType(entry.conditionType) as string,
     conditionGrade: (normalizeUsedItemGrade(entry.conditionGrade) ?? "UNASSESSED") as string,
@@ -306,12 +327,14 @@ function PendingEntryPanel({
         conditionType: form.conditionType,
         conditionGrade: form.conditionGrade,
         functionStatus: form.functionStatus,
+        purchaseDate: form.purchaseDate,
         purchaseTrackingNo: form.purchaseTrackingNo || undefined,
         transitTrackingNo: form.transitTrackingNo || undefined,
         currentLocationText: form.currentLocationText || undefined,
         listingPlatformsText: form.listingPlatformsText || undefined,
         salePlatformText: form.salePlatformText || undefined,
         salePrice: form.salePrice || undefined,
+        saleDate: form.saleDate || undefined,
         batchNote: form.batchNote || undefined,
       });
       if (result.success) {
@@ -352,6 +375,17 @@ function PendingEntryPanel({
       {expanded && (
         <div className="mt-3 space-y-3 border-t pt-3">
           <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <label className="text-xs text-muted-foreground">采购日期</label>
+              <Input
+                type="date"
+                value={form.purchaseDate}
+                onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })}
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                业务日期，可在采购单中继续修正
+              </p>
+            </div>
             <div>
               <label className="text-xs text-muted-foreground">商品状态</label>
               <Select
@@ -425,6 +459,14 @@ function PendingEntryPanel({
                 />
               </div>
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground">售出日期</label>
+              <Input
+                type="date"
+                value={form.saleDate}
+                onChange={(e) => setForm({ ...form, saleDate: e.target.value })}
+              />
+            </div>
           </div>
 
           {isUsedCondition(form.conditionType) && (
@@ -496,7 +538,7 @@ function GradeButtons({ value, onChange }: { value?: string; onChange: (value: s
           type="button"
           size="sm"
           variant={value === option.value ? "default" : "outline"}
-          className="h-9 px-2 text-xs"
+          className="h-8 px-2 text-xs"
           title={option.description}
           onClick={() => onChange(option.value)}
         >
@@ -516,12 +558,13 @@ export function QuickEntryWorkbench({
   const [rows, setRows] = useState<DraftRow[]>(() => [blankRow(storeId)]);
   const [pasteText, setPasteText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [saveSummary, setSaveSummary] = useState<{ success: number; failed: number } | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const validRows = useMemo(
-    () => rows.filter((row) => row.rawProductName.trim().length > 0),
+    () => rows.filter((row) => row.result !== "success" && row.rawProductName.trim().length > 0),
     [rows]
   );
 
@@ -551,6 +594,14 @@ export function QuickEntryWorkbench({
     );
   };
 
+  const removeRow = (localId: string) => {
+    setRows((current) => {
+      const nextRows = current.filter((row) => row.localId !== localId);
+      return nextRows.length > 0 ? nextRows : [blankRow(storeId)];
+    });
+    setSelectedRowIds((current) => current.filter((id) => id !== localId));
+  };
+
   const findCatalogProduct = (name: string) => {
     const normalizedName = name.trim().toLocaleLowerCase();
     if (!normalizedName) return null;
@@ -572,12 +623,15 @@ export function QuickEntryWorkbench({
 
   const variantSuggestionsFor = (row: DraftRow) => {
     const product = findCatalogProduct(row.rawProductName);
-    const scoped = product
-      ? suggestions.catalogVariants
+    if (!product) return [];
+
+    return [
+      ...new Set(
+        suggestions.catalogVariants
           .filter((variant) => variant.parentSkuId === product.id)
           .map((variant) => variant.label)
-      : [];
-    return [...new Set([...scoped, ...suggestions.variant])];
+      ),
+    ];
   };
 
   const catalogOutcomeFor = (row: DraftRow) => {
@@ -614,6 +668,9 @@ export function QuickEntryWorkbench({
 
   const validateProductRows = (candidateRows: DraftRow[]) => {
     for (const row of candidateRows) {
+      if (!row.purchaseDate) {
+        return `「${row.rawProductName}」缺少采购日期`;
+      }
       if (!isPositiveQuantity(row.quantity)) {
         return `「${row.rawProductName}」的数量必须是大于 0 的数字`;
       }
@@ -663,20 +720,27 @@ export function QuickEntryWorkbench({
     startTransition(async () => {
       const payload = validRows.map(rowToPayload);
       const result = await saveQuickEntryBatch(payload);
-      setMessage(`保存完成：成功 ${result.success} 行，失败 ${result.failed} 行`);
-      setRows((current) =>
-        current.map((row) => {
-          const idx = validRows.findIndex((valid) => valid.localId === row.localId);
-          if (idx === -1) return row;
-          const item = result.results.find((r) => r.index === idx);
-          if (!item) return row;
-          return {
-            ...row,
-            result: item.success ? "success" : "failed",
-            error: item.error,
-          };
-        })
+      const resultByLocalId = new Map(
+        result.results.map((item) => [validRows[item.index]?.localId, item] as const)
       );
+
+      setMessage(result.failed > 0 ? `有 ${result.failed} 行保存失败，请修改后重试。` : null);
+      if (result.success > 0) {
+        setSaveSummary({ success: result.success, failed: result.failed });
+      }
+      setSelectedRowIds((current) =>
+        current.filter((localId) => !resultByLocalId.get(localId)?.success)
+      );
+      setRows((current) => {
+        const nextRows = current.flatMap((row) => {
+          const item = resultByLocalId.get(row.localId);
+          if (!item) return [row];
+          if (item.success) return [];
+          return [{ ...row, result: "failed" as const, error: item.error }];
+        });
+        return nextRows.length > 0 ? nextRows : [blankRow(storeId)];
+      });
+      router.refresh();
     });
   };
 
@@ -701,6 +765,7 @@ export function QuickEntryWorkbench({
 
     const currency = selectedValidRows[0]?.purchaseCurrency?.trim() || "CNY";
     const supplier = selectedValidRows[0]?.purchasePlatformText?.trim() || "";
+    const purchaseDate = selectedValidRows[0]?.purchaseDate || "";
     if (!supplier) {
       setMessage("要合并成一张采购单，请先为所选行填写相同的采购渠道 / 卖家");
       return;
@@ -708,10 +773,11 @@ export function QuickEntryWorkbench({
     const mismatch = selectedValidRows.find(
       (row) =>
         (row.purchaseCurrency?.trim() || "CNY") !== currency ||
-        (row.purchasePlatformText?.trim() || "") !== supplier
+        (row.purchasePlatformText?.trim() || "") !== supplier ||
+        (row.purchaseDate || "") !== purchaseDate
     );
     if (mismatch) {
-      setMessage("合并采购单要求币种和供应商一致，请调整后再合并");
+      setMessage("合并采购单要求采购日期、币种和供应商一致，请调整后再合并");
       return;
     }
 
@@ -735,29 +801,30 @@ export function QuickEntryWorkbench({
 
       const success = groupedResult.success + (restResult?.success ?? 0);
       const failed = groupedResult.failed + (restResult?.failed ?? 0);
-      setMessage(
-        `保存完成：合并 ${selectedValidRows.length} 行，成功 ${success} 行，失败 ${failed} 行`
+      setMessage(failed > 0 ? `有 ${failed} 行保存失败，请修改后重试。` : null);
+      if (success > 0) {
+        setSaveSummary({ success, failed });
+      }
+      setSelectedRowIds((current) =>
+        current.filter((localId) => !resultByLocalId.get(localId)?.success)
       );
-      setSelectedRowIds([]);
-      setRows((current) =>
-        current.map((row) => {
+      setRows((current) => {
+        const nextRows = current.flatMap((row) => {
           const item = resultByLocalId.get(row.localId);
-          if (!item) return row;
-          return {
-            ...row,
-            result: item.success ? "success" : "failed",
-            error: item.error,
-          };
-        })
-      );
+          if (!item) return [row];
+          if (item.success) return [];
+          return [{ ...row, result: "failed" as const, error: item.error }];
+        });
+        return nextRows.length > 0 ? nextRows : [blankRow(storeId)];
+      });
+      router.refresh();
     });
   };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid gap-5">
       <DatalistOptions id="brand-list" options={suggestions.brand} />
       <DatalistOptions id="product-list" options={suggestions.product} />
-      <DatalistOptions id="variant-list" options={suggestions.variant} />
       <DatalistOptions id="pplat-list" options={suggestions.purchasePlatform} />
       <DatalistOptions id="loc-list" options={suggestions.location} />
       <DatalistOptions id="listplat-list" options={suggestions.listingPlatform} />
@@ -770,7 +837,7 @@ export function QuickEntryWorkbench({
         />
       ))}
       <section className="space-y-4">
-        <div className="rounded-lg border bg-card p-4">
+        <div className="rounded-lg border bg-card p-3 sm:p-4">
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-lg font-semibold">快速录入表</h2>
@@ -779,21 +846,30 @@ export function QuickEntryWorkbench({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => setShowAdvancedFields((value) => !value)}>
-                {showAdvancedFields ? "隐藏高级字段" : "显示高级字段"}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowAdvancedFields((value) => !value)}
+              >
+                {showAdvancedFields ? "收起更多字段" : "更多业务字段"}
               </Button>
-              <Button variant="outline" onClick={() => setRows((c) => [...c, blankRow(storeId)])}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setRows((c) => [...c, blankRow(storeId)])}
+              >
                 <Plus className="mr-2 h-4 w-4" />
                 新增行
               </Button>
               <Button
+                size="sm"
                 variant="outline"
                 onClick={handleGroupedSubmit}
                 disabled={isPending || selectedValidRows.length < 2}
               >
                 合并保存为 1 张采购单
               </Button>
-              <Button onClick={handleSubmit} disabled={isPending}>
+              <Button size="sm" onClick={handleSubmit} disabled={isPending}>
                 {isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -820,55 +896,73 @@ export function QuickEntryWorkbench({
             </div>
           )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1320px] border-separate border-spacing-y-2">
+          <div className="overflow-x-auto rounded-lg border bg-muted/20 p-1">
+            <table
+              className={`w-full border-separate border-spacing-y-1 text-xs ${
+                showAdvancedFields ? "min-w-[2020px]" : "min-w-[1460px]"
+              }`}
+            >
               <thead>
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-2">
-                    <Checkbox
-                      ref={(node) => {
-                        if (node) node.indeterminate = partlySelected;
-                      }}
-                      checked={allValidRowsSelected}
-                      disabled={validRows.length === 0}
-                      onChange={(event) =>
-                        setSelectedRowIds(
-                          event.target.checked ? validRows.map((row) => row.localId) : []
-                        )
-                      }
-                      aria-label="选择全部有效录入行"
-                    />
+                <tr className="text-left text-[11px] text-muted-foreground">
+                  <th className="sticky left-0 z-20 w-10 bg-muted/90 px-2 py-1.5 backdrop-blur">
+                    <div className="flex justify-center">
+                      <Checkbox
+                        ref={(node) => {
+                          if (node) node.indeterminate = partlySelected;
+                        }}
+                        checked={allValidRowsSelected}
+                        disabled={validRows.length === 0}
+                        onChange={(event) =>
+                          setSelectedRowIds(
+                            event.target.checked ? validRows.map((row) => row.localId) : []
+                          )
+                        }
+                        aria-label="选择全部有效录入行"
+                        title="全选当前有效录入行"
+                        className="cursor-pointer"
+                      />
+                    </div>
                   </th>
-                  <th className="px-2">品牌</th>
-                  <th className="px-2">商品组 / 商品名</th>
-                  <th className="px-2">具体规格</th>
-                  <th className="px-2">商品状态 / 品级</th>
-                  <th className="px-2">数量</th>
-                  <th className="px-2">购入价</th>
-                  <th className="px-2">币种</th>
-                  <th className="px-2">采购渠道 / 卖家</th>
-                  <th className="px-2">品相 / 采购备注</th>
+                  <th className="w-28 whitespace-nowrap px-2">品牌</th>
+                  <th className="w-52 whitespace-nowrap px-2">商品组 / 商品名</th>
+                  <th className="w-52 whitespace-nowrap px-2">具体规格</th>
+                  <th className="w-52 whitespace-nowrap px-2">商品状态 / 品级</th>
+                  <th className="w-20 whitespace-nowrap px-2">数量</th>
+                  <th className="w-28 whitespace-nowrap px-2">购入价</th>
+                  <th className="w-24 whitespace-nowrap px-2">币种</th>
+                  <th className="w-44 whitespace-nowrap px-2">采购渠道 / 卖家</th>
+                  <th className="w-36 whitespace-nowrap px-2">采购日期</th>
+                  <th className="w-48 whitespace-nowrap px-2">品相 / 采购备注</th>
                   {showAdvancedFields && (
                     <>
-                      <th className="px-2">采购物流单号</th>
-                      <th className="px-2">所在地</th>
-                      <th className="px-2">上架平台</th>
-                      <th className="px-2">售出平台</th>
-                      <th className="px-2">售出价</th>
+                      <th className="w-44 whitespace-nowrap px-2">采购物流单号</th>
+                      <th className="w-36 whitespace-nowrap px-2">所在地</th>
+                      <th className="w-36 whitespace-nowrap px-2">上架平台</th>
+                      <th className="w-36 whitespace-nowrap px-2">售出平台</th>
+                      <th className="w-28 whitespace-nowrap px-2">售出价</th>
+                      <th className="w-36 whitespace-nowrap px-2">售出日期</th>
                     </>
                   )}
-                  <th className="px-2">处理状态</th>
+                  <th className="w-24 whitespace-nowrap px-2">处理状态</th>
+                  <th className="sticky right-0 z-20 w-12 bg-muted/90 px-2 text-center backdrop-blur">
+                    操作
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="[&_td]:bg-card [&_tr:hover_td]:bg-muted/40">
                 {rows.map((row) => (
-                  <tr key={row.localId} className="bg-muted/40">
-                    <td className="p-2">
-                      <Checkbox
-                        checked={selectedRowIds.includes(row.localId)}
-                        onChange={(event) => toggleRowSelection(row.localId, event.target.checked)}
-                        aria-label={`选择 ${row.rawProductName || "录入行"}`}
-                      />
+                  <tr key={row.localId} className="group align-top">
+                    <td className="sticky left-0 z-10 p-2 shadow-[1px_0_0_0_hsl(var(--border))]">
+                      <div className="flex h-8 items-center justify-center">
+                        <Checkbox
+                          checked={selectedRowIds.includes(row.localId)}
+                          onChange={(event) =>
+                            toggleRowSelection(row.localId, event.target.checked)
+                          }
+                          aria-label={`选择 ${row.rawProductName || "录入行"}`}
+                          className="cursor-pointer"
+                        />
+                      </div>
                     </td>
                     <td className="p-2">
                       <Input
@@ -876,6 +970,7 @@ export function QuickEntryWorkbench({
                         value={row.rawBrand ?? ""}
                         onChange={(e) => updateRow(row.localId, { rawBrand: e.target.value })}
                         placeholder="POP MART"
+                        className="h-8 text-xs"
                       />
                     </td>
                     <td className="p-2">
@@ -884,6 +979,7 @@ export function QuickEntryWorkbench({
                         value={row.rawProductName}
                         onChange={(e) => updateProductName(row, e.target.value)}
                         placeholder="例如：Dunk SB Low 芝加哥"
+                        className="h-8 text-xs"
                       />
                     </td>
                     <td className="p-2">
@@ -892,9 +988,10 @@ export function QuickEntryWorkbench({
                         value={row.rawVariant ?? ""}
                         onChange={(e) => updateRow(row.localId, { rawVariant: e.target.value })}
                         placeholder="例如：43码、红色；无规格可留空"
+                        className="h-8 text-xs"
                       />
                       <p
-                        className={`mt-1 text-[11px] ${
+                        className={`mt-1 line-clamp-2 max-w-52 text-[11px] leading-4 ${
                           catalogOutcomeFor(row).includes("需要填写")
                             ? "text-amber-700"
                             : "text-muted-foreground"
@@ -914,6 +1011,7 @@ export function QuickEntryWorkbench({
                             functionStatus: conditionType === "USED" ? "UNTESTED" : "NORMAL",
                           });
                         }}
+                        className="h-8 py-1 text-xs"
                       >
                         {CONDITION_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>
@@ -935,6 +1033,7 @@ export function QuickEntryWorkbench({
                               updateRow(row.localId, { functionStatus: e.target.value })
                             }
                             aria-label={`功能状态：${row.rawProductName || "录入行"}`}
+                            className="h-8 py-1 text-xs"
                           >
                             {itemFunctionStatusOptions.map((option) => (
                               <option key={option.value} value={option.value}>
@@ -953,6 +1052,7 @@ export function QuickEntryWorkbench({
                         onChange={(e) => updateRow(row.localId, { quantity: e.target.value })}
                         placeholder="1"
                         aria-label={`数量：${row.rawProductName || "录入行"}`}
+                        className="h-8 px-2 text-xs"
                       />
                     </td>
                     <td className="p-2">
@@ -962,6 +1062,7 @@ export function QuickEntryWorkbench({
                         value={row.purchasePrice ?? ""}
                         onChange={(e) => updateRow(row.localId, { purchasePrice: e.target.value })}
                         placeholder="53"
+                        className="h-8 px-2 text-xs"
                       />
                     </td>
                     <td className="p-2">
@@ -970,6 +1071,7 @@ export function QuickEntryWorkbench({
                         onChange={(e) =>
                           updateRow(row.localId, { purchaseCurrency: e.target.value })
                         }
+                        className="h-8 py-1 text-xs"
                       >
                         {CURRENCY_OPTIONS.map((opt) => (
                           <option key={opt} value={opt}>
@@ -986,6 +1088,16 @@ export function QuickEntryWorkbench({
                           updateRow(row.localId, { purchasePlatformText: e.target.value })
                         }
                         placeholder="例如：闲鱼、千岛、个人卖家"
+                        className="h-8 text-xs"
+                      />
+                    </td>
+                    <td className="p-2">
+                      <Input
+                        type="date"
+                        value={row.purchaseDate ?? ""}
+                        onChange={(e) => updateRow(row.localId, { purchaseDate: e.target.value })}
+                        aria-label={`采购日期：${row.rawProductName || "录入行"}`}
+                        className="h-8 px-2 text-xs"
                       />
                     </td>
                     <td className="p-2">
@@ -997,6 +1109,7 @@ export function QuickEntryWorkbench({
                             ? "必填：瑕疵、异常、缺件等"
                             : "可选：批次或采购备注"
                         }
+                        className="h-8 text-xs"
                       />
                     </td>
                     {showAdvancedFields && (
@@ -1008,6 +1121,7 @@ export function QuickEntryWorkbench({
                               updateRow(row.localId, { purchaseTrackingNo: e.target.value })
                             }
                             placeholder="保存后建议在工作台补"
+                            className="h-8 text-xs"
                           />
                         </td>
                         <td className="p-2">
@@ -1018,6 +1132,7 @@ export function QuickEntryWorkbench({
                               updateRow(row.localId, { currentLocationText: e.target.value })
                             }
                             placeholder="所在地"
+                            className="h-8 text-xs"
                           />
                         </td>
                         <td className="p-2">
@@ -1028,6 +1143,7 @@ export function QuickEntryWorkbench({
                               updateRow(row.localId, { listingPlatformsText: e.target.value })
                             }
                             placeholder="煤炉、雅虎"
+                            className="h-8 text-xs"
                           />
                         </td>
                         <td className="p-2">
@@ -1038,6 +1154,7 @@ export function QuickEntryWorkbench({
                               updateRow(row.localId, { salePlatformText: e.target.value })
                             }
                             placeholder="售出平台"
+                            className="h-8 text-xs"
                           />
                         </td>
                         <td className="p-2">
@@ -1047,11 +1164,21 @@ export function QuickEntryWorkbench({
                             value={row.salePrice ?? ""}
                             onChange={(e) => updateRow(row.localId, { salePrice: e.target.value })}
                             placeholder="售出价"
+                            className="h-8 px-2 text-xs"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <Input
+                            type="date"
+                            value={row.saleDate ?? ""}
+                            onChange={(e) => updateRow(row.localId, { saleDate: e.target.value })}
+                            aria-label={`售出日期：${row.rawProductName || "录入行"}`}
+                            className="h-8 px-2 text-xs"
                           />
                         </td>
                       </>
                     )}
-                    <td className="p-2">
+                    <td className="p-2 whitespace-nowrap">
                       {row.result === "success" ? (
                         <Badge className="bg-emerald-600">
                           <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -1062,6 +1189,20 @@ export function QuickEntryWorkbench({
                       ) : (
                         <Badge variant="outline">未保存</Badge>
                       )}
+                    </td>
+                    <td className="sticky right-0 z-10 p-2 text-center shadow-[-1px_0_0_0_hsl(var(--border))]">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeRow(row.localId)}
+                        disabled={isPending}
+                        aria-label={`删除 ${row.rawProductName || "录入行"}`}
+                        title="删除此行"
+                        className="h-8 w-8"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -1078,7 +1219,7 @@ export function QuickEntryWorkbench({
           <Textarea
             value={pasteText}
             onChange={(event) => setPasteText(event.target.value)}
-            placeholder="从表格复制多行后粘贴到这里"
+            placeholder="从表格复制多行后粘贴到这里；采购日期支持 YYYY-MM-DD，未填写时按本地今天"
             className="min-h-32"
           />
           <div className="mt-3 flex justify-end">
@@ -1089,7 +1230,7 @@ export function QuickEntryWorkbench({
         </div>
       </section>
 
-      <aside className="space-y-4">
+      <aside className="grid items-start gap-4 lg:grid-cols-2">
         <div className="rounded-lg border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold">录入待补全</h2>
@@ -1120,17 +1261,52 @@ export function QuickEntryWorkbench({
           <h2 className="mb-3 text-lg font-semibold">最近录入</h2>
           <div className="space-y-2">
             {recentEntries.slice(0, 8).map((entry) => (
-              <div key={entry.id} className="rounded-xl border px-3 py-2 text-sm">
+              <div key={entry.id} className="rounded-lg border px-3 py-2 text-sm">
                 <p className="truncate font-medium">{entry.rawProductName}</p>
-                <p className="text-xs text-muted-foreground">
-                  {WORKFLOW_LABELS[entry.workflowStage] ?? entry.workflowStage} ·{" "}
-                  {new Date(entry.createdAt).toLocaleDateString("zh-CN")}
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {WORKFLOW_LABELS[entry.workflowStage] ?? entry.workflowStage} · 采购{" "}
+                  {serializedDateInputValue(entry.purchaseDate) || "未填写"}
+                  {entry.saleDate ? ` · 售出 ${serializedDateInputValue(entry.saleDate)}` : ""}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground/80">
+                  录入于 {new Date(entry.createdAt).toLocaleString("zh-CN")}
                 </p>
               </div>
             ))}
           </div>
         </div>
       </aside>
+
+      <ActionDialog
+        open={saveSummary !== null}
+        onOpenChange={(open) => {
+          if (!open) setSaveSummary(null);
+        }}
+        title={saveSummary?.failed ? "部分保存成功" : "保存成功"}
+        description="已保存的录入行已从表格中清除，不会在下次提交时重复保存。"
+        size="sm"
+      >
+        <div className="space-y-5">
+          <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+            <div>
+              <p className="font-medium">成功保存 {saveSummary?.success ?? 0} 行</p>
+              {saveSummary?.failed ? (
+                <p className="mt-1 text-sm text-amber-700">
+                  另有 {saveSummary.failed} 行保存失败，已保留在录入表中供修改重试。
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-emerald-700">可以继续录入下一批商品。</p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setSaveSummary(null)}>
+              知道了
+            </Button>
+          </div>
+        </div>
+      </ActionDialog>
     </div>
   );
 }

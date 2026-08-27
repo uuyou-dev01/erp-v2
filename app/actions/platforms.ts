@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
 import { requireUserContext } from "@/lib/auth/user-context";
-import { CORE_SELLING_PLATFORM_CODES, sortCoreSellingPlatforms } from "@/lib/core-platforms";
+import { sortCoreSellingPlatforms } from "@/lib/core-platforms";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 
 const SUPPORTED_PLATFORM_COUNTRIES = new Set(["CN", "JP", "US", "EU", "GLOBAL"]);
@@ -74,7 +74,6 @@ export async function getPlatforms(storeId: string) {
   const platforms = await prisma.platform.findMany({
     where: {
       storeId: context.activeStoreId,
-      code: { in: [...CORE_SELLING_PLATFORM_CODES] },
     },
   });
 

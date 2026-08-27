@@ -15,7 +15,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
-import { formatCurrency, formatQuantity } from "@/lib/decimal";
+import { formatQuantity } from "@/lib/decimal";
 import Decimal from "decimal.js";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,19 @@ function InfoCell({ label, value }: { label: string; value: React.ReactNode }) {
     </div>
   );
 }
+
+function MissingInfoValue() {
+  return <span className="font-normal text-muted-foreground">未填写</span>;
+}
+
+type DetailView = "overview" | "inventory" | "sales" | "records";
+
+const DETAIL_VIEWS: Array<{ id: DetailView; label: string }> = [
+  { id: "overview", label: "概览" },
+  { id: "inventory", label: "库存与上架" },
+  { id: "sales", label: "动销分析" },
+  { id: "records", label: "业务流水" },
+];
 
 function wordParts(value: string) {
   return value
@@ -100,11 +113,16 @@ export default async function SKUDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string; edit?: string; variantId?: string }>;
+  searchParams: Promise<{
+    returnTo?: string;
+    edit?: string;
+    variantId?: string;
+    view?: string;
+  }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
   const { id } = await params;
-  const { returnTo, edit, variantId } = await searchParams;
+  const { returnTo, edit, variantId, view } = await searchParams;
   const sku = await getSkuCatalogDetail(id);
 
   if (!sku) {
@@ -118,27 +136,58 @@ export default async function SKUDetailPage({
         (child): child is SkuCatalogDetail => Boolean(child)
       )
     : [];
-  const selectedVariant =
-    childDetails.find((child) => child.id === variantId) ?? childDetails[0] ?? null;
+  const selectedVariant = variantId
+    ? (childDetails.find((child) => child.id === variantId) ?? null)
+    : null;
   const displaySku = selectedVariant ?? sku;
   const isViewingChildFromParent = Boolean(selectedVariant);
+  const sharedCatalogSku = isViewingChildFromParent ? sku : displaySku;
+  const activeView: DetailView = DETAIL_VIEWS.some((item) => item.id === view)
+    ? (view as DetailView)
+    : "overview";
 
   const parentOptions = await getSKUParentOptions(storeId, displaySku.id);
   const variantEntries = Object.entries(displaySku.variantAttributes);
   const images = displaySku.meta.images ?? [];
   const returnHref = safeReturnPath(returnTo, "/inventory/skus");
   const actionReturnHref = isViewingChildFromParent ? `/inventory/skus/${sku.id}` : returnHref;
-  const coverUrl =
-    images.find((i) => i.isCover)?.url ??
-    images[0]?.url ??
-    displaySku.imageUrl ??
-    displaySku.intelligence.recentMarketObservations.find((observation) => observation.imageUrl)
-      ?.imageUrl;
+  const ownCoverUrl = images.find((i) => i.isCover)?.url ?? images[0]?.url ?? displaySku.imageUrl;
+  const groupImages = isViewingChildFromParent ? (sku.meta.images ?? []) : [];
+  const groupCoverUrl = isViewingChildFromParent
+    ? (groupImages.find((image) => image.isCover)?.url ?? groupImages[0]?.url ?? sku.imageUrl)
+    : null;
+  const intelligenceCoverUrl = displaySku.intelligence.recentMarketObservations.find(
+    (observation) => observation.imageUrl
+  )?.imageUrl;
+  const coverUrl = ownCoverUrl ?? groupCoverUrl ?? intelligenceCoverUrl;
+  const isUsingGroupImage = Boolean(isViewingChildFromParent && !ownCoverUrl && groupCoverUrl);
+  const imageScopeLabel = isViewingChildFromParent
+    ? ownCoverUrl
+      ? "变体图"
+      : groupCoverUrl
+        ? "商品组图"
+        : intelligenceCoverUrl
+          ? "情报图"
+          : "暂无图片"
+    : isProductGroup
+      ? "商品组图"
+      : intelligenceCoverUrl && !ownCoverUrl
+        ? "情报图"
+        : "SKU 图";
   const selectedVariantName = isViewingChildFromParent ? variantDisplayName(sku, displaySku) : null;
   const variantHref = (childId: string) => {
     const query = new URLSearchParams({ variantId: childId });
     if (returnTo) query.set("returnTo", returnTo);
+    if (activeView !== "overview") query.set("view", activeView);
     return `/inventory/skus/${sku.id}?${query.toString()}`;
+  };
+  const viewHref = (nextView: DetailView) => {
+    const query = new URLSearchParams();
+    if (variantId) query.set("variantId", variantId);
+    if (returnTo) query.set("returnTo", returnTo);
+    if (nextView !== "overview") query.set("view", nextView);
+    const queryString = query.toString();
+    return `/inventory/skus/${sku.id}${queryString ? `?${queryString}` : ""}`;
   };
   const variantFilter =
     isProductGroup && childDetails.length > 0
@@ -152,10 +201,12 @@ export default async function SKUDetailPage({
             selected: child.id === displaySku.id,
             meta: inventoryIdentitySummary(child),
           })),
-          selectedAttributes: variantEntries.map(([label, value]) => ({
-            label,
-            value: String(value),
-          })),
+          selectedAttributes: isViewingChildFromParent
+            ? variantEntries.map(([label, value]) => ({
+                label,
+                value: String(value),
+              }))
+            : [],
         }
       : undefined;
 
@@ -168,12 +219,12 @@ export default async function SKUDetailPage({
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <ProductImage
-            src={coverUrl}
-            alt={displaySku.name}
-            size="md"
-            className="shrink-0 rounded-lg"
-          />
+          <div className="shrink-0">
+            <ProductImage src={coverUrl} alt={displaySku.name} size="md" className="rounded-lg" />
+            <p className="mt-1 text-center text-[9px] leading-none text-muted-foreground">
+              {imageScopeLabel}
+            </p>
+          </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge
@@ -209,12 +260,30 @@ export default async function SKUDetailPage({
                 ? "商品组档案 · 选择规格查看采购、库存、上架与成交"
                 : "SKU 商业档案 · 价格、采购均价、成交记录与利润表现"}
             </p>
+            {isViewingChildFromParent ? (
+              <p
+                className={`mt-1 text-[11px] ${
+                  isUsingGroupImage ? "text-amber-700" : "text-muted-foreground"
+                }`}
+              >
+                {ownCoverUrl
+                  ? "当前显示该变体自己的图片"
+                  : isUsingGroupImage
+                    ? "当前变体未设置图片，正在沿用商品组主图"
+                    : "当前变体和商品组均未设置图片"}
+              </p>
+            ) : null}
           </div>
         </div>
         <SKUDetailActions
           storeId={storeId}
           returnHref={actionReturnHref}
           initialEditOpen={edit === "1"}
+          groupImageEditHref={
+            displaySku.catalogRole === "VARIANT" && displaySku.parentSku
+              ? `/inventory/skus/${displaySku.parentSku.id}?edit=1`
+              : undefined
+          }
           structureSku={{
             id: sku.id,
             code: sku.code,
@@ -260,65 +329,156 @@ export default async function SKUDetailPage({
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm font-medium">基础信息</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-0">
-              {images.length > 1 ? (
-                <div className="flex flex-wrap gap-2 border-b pb-3">
-                  {images.map((img) => (
-                    <div key={img.url} className="relative overflow-hidden rounded-md border">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.url} alt="" className="h-16 w-16 object-cover" />
-                      {img.isCover ? (
-                        <Badge className="absolute left-1 top-1 px-1 text-[9px]">封面</Badge>
-                      ) : null}
+      {variantFilter ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-3 py-2">
+          <span className="mr-1 text-xs font-medium text-muted-foreground">查看规格</span>
+          {variantFilter.options.map((option) => (
+            <Link
+              key={option.id}
+              href={option.href}
+              className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                option.selected
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "bg-background hover:bg-muted"
+              }`}
+            >
+              <span className="font-medium">{option.label}</span>
+              <span
+                className={`ml-1 ${
+                  option.selected ? "text-primary-foreground/75" : "text-muted-foreground"
+                }`}
+              >
+                {option.meta}
+              </span>
+            </Link>
+          ))}
+          {variantFilter.addHref ? (
+            <Link
+              href={variantFilter.addHref}
+              className="rounded-md border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+            >
+              + 新增规格
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
+      <nav className="flex gap-1 overflow-x-auto border-b" aria-label="商品详情视图">
+        {DETAIL_VIEWS.map((item) => {
+          const count =
+            item.id === "inventory"
+              ? displaySku.inventorySections.newStockLots.length +
+                displaySku.inventorySections.itemUnitSummary.totalCount
+              : item.id === "sales"
+                ? displaySku.analysis.activeListings.length
+                : item.id === "records"
+                  ? displaySku.reference.salesLineCount + displaySku.reference.purchaseLineCount
+                  : null;
+          return (
+            <Link
+              key={item.id}
+              href={viewHref(item.id)}
+              aria-current={activeView === item.id ? "page" : undefined}
+              className={`relative shrink-0 px-3 py-2 text-sm font-medium transition-colors ${
+                activeView === item.id
+                  ? "text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {item.label}
+              {count !== null ? (
+                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                  {count}
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {activeView === "overview" ? (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="space-y-4 lg:col-span-2">
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm font-medium">商品档案</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  稳定的商品身份信息；价格、库存与成交数据在下方经营摘要中统一查看。
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {images.length > 1 ? (
+                  <details className="border-b pb-3 text-xs">
+                    <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                      查看全部图片（{images.length}）
+                    </summary>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {images.map((img) => (
+                        <div key={img.url} className="relative overflow-hidden rounded-md border">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.url} alt="" className="h-16 w-16 object-cover" />
+                          {img.isCover ? (
+                            <Badge className="absolute left-1 top-1 px-1 text-[9px]">封面</Badge>
+                          ) : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              ) : null}
-              <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <InfoCell label="系列" value={displaySku.series || displaySku.meta.series || "—"} />
-                <InfoCell
-                  label="参考售价"
-                  value={
-                    displaySku.referencePrice
-                      ? formatCurrency(displaySku.referencePrice, displaySku.currency ?? "CNY")
-                      : "—"
-                  }
-                />
-                <InfoCell
-                  label="参考成本"
-                  value={
-                    displaySku.meta.referenceCost
-                      ? formatCurrency(displaySku.meta.referenceCost, displaySku.currency ?? "CNY")
-                      : "—"
-                  }
-                />
-                <InfoCell
-                  label="标签"
-                  value={displaySku.meta.tags?.length ? displaySku.meta.tags.join("、") : "—"}
-                />
-              </dl>
-              {displaySku.description ? (
-                <InfoCell label="描述" value={displaySku.description} />
-              ) : null}
-              {displaySku.meta.notes ? (
-                <InfoCell label="备注" value={displaySku.meta.notes} />
-              ) : null}
-            </CardContent>
-          </Card>
-        </div>
+                  </details>
+                ) : null}
+                <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <InfoCell
+                    label="系列"
+                    value={
+                      displaySku.series ||
+                      displaySku.meta.series ||
+                      sharedCatalogSku.series ||
+                      sharedCatalogSku.meta.series || <MissingInfoValue />
+                    }
+                  />
+                  <InfoCell
+                    label="厂商货号"
+                    value={
+                      displaySku.manufacturerCode ||
+                      sharedCatalogSku.manufacturerCode || <MissingInfoValue />
+                    }
+                  />
+                  <InfoCell
+                    label="商品条码"
+                    value={
+                      displaySku.meta.barcode ||
+                      sharedCatalogSku.meta.barcode || <MissingInfoValue />
+                    }
+                  />
+                  <InfoCell
+                    label="标签"
+                    value={
+                      displaySku.meta.tags?.length ? (
+                        displaySku.meta.tags.join("、")
+                      ) : sharedCatalogSku.meta.tags?.length ? (
+                        sharedCatalogSku.meta.tags.join("、")
+                      ) : (
+                        <MissingInfoValue />
+                      )
+                    }
+                  />
+                </dl>
+                {displaySku.description ? (
+                  <InfoCell label="描述" value={displaySku.description} />
+                ) : null}
+                {displaySku.meta.notes ? (
+                  <InfoCell label="备注" value={displaySku.meta.notes} />
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
 
-        <div className="space-y-4">
-          <SKUReferencePanel sku={displaySku} compact />
+          <div className="space-y-4">
+            <SKUReferencePanel sku={displaySku} compact />
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      <SkuOperationsPanel sku={displaySku} variantFilter={variantFilter} />
+      <SkuOperationsPanel sku={displaySku} section={activeView} />
     </div>
   );
 }

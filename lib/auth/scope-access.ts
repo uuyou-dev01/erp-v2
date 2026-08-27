@@ -2,19 +2,22 @@ import { prisma } from "@/lib/prisma";
 
 const OPERATING_ROLES = new Set(["OWNER", "ADMIN", "MANAGER", "OPERATOR", "FULFILLMENT"]);
 
-function grantsCapability(
-  access: { role: string; permissions: unknown },
+export function grantsLocationCapability(
+  access: { locationId: string; role: string; permissions: unknown },
   capability: "receive" | "inspect" | "ship"
 ) {
-  if (OPERATING_ROLES.has(access.role)) return true;
-  if (
-    !access.permissions ||
-    typeof access.permissions !== "object" ||
-    Array.isArray(access.permissions)
-  ) {
-    return false;
+  const permissions =
+    access.permissions &&
+    typeof access.permissions === "object" &&
+    !Array.isArray(access.permissions)
+      ? (access.permissions as Record<string, unknown>)
+      : null;
+  if (capability === "ship" && Array.isArray(permissions?.shipLocationIds)) {
+    return permissions.shipLocationIds.includes(access.locationId);
   }
-  return (access.permissions as Record<string, unknown>)[capability] === true;
+  if (permissions?.[capability] === false) return false;
+  if (OPERATING_ROLES.has(access.role)) return true;
+  return permissions?.[capability] === true;
 }
 
 export async function hasLocationCapability(
@@ -24,10 +27,10 @@ export async function hasLocationCapability(
 ) {
   const access = await prisma.locationAccess.findUnique({
     where: { locationId_userId: { locationId, userId } },
-    select: { role: true, permissions: true },
+    select: { locationId: true, role: true, permissions: true },
   });
   if (!access) return false;
-  return grantsCapability(access, capability);
+  return grantsLocationCapability(access, capability);
 }
 
 export async function getLocationIdsWithCapability(
@@ -39,6 +42,6 @@ export async function getLocationIdsWithCapability(
     select: { locationId: true, role: true, permissions: true },
   });
   return accesses
-    .filter((access) => grantsCapability(access, capability))
+    .filter((access) => grantsLocationCapability(access, capability))
     .map((access) => access.locationId);
 }

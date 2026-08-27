@@ -162,7 +162,7 @@ test.describe("ERP full-flow evidence", () => {
     await expect(page.getByRole("heading", { name: "登记售出" })).toBeVisible();
     await page.getByLabel("数量").fill("1");
     await page.getByLabel(/最终售出单价/).fill("180");
-    await page.getByLabel("平台费率").fill("0.1");
+    await page.getByLabel("平台费率").selectOption("0.1");
     await page.getByLabel(/邮费成本/).fill("12");
     await page.getByLabel("发货方 / 发货仓").selectOption(sellableLocationId);
     await page.getByLabel("客户名称").fill("全流程买家");

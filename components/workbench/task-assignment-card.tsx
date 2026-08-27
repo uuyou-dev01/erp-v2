@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { assignWorkTaskAction } from "@/app/actions/tasks";
 import type { WorkItem } from "@/lib/application/next-actions";
@@ -14,6 +14,9 @@ export interface AssignableMemberOption {
   name: string;
   email: string;
   role: string;
+  relationship: "MEMBER" | "WAREHOUSE_COLLABORATOR";
+  locationIds: string[];
+  defaultLocationIds: string[];
 }
 
 export function TaskAssignmentCard({
@@ -30,9 +33,27 @@ export function TaskAssignmentCard({
   const [assigneeId, setAssigneeId] = useState(item?.taskAssignedToId ?? "");
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setAssigneeId(item?.taskAssignedToId ?? "");
+    setError(null);
+  }, [item?.taskId, item?.taskAssignedToId]);
+
   if (!item?.taskId) return null;
 
   const currentAssignee = members.find((member) => member.id === item.taskAssignedToId);
+  const fulfillmentLocationIds = item.taskFulfillmentLocationIds?.length
+    ? item.taskFulfillmentLocationIds
+    : item.taskFulfillmentLocationId
+      ? [item.taskFulfillmentLocationId]
+      : [];
+  const eligibleMembers = fulfillmentLocationIds.length
+    ? members.filter((member) =>
+        fulfillmentLocationIds.every((locationId) => member.locationIds.includes(locationId))
+      )
+    : members.filter((member) => member.relationship === "MEMBER");
+  const fulfillmentLocationLabel = item.taskFulfillmentLocationNames?.length
+    ? item.taskFulfillmentLocationNames.join("、")
+    : item.taskFulfillmentLocationName;
 
   return (
     <section className="rounded-lg border bg-muted/30 p-3">
@@ -40,7 +61,9 @@ export function TaskAssignmentCard({
         <div>
           <p className="text-xs font-medium text-foreground">任务委托</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            指派后，对方会收到站内通知并可在“我的任务”中看到。
+            {fulfillmentLocationLabel
+              ? `仅显示具备 ${fulfillmentLocationLabel} 发货权限的人员。`
+              : "指派后，对方会收到站内通知并可在“我的任务”中看到。"}
           </p>
         </div>
         <Badge variant="outline">
@@ -57,9 +80,15 @@ export function TaskAssignmentCard({
           className="h-9"
         >
           <option value="">选择负责人</option>
-          {members.map((member) => (
+          {eligibleMembers.map((member) => (
             <option key={member.id} value={member.id}>
-              {member.name}
+              {member.name || member.email}
+              {fulfillmentLocationIds.length === 1 &&
+              member.defaultLocationIds.includes(fulfillmentLocationIds[0])
+                ? "（默认）"
+                : member.relationship === "WAREHOUSE_COLLABORATOR"
+                  ? "（仓库协作）"
+                  : ""}
             </option>
           ))}
         </Select>

@@ -109,7 +109,8 @@ export const operationsNavigation: NavGroup[] = [
     items: [
       { name: "我的收益", href: "/finance/wallet", icon: Wallet },
       { name: "经营报表", href: "/reports", icon: FileText },
-      { name: "团队工作量", href: "/reports/team", icon: Users },
+      { name: "工作量", href: "/reports/workload", icon: ClipboardList },
+      { name: "团队绩效", href: "/reports/team-performance", icon: Users },
     ],
   },
 ];
@@ -137,6 +138,8 @@ export const settingsAreaRoutes: Record<string, string[]> = {
     "/settings/team",
     "/settings/stores",
     "/settings/partners",
+    "/settings/connections",
+    "/settings/warehouse-collaboration",
     "/settings/business-structure",
   ],
   "/settings/system": [
@@ -205,9 +208,9 @@ export const commandQuickActions = [
   { id: "qa-wallet", title: "我的收益", subtitle: "代卖、代发与检查收益", href: "/finance/wallet" },
   {
     id: "qa-team-report",
-    title: "团队工作量",
-    subtitle: "人员上架、发货、结算统计",
-    href: "/reports/team",
+    title: "工作量中心",
+    subtitle: "记录、汇总和对账",
+    href: "/reports/workload",
   },
   {
     id: "qa-team-settings",

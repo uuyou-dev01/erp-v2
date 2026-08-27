@@ -84,6 +84,8 @@ export function StockMaintenanceActions({
   const [transferTrackingNo, setTransferTrackingNo] = useState("");
   const [transferCarrier, setTransferCarrier] = useState("");
   const [transferEtaDate, setTransferEtaDate] = useState("");
+  const [transferShippingCost, setTransferShippingCost] = useState("");
+  const [transferShippingCurrency, setTransferShippingCurrency] = useState(defaultCurrency);
   const [transferNotes, setTransferNotes] = useState("");
   const [transportMode, setTransportMode] = useState<
     "HAND_CARRY" | "CONSOLIDATOR" | "POSTAL" | "COURIER" | "FREIGHT" | "OTHER"
@@ -256,6 +258,8 @@ export function StockMaintenanceActions({
               trackingNo: transferTrackingNo.trim() || undefined,
               carrier: transferCarrier.trim() || undefined,
               etaDate: transferEtaDate || undefined,
+              shippingCost: transferShippingCost.trim() || undefined,
+              shippingCurrency: transferShippingCurrency.trim() || defaultCurrency,
               transportMode,
               carriedBy: transportMode === "HAND_CARRY" ? carriedBy.trim() || undefined : undefined,
             })
@@ -628,6 +632,37 @@ export function StockMaintenanceActions({
                               onChange={(event) => setTransferEtaDate(event.target.value)}
                             />
                           </div>
+                          <div className="space-y-1.5">
+                            <label className="text-sm font-medium" htmlFor="transfer-shipping-cost">
+                              本段邮费
+                            </label>
+                            <Input
+                              id="transfer-shipping-cost"
+                              inputMode="decimal"
+                              value={transferShippingCost}
+                              onChange={(event) => setTransferShippingCost(event.target.value)}
+                              placeholder="可选"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label
+                              className="text-sm font-medium"
+                              htmlFor="transfer-shipping-currency"
+                            >
+                              币种
+                            </label>
+                            <Input
+                              id="transfer-shipping-currency"
+                              value={transferShippingCurrency}
+                              maxLength={3}
+                              onChange={(event) =>
+                                setTransferShippingCurrency(event.target.value.toUpperCase())
+                              }
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground sm:col-span-2">
+                            邮费会记在本次转仓物流单下，并进入费用与利润报表。
+                          </p>
                         </div>
                       ) : null}
 
