@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuthenticatedUser } from "@/lib/auth/user-context";
+import { getActiveOrganizationIdForUser, requireAuthenticatedUser } from "@/lib/auth/user-context";
 import { absoluteAssetPath } from "@/lib/assets/storage";
 import { canReadPrivateAssetReference } from "@/lib/assets/references";
 
@@ -30,7 +30,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
     if (asset.visibility !== "CATALOG_PUBLIC") {
       const user = await requireAuthenticatedUser();
-      if (!(await canReadPrivateAssetReference(user.id, asset))) {
+      const activeOrganizationId = await getActiveOrganizationIdForUser(user.id);
+      if (!(await canReadPrivateAssetReference(user.id, activeOrganizationId, asset))) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
     }
@@ -40,7 +41,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       headers: {
         "content-type": asset.mimeType,
         "content-length": String(bytes.byteLength),
-        "cache-control": asset.visibility === "CATALOG_PUBLIC" ? "public, max-age=31536000, immutable" : "private, no-store",
+        "cache-control":
+          asset.visibility === "CATALOG_PUBLIC"
+            ? "public, max-age=31536000, immutable"
+            : "private, no-store",
         "content-disposition": "inline",
         "x-content-type-options": "nosniff",
       },

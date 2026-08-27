@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createResaleOrderFulfillmentAction } from "@/app/actions/fulfillment-requests";
 import type { SerializedResaleListing } from "@/app/actions/resale-listings";
+import type { SerializedSupplyOffer } from "@/app/actions/supply-offers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,16 +13,45 @@ import { Textarea } from "@/components/ui/textarea";
 export function FulfillmentRequestForm({
   storeId,
   resaleListing,
+  liveSupplyOffer,
 }: {
   storeId: string;
   resaleListing: SerializedResaleListing;
+  liveSupplyOffer: SerializedSupplyOffer;
 }) {
   const router = useRouter();
-  const remainingQty = Math.max(0, Number(resaleListing.quantityPlanned) - Number(resaleListing.quantitySold));
+  const plannedRemainingQty = Math.max(
+    0,
+    Number(resaleListing.quantityPlanned) - Number(resaleListing.quantitySold)
+  );
+  const offerRemainingQty = Math.max(
+    0,
+    Number(liveSupplyOffer.availableQty) - Number(liveSupplyOffer.reservedQty)
+  );
+  const liveOfferItem = liveSupplyOffer.items.find(
+    (item) => item.id === resaleListing.supplyOfferItemId
+  );
+  const itemRemainingQty = liveOfferItem
+    ? Math.max(0, Number(liveOfferItem.quantityAvailable) - Number(liveOfferItem.quantityReserved))
+    : offerRemainingQty;
+  const remainingQty = Math.max(
+    0,
+    Math.min(plannedRemainingQty, offerRemainingQty, itemRemainingQty)
+  );
+  const unavailableReason =
+    plannedRemainingQty <= 0
+      ? "代卖计划数量已全部售出，不能继续登记"
+      : liveOfferItem?.itemUnitId && itemRemainingQty <= 0
+        ? "指定单件当前不可履约，系统不会用其他同款单件替换"
+        : itemRemainingQty <= 0
+          ? "该货盘商品当前无可供数量，请先释放预留或补充库存"
+          : offerRemainingQty <= 0
+            ? "货盘当前无可供数量，请先释放预留或补充库存"
+            : null;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    quantity: remainingQty > 0 ? String(remainingQty) : "1",
+    quantity: remainingQty > 0 ? String(remainingQty) : "0",
     externalOrderNo: "",
     recipientName: "",
     customerEmail: "",
@@ -73,8 +103,14 @@ export function FulfillmentRequestForm({
       <div className="rounded-md border border-border/60 bg-muted/30 p-4 text-sm">
         <div className="font-medium">{resaleListing.title}</div>
         <div className="mt-1 text-muted-foreground">
-          来源货盘 {resaleListing.supplyOffer.title} · 平台 {resaleListing.platform.name} · 剩余可请求 {remainingQty}
+          来源货盘 {resaleListing.supplyOffer.title} · 平台 {resaleListing.platform.name} ·
+          剩余可请求 {remainingQty}
         </div>
+        {unavailableReason ? (
+          <p role="alert" className="mt-2 font-medium text-red-600">
+            {unavailableReason}
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -87,6 +123,8 @@ export function FulfillmentRequestForm({
             step="0.01"
             value={formData.quantity}
             onChange={(event) => updateField({ quantity: event.target.value })}
+            max={remainingQty}
+            disabled={remainingQty <= 0}
             required
           />
         </div>
@@ -154,7 +192,12 @@ export function FulfillmentRequestForm({
 
       <div className="space-y-2">
         <Label htmlFor="note">备注</Label>
-        <Textarea id="note" rows={3} value={formData.note} onChange={(event) => updateField({ note: event.target.value })} />
+        <Textarea
+          id="note"
+          rows={3}
+          value={formData.note}
+          onChange={(event) => updateField({ note: event.target.value })}
+        />
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -163,7 +206,10 @@ export function FulfillmentRequestForm({
         <Button type="button" variant="outline" onClick={() => router.back()}>
           取消
         </Button>
-        <Button type="submit" disabled={loading || resaleListing.status !== "ACTIVE"}>
+        <Button
+          type="submit"
+          disabled={loading || resaleListing.status !== "ACTIVE" || remainingQty <= 0}
+        >
           {loading ? "创建中..." : "登记售出并创建履约"}
         </Button>
       </div>

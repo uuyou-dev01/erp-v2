@@ -1,8 +1,8 @@
 # v0.9.0 容器运行时验收
 
-- 验收时间：2026-08-27T17:08:42Z
-- 验收提交：`12d4242cbe226cacd9dc179282aec9a75dcaaccc`
-- 目标镜像：`erp-v2-app:v0.9.0-12d4242cbe22`
+- 最近复验时间：2026-08-28T03:10:00+08:00
+- 复验提交：`2da720aa23e70d91ae85babccbb3bbe4fe8a8d23`
+- 目标镜像：`erp-v2-app:v0.9.0-rc.1-2da720aa23e70d91ae85babccbb3bbe4fe8a8d23`
 - 结论：**BLOCKED（镜像未构建，运行时验收未执行）**
 
 ## Docker 与 Compose
@@ -43,20 +43,24 @@ postgres:17-bookworm
 
 ```bash
 docker build --progress=plain --target runner \
-  --build-arg APP_VERSION=0.9.0 \
-  --build-arg GIT_SHA=12d4242cbe226cacd9dc179282aec9a75dcaaccc \
-  --build-arg BUILD_DATE=2026-08-27T17:08:42Z \
-  -t erp-v2-app:v0.9.0-12d4242cbe22 .
+  --build-arg APP_VERSION=0.9.0-rc.1 \
+  --build-arg GIT_SHA=2da720aa23e70d91ae85babccbb3bbe4fe8a8d23 \
+  --build-arg BUILD_DATE=2026-08-28T01:50:00+08:00 \
+  -t erp-v2-app:v0.9.0-rc.1-2da720aa23e70d91ae85babccbb3bbe4fe8a8d23 .
 ```
 
-构建在解析 Dockerfile frontend 时失败，尚未执行依赖安装、Prisma generate 或 Next.js build：
+首次检查和本次固定 SHA 复验都在解析 Dockerfile frontend 时失败，尚未执行依赖安装、Prisma generate 或 Next.js build。本次错误为：
 
 ```text
-failed to fetch anonymous token from https://auth.docker.io/token
-dial tcp 69.171.229.73:443: i/o timeout
+failed to resolve source metadata for docker.io/docker/dockerfile:1.7
+Head "https://registry-1.docker.io/v2/docker/dockerfile/manifests/1.7": EOF
 ```
 
 独立网络检查也确认 `auth.docker.io:443` 当前无法连接。本地仅缓存 `mysql:8.4`，没有 `docker/dockerfile:1.7`、`node:22-bookworm-slim` 或可复用的 ERP 镜像，因此无法离线继续构建。
+
+最终封存前再次检查 `https://registry-1.docker.io/v2/`，10 秒连接超时，
+Docker Hub 仍不可达。因此没有把网络失败误报为镜像或应用构建失败，也没有
+改用未审核的第三方镜像源。
 
 ## Chromium 与 Tesseract
 
@@ -76,7 +80,7 @@ dial tcp 69.171.229.73:443: i/o timeout
 docker run --rm \
   -e ERP_RUNTIME_FIXTURE_DIR=/runtime-fixtures \
   -v /absolute/path/to/runtime-fixtures:/runtime-fixtures:ro \
-  erp-v2-app:v0.9.0-12d4242cbe22 \
+  erp-v2-app:v0.9.0-rc.1-2da720aa23e70d91ae85babccbb3bbe4fe8a8d23 \
   node scripts/verify-container-runtime.mjs
 ```
 

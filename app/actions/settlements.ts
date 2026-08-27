@@ -72,7 +72,9 @@ type RawSettlement = Omit<
   totalAmount: StringableDecimal;
   fxRate: StringableDecimal | null;
   baseAmount: StringableDecimal | null;
-  lines: Array<Omit<SerializedSettlement["lines"][number], "amount"> & { amount: StringableDecimal }>;
+  lines: Array<
+    Omit<SerializedSettlement["lines"][number], "amount"> & { amount: StringableDecimal }
+  >;
   items?: Array<{
     id: string;
     amount: StringableDecimal;
@@ -207,90 +209,94 @@ export async function createSettlementFromFulfillment(input: {
   fulfillmentRequestId: string;
   actorUserId: string;
 }) {
-    const request = await prisma.fulfillmentRequest.findFirst({
-      where: {
-        id: input.fulfillmentRequestId,
-        status: { in: ["SHIPPED", "DELIVERED"] },
-      },
-      include: {
-        supplyOffer: { include: { ownerPartner: true, organization: true } },
-        resaleListing: true,
-        settlements: true,
-      },
-    });
+  const request = await prisma.fulfillmentRequest.findFirst({
+    where: {
+      id: input.fulfillmentRequestId,
+      status: { in: ["SHIPPED", "DELIVERED"] },
+    },
+    include: {
+      supplyOffer: { include: { ownerPartner: true, organization: true } },
+      resaleListing: true,
+      settlements: true,
+    },
+  });
 
-    if (!request) throw new Error("只有已发货或已送达的履约请求可以生成结算");
-    const activeSettlement = request.settlements.find((settlement) => settlement.status !== "VOID");
-    if (activeSettlement) {
-      return { id: activeSettlement.id, created: false };
-    }
-    if (!request.resaleListing) throw new Error("履约请求缺少代卖记录，无法计算结算");
+  if (!request) throw new Error("只有已发货或已送达的履约请求可以生成结算");
+  const activeSettlement = request.settlements.find((settlement) => settlement.status !== "VOID");
+  if (activeSettlement) {
+    return { id: activeSettlement.id, created: false };
+  }
+  if (!request.resaleListing) throw new Error("履约请求缺少代卖记录，无法计算结算");
 
-    const qty = new Decimal(request.quantity.toString());
-    const resale = request.resaleListing;
-    if (!resale.agreementRuleSnapshot || !resale.agreementTermsSnapshot || !resale.agreementVersion) {
-      throw new Error("代卖记录缺少双方已接受的合作约定快照，不能自动生成结算");
-    }
-    const agreementRule = parseAgreementRule(resale.agreementRuleSnapshot);
-    if (agreementRule.kind === "MANUAL") {
-      throw new Error("本单约定为成交后双方确认，请先录入双方确认的结算明细，再确认结算");
-    }
-    const effectiveAt = request.shippedAt ?? request.deliveredAt ?? request.requestedAt;
-    const supplyCurrency = resale.supplyCurrency || request.supplyOffer.currency;
-    const shippingFee = request.shippingFee ? new Decimal(request.shippingFee.toString()) : new Decimal(0);
-    const actualFulfillmentCharge = await prisma.chargeEvent.findFirst({
-      where: {
-        sourceType: "FULFILLMENT_REQUEST",
-        sourceId: request.id,
-        amountKind: "ACTUAL",
-        status: { not: "VOID" },
-        category: { code: "FULFILLMENT" },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    // 发货时人工录入的是本单实际服务费总额；合作约定中的代发费才是单件默认值。
-    // 优先采用已落账的实际金额，避免用户覆盖默认值后结算仍使用旧配置。
-    const fulfillmentFeePerUnit = actualFulfillmentCharge
-      ? new Decimal(actualFulfillmentCharge.amount.toString()).div(qty)
-      : resale.dropshipFee ?? request.supplyOffer.dropshipFee;
-    const fulfillmentFeeCurrency = actualFulfillmentCharge?.currency ||
-      resale.dropshipFeeCurrency ||
-      request.supplyOffer.dropshipFeeCurrency ||
-      request.supplyOffer.settlementCurrency ||
-      request.supplyOffer.currency;
-    const calculation = await calculateAgreement({
-      rule: agreementRule,
-      quantity: qty,
-      saleUnitPrice: resale.targetPrice,
-      saleCurrency: resale.currency,
-      supplyUnitPrice: resale.supplyUnitPrice,
-      supplyCurrency,
-      platformFeeRate: resale.platformFeeRate,
-      fulfillmentFeePerUnit,
-      fulfillmentFeeCurrency,
-      shippingFee,
-      shippingCurrency: request.shippingCurrency || resale.currency,
-      effectiveAt,
-    });
-    const supplyCost = calculation.supplyCost;
-    const platformFee = calculation.platformFee;
-    const commission = calculation.resellerCommission ?? new Decimal(0);
-    const ownerProfitShare =
-      agreementRule.kind === "PROFIT_PERCENT" && calculation.distributableProfit
-        ? calculation.distributableProfit.minus(commission)
-        : new Decimal(0);
-    const supplyPayeeOrganizationId =
-      request.supplyOffer.organizationId ?? request.providerOrganizationId;
-    const usesSeparateProviderLedger = Boolean(
-      request.providerOrganizationId &&
-      supplyPayeeOrganizationId &&
-      request.providerOrganizationId !== supplyPayeeOrganizationId
-    );
-    // Third-party fulfillment is settled with the actual provider through the
-    // charge ledger created at shipping. Do not also pay those fees to the
-    // supply owner on this supply settlement.
-    const converter = await createStoreMoneyConverter(request.storeId);
-    const lines = (await Promise.all([
+  const qty = new Decimal(request.quantity.toString());
+  const resale = request.resaleListing;
+  if (!resale.agreementRuleSnapshot || !resale.agreementTermsSnapshot || !resale.agreementVersion) {
+    throw new Error("代卖记录缺少双方已接受的合作约定快照，不能自动生成结算");
+  }
+  const agreementRule = parseAgreementRule(resale.agreementRuleSnapshot);
+  if (agreementRule.kind === "MANUAL") {
+    throw new Error("本单约定为成交后双方确认，请先录入双方确认的结算明细，再确认结算");
+  }
+  const effectiveAt = request.shippedAt ?? request.deliveredAt ?? request.requestedAt;
+  const supplyCurrency = resale.supplyCurrency || request.supplyOffer.currency;
+  const shippingFee = request.shippingFee
+    ? new Decimal(request.shippingFee.toString())
+    : new Decimal(0);
+  const actualFulfillmentCharge = await prisma.chargeEvent.findFirst({
+    where: {
+      sourceType: "FULFILLMENT_REQUEST",
+      sourceId: request.id,
+      amountKind: "ACTUAL",
+      status: { not: "VOID" },
+      category: { code: "FULFILLMENT" },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  // 发货时人工录入的是本单实际服务费总额；合作约定中的代发费才是单件默认值。
+  // 优先采用已落账的实际金额，避免用户覆盖默认值后结算仍使用旧配置。
+  const fulfillmentFeePerUnit = actualFulfillmentCharge
+    ? new Decimal(actualFulfillmentCharge.amount.toString()).div(qty)
+    : (resale.dropshipFee ?? request.supplyOffer.dropshipFee);
+  const fulfillmentFeeCurrency =
+    actualFulfillmentCharge?.currency ||
+    resale.dropshipFeeCurrency ||
+    request.supplyOffer.dropshipFeeCurrency ||
+    request.supplyOffer.settlementCurrency ||
+    request.supplyOffer.currency;
+  const calculation = await calculateAgreement({
+    rule: agreementRule,
+    quantity: qty,
+    saleUnitPrice: resale.targetPrice,
+    saleCurrency: resale.currency,
+    supplyUnitPrice: resale.supplyUnitPrice,
+    supplyCurrency,
+    platformFeeRate: resale.platformFeeRate,
+    fulfillmentFeePerUnit,
+    fulfillmentFeeCurrency,
+    shippingFee,
+    shippingCurrency: request.shippingCurrency || resale.currency,
+    effectiveAt,
+  });
+  const supplyCost = calculation.supplyCost;
+  const platformFee = calculation.platformFee;
+  const commission = calculation.resellerCommission ?? new Decimal(0);
+  const ownerProfitShare =
+    agreementRule.kind === "PROFIT_PERCENT" && calculation.distributableProfit
+      ? calculation.distributableProfit.minus(commission)
+      : new Decimal(0);
+  const supplyPayeeOrganizationId =
+    request.supplyOffer.organizationId ?? request.providerOrganizationId;
+  const usesSeparateProviderLedger = Boolean(
+    request.providerOrganizationId &&
+    supplyPayeeOrganizationId &&
+    request.providerOrganizationId !== supplyPayeeOrganizationId
+  );
+  // Third-party fulfillment is settled with the actual provider through the
+  // charge ledger created at shipping. Do not also pay those fees to the
+  // supply owner on this supply settlement.
+  const converter = await createStoreMoneyConverter(request.storeId);
+  const lines = (
+    await Promise.all([
       buildSettlementLine({
         lineType: "FULFILLMENT_FEE",
         description: "代发服务费",
@@ -318,7 +324,10 @@ export async function createSettlementFromFulfillment(input: {
         description: "代卖佣金",
         amount: commission,
         currency: resale.currency,
-        direction: agreementRule.kind === "PROFIT_PERCENT" ? "INFORMATIONAL" : "RECEIVABLE",
+        direction:
+          agreementRule.kind === "PROFIT_PERCENT" || agreementRule.kind === "MARGIN"
+            ? "INFORMATIONAL"
+            : "RECEIVABLE",
         sourceType: "RESALE_LISTING",
         sourceId: resale.id,
         baseCurrency: converter.baseCurrency,
@@ -357,112 +366,116 @@ export async function createSettlementFromFulfillment(input: {
         baseCurrency: converter.baseCurrency,
         effectiveAt,
       }),
-    ])).filter((line) => !line.amount.eq(0));
-    const totalAmount = lines.reduce((total, line) => {
-      if (line.direction === "PAYABLE") return total.plus(line.baseAmount);
-      if (line.direction === "RECEIVABLE") return total.minus(line.baseAmount);
-      return total;
-    }, new Decimal(0));
+    ])
+  ).filter((line) => !line.amount.eq(0));
+  const totalAmount = lines.reduce((total, line) => {
+    if (line.direction === "PAYABLE") return total.plus(line.baseAmount);
+    if (line.direction === "RECEIVABLE") return total.minus(line.baseAmount);
+    return total;
+  }, new Decimal(0));
 
-    const settlement = await prisma.$transaction(async (tx) => {
-      const created = await tx.settlement.create({
-        data: {
-          storeId: request.storeId,
-          payerOrganizationId: request.requesterOrganizationId,
-          payeeOrganizationId: supplyPayeeOrganizationId,
-          partnerId: request.supplyOffer.ownerPartnerId,
-          fulfillmentRequestId: request.id,
-          customerOrderId: request.customerOrderId,
-          settlementNo: nextSettlementNo(),
-          direction: "PAYABLE",
-          currency: converter.baseCurrency,
-          totalAmount,
-          baseCurrency: converter.baseCurrency,
-          fxRate: new Decimal(1),
-          baseAmount: totalAmount,
-          agreementTermsSnapshot: resale.agreementTermsSnapshot,
-          agreementRuleSnapshot: resale.agreementRuleSnapshot as Prisma.InputJsonValue,
-          agreementVersion: resale.agreementVersion,
-          note: `由履约请求 ${request.requestNo} 按实际发货费用生成`,
-          createdById: input.actorUserId,
-          updatedById: input.actorUserId,
-          lines: {
-            create: lines,
-          },
+  const settlement = await prisma.$transaction(async (tx) => {
+    const created = await tx.settlement.create({
+      data: {
+        storeId: request.storeId,
+        payerOrganizationId: request.requesterOrganizationId,
+        payeeOrganizationId: supplyPayeeOrganizationId,
+        partnerId: request.supplyOffer.ownerPartnerId,
+        fulfillmentRequestId: request.id,
+        customerOrderId: request.customerOrderId,
+        settlementNo: nextSettlementNo(),
+        direction: "PAYABLE",
+        currency: converter.baseCurrency,
+        totalAmount,
+        baseCurrency: converter.baseCurrency,
+        fxRate: new Decimal(1),
+        baseAmount: totalAmount,
+        agreementTermsSnapshot: resale.agreementTermsSnapshot,
+        agreementRuleSnapshot: resale.agreementRuleSnapshot as Prisma.InputJsonValue,
+        agreementVersion: resale.agreementVersion,
+        note: `由履约请求 ${request.requestNo} 按实际发货费用生成`,
+        createdById: input.actorUserId,
+        updatedById: input.actorUserId,
+        lines: {
+          create: lines,
         },
-      });
+      },
+    });
 
-      const commissionLine = lines.find((line) => line.lineType === "COMMISSION");
-      if (commissionLine && commissionLine.baseAmount.gt(0) && resale.createdById) {
-        const wallet = await tx.walletAccount.upsert({
-          where: {
-            storeId_ownerType_ownerId_currency: {
-              storeId: request.storeId,
-              ownerType: "USER",
-              ownerId: resale.createdById,
-              currency: converter.baseCurrency,
-            },
-          },
-          update: {},
-          create: {
+    const commissionLine = lines.find((line) => line.lineType === "COMMISSION");
+    if (commissionLine && commissionLine.baseAmount.gt(0) && resale.createdById) {
+      const wallet = await tx.walletAccount.upsert({
+        where: {
+          storeId_ownerType_ownerId_currency: {
             storeId: request.storeId,
             ownerType: "USER",
             ownerId: resale.createdById,
             currency: converter.baseCurrency,
           },
-        });
-        await tx.earningEvent.upsert({
-          where: {
-            storeId_userId_sourceType_sourceId_earningType: {
-              storeId: request.storeId,
-              userId: resale.createdById,
-              sourceType: "SETTLEMENT",
-              sourceId: created.id,
-              earningType: "RESALE_COMMISSION",
-            },
-          },
-          update: {
-            walletAccountId: wallet.id,
-            grossAmount: commissionLine.amount,
-            baseAmount: commissionLine.baseAmount,
-            earningAmount: commissionLine.baseAmount,
-            currency: converter.baseCurrency,
-            status: "PENDING",
-            updatedById: input.actorUserId,
-          },
-          create: {
+        },
+        update: {},
+        create: {
+          storeId: request.storeId,
+          ownerType: "USER",
+          ownerId: resale.createdById,
+          currency: converter.baseCurrency,
+        },
+      });
+      await tx.earningEvent.upsert({
+        where: {
+          storeId_userId_sourceType_sourceId_earningType: {
             storeId: request.storeId,
-            walletAccountId: wallet.id,
-            partnerId: request.supplyOffer.ownerPartnerId,
             userId: resale.createdById,
             sourceType: "SETTLEMENT",
             sourceId: created.id,
             earningType: "RESALE_COMMISSION",
-            description: `代卖结算 ${created.settlementNo} 待确认佣金`,
-            grossAmount: commissionLine.amount,
-            baseAmount: commissionLine.baseAmount,
-            earningAmount: commissionLine.baseAmount,
-            currency: converter.baseCurrency,
-            status: "PENDING",
-            occurredAt: effectiveAt,
-            metadata: {
-              originalAmount: commissionLine.amount.toString(),
-              originalCurrency: commissionLine.currency,
-              fxRate: commissionLine.fxRate?.toString() ?? null,
-              agreementVersion: resale.agreementVersion,
-            },
-            createdById: input.actorUserId,
-            updatedById: input.actorUserId,
           },
-        });
-      }
-      return created;
-    });
+        },
+        update: {
+          walletAccountId: wallet.id,
+          grossAmount: commissionLine.amount,
+          baseAmount: commissionLine.baseAmount,
+          earningAmount: commissionLine.baseAmount,
+          currency: converter.baseCurrency,
+          status: "PENDING",
+          updatedById: input.actorUserId,
+        },
+        create: {
+          storeId: request.storeId,
+          walletAccountId: wallet.id,
+          partnerId: request.supplyOffer.ownerPartnerId,
+          userId: resale.createdById,
+          sourceType: "SETTLEMENT",
+          sourceId: created.id,
+          earningType: "RESALE_COMMISSION",
+          description: `代卖结算 ${created.settlementNo} 待确认佣金`,
+          grossAmount: commissionLine.amount,
+          baseAmount: commissionLine.baseAmount,
+          earningAmount: commissionLine.baseAmount,
+          currency: converter.baseCurrency,
+          status: "PENDING",
+          occurredAt: effectiveAt,
+          metadata: {
+            originalAmount: commissionLine.amount.toString(),
+            originalCurrency: commissionLine.currency,
+            fxRate: commissionLine.fxRate?.toString() ?? null,
+            agreementVersion: resale.agreementVersion,
+          },
+          createdById: input.actorUserId,
+          updatedById: input.actorUserId,
+        },
+      });
+    }
+    return created;
+  });
 
-    return { id: settlement.id, created: true };
+  return { id: settlement.id, created: true };
 }
 
-export async function createSettlementFromFulfillmentAction(fulfillmentRequestId: string, storeId?: string) {
+export async function createSettlementFromFulfillmentAction(
+  fulfillmentRequestId: string,
+  storeId?: string
+) {
   try {
     const context = await requireUserContext(storeId ? { storeId } : undefined);
     const request = await prisma.fulfillmentRequest.findUnique({
@@ -491,7 +504,10 @@ export async function createSettlementFromFulfillmentAction(fulfillmentRequestId
   }
 }
 
-export async function changeSettlementStatusAction(id: string, nextStatus: "CONFIRMED" | "PAID" | "VOID") {
+export async function changeSettlementStatusAction(
+  id: string,
+  nextStatus: "CONFIRMED" | "PAID" | "VOID"
+) {
   try {
     const existing = await prisma.settlement.findUnique({
       where: { id },
@@ -607,21 +623,16 @@ export async function changeSettlementStatusAction(id: string, nextStatus: "CONF
 
       if (nextStatus !== "PAID") return changed;
 
-      const commissionLine = existing.lines.find(
-        (line) => line.lineType === "COMMISSION",
-      );
+      const commissionLine = existing.lines.find((line) => line.lineType === "COMMISSION");
       const commissionOwnerId =
         existing.fulfillmentRequest?.resaleListing?.createdById ?? context.userId;
       const earningAmount = commissionLine
-        ? new Decimal(
-            (commissionLine.baseAmount ?? commissionLine.amount).toString(),
-          )
+        ? new Decimal((commissionLine.baseAmount ?? commissionLine.amount).toString())
         : new Decimal(0);
 
       if (!commissionLine || earningAmount.lte(0)) return changed;
 
-      const walletCurrency =
-        commissionLine.baseCurrency ?? commissionLine.currency;
+      const walletCurrency = commissionLine.baseCurrency ?? commissionLine.currency;
       const wallet = await tx.walletAccount.upsert({
         where: {
           storeId_ownerType_ownerId_currency: {

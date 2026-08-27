@@ -18,6 +18,7 @@ import type { SellableMarketCode } from "@/lib/application/sellable-market";
 import { hasLocationCapability } from "@/lib/auth/scope-access";
 import { canShipOrders } from "@/lib/auth/permissions";
 import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
+import { recordWork } from "@/lib/application/work-records";
 
 type StringableDecimal = { toString(): string };
 
@@ -1470,6 +1471,32 @@ export async function updateFulfillmentRequestStatusAction(
           updatedById: context.userId,
         },
       });
+      if (nextStatus === "SHIPPED") {
+        await recordWork(tx, {
+          organizationId: existing.providerOrganizationId ?? context.organizationId,
+          storeId: context.activeStoreId,
+          userId: existing.assignedToId ?? context.userId,
+          code: "FULFILLMENT_SHIPMENT",
+          name: "代发出库",
+          quantity: existing.quantity,
+          unit: "件",
+          sourceType: "FULFILLMENT_REQUEST",
+          sourceId: existing.id,
+          relationshipType:
+            existing.requesterOrganizationId &&
+            existing.requesterOrganizationId !==
+              (existing.providerOrganizationId ?? context.organizationId)
+              ? "PARTNER_ORGANIZATION"
+              : "MEMBER",
+          locationId: existing.fulfillmentLocationId,
+          executorOrganizationId: context.organizationId,
+          dedupeKey: `FULFILLMENT_SHIPPED:${existing.id}`,
+          metadata: {
+            requestNo: existing.requestNo,
+            trackingNo: data.trackingNo || existing.trackingNo,
+          },
+        });
+      }
       await tx.activityLog.create({
         data: {
           organizationId: context.organizationId,

@@ -110,4 +110,16 @@ describe("navigation structure", () => {
     expect(isNavigationHrefAllowed("FULFILLMENT", "/reports/team-performance")).toBe(false);
     expect(canUseQuickEntry("FULFILLMENT")).toBe(false);
   });
+
+  it("keeps procurement and warehouse roles inside their operational boundaries", () => {
+    expect(isNavigationHrefAllowed("PROCUREMENT", "/procurement")).toBe(true);
+    expect(isNavigationHrefAllowed("PROCUREMENT", "/inventory/items")).toBe(true);
+    expect(isNavigationHrefAllowed("PROCUREMENT", "/finance/settlements")).toBe(false);
+    expect(canUseQuickEntry("PROCUREMENT")).toBe(true);
+
+    expect(isNavigationHrefAllowed("WAREHOUSE", "/inventory/lots")).toBe(true);
+    expect(isNavigationHrefAllowed("WAREHOUSE", "/fulfillment/requests")).toBe(true);
+    expect(isNavigationHrefAllowed("WAREHOUSE", "/procurement")).toBe(false);
+    expect(isNavigationHrefAllowed("WAREHOUSE", "/settings/team")).toBe(false);
+  });
 });

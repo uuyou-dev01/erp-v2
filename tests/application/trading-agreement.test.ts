@@ -1,10 +1,33 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildAgreementRule,
-  calculateAgreement,
-} from "@/lib/application/trading-agreement";
+import { buildAgreementRule, calculateAgreement } from "@/lib/application/trading-agreement";
 
 describe("agreement-driven resale calculations", () => {
+  it("treats a positive supply-to-sale spread as the reseller margin", async () => {
+    const result = await calculateAgreement({
+      rule: buildAgreementRule({ kind: "MARGIN" }),
+      quantity: 1,
+      saleUnitPrice: 180,
+      saleCurrency: "CNY",
+      supplyUnitPrice: 120,
+      supplyCurrency: "CNY",
+    });
+
+    expect(result.resellerCommission?.toFixed(2)).toBe("60.00");
+  });
+
+  it("clamps a negative supply-to-sale spread to zero", async () => {
+    const result = await calculateAgreement({
+      rule: buildAgreementRule({ kind: "MARGIN" }),
+      quantity: 1,
+      saleUnitPrice: 90,
+      saleCurrency: "CNY",
+      supplyUnitPrice: 120,
+      supplyCurrency: "CNY",
+    });
+
+    expect(result.resellerCommission?.toFixed(2)).toBe("0.00");
+  });
+
   it("treats profit percentage as one optional template instead of a global rule", async () => {
     const result = await calculateAgreement({
       rule: buildAgreementRule({ kind: "PROFIT_PERCENT", rate: "0.20" }),

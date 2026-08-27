@@ -4,6 +4,14 @@ import packageJson from "./package.json";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL ?? "";
 const testDatabase = assertSafeTestDatabaseUrl(testDatabaseUrl);
+const boundedDatabaseUrl = new URL(testDatabaseUrl);
+if (!boundedDatabaseUrl.searchParams.has("connection_limit")) {
+  boundedDatabaseUrl.searchParams.set("connection_limit", "5");
+}
+if (!boundedDatabaseUrl.searchParams.has("pool_timeout")) {
+  boundedDatabaseUrl.searchParams.set("pool_timeout", "10");
+}
+const e2eDatabaseUrl = boundedDatabaseUrl.toString();
 const requestedPort = Number.parseInt(process.env.E2E_PORT ?? "3100", 10);
 if (!Number.isInteger(requestedPort) || requestedPort < 1024 || requestedPort > 65_535) {
   throw new Error("E2E_PORT 必须是 1024-65535 的整数");
@@ -18,7 +26,8 @@ const e2eGitSha = /^[0-9a-f]{40}$/i.test(process.env.GIT_SHA ?? "")
 
 // Playwright workers import application modules directly, so they must use the
 // same guarded database as the production-mode web server.
-process.env.DATABASE_URL = testDatabaseUrl;
+process.env.DATABASE_URL = e2eDatabaseUrl;
+process.env.TEST_DATABASE_URL = e2eDatabaseUrl;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -37,8 +46,8 @@ export default defineConfig({
       FORCE_COLOR: "0",
       NODE_ENV: "production",
       E2E_MODE: "true",
-      DATABASE_URL: testDatabaseUrl,
-      TEST_DATABASE_URL: testDatabaseUrl,
+      DATABASE_URL: e2eDatabaseUrl,
+      TEST_DATABASE_URL: e2eDatabaseUrl,
       NEXT_DIST_DIR: e2eDistDir,
       E2E_AUTH_FILE: e2eAuthFile,
       APP_BASE_URL: "https://e2e.invalid",

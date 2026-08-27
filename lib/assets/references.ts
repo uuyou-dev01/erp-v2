@@ -59,9 +59,7 @@ export async function bindAssetReferences(
 ) {
   const ids = [
     ...new Set(
-      (identifiers ?? [])
-        .map(assetIdFromIdentifier)
-        .filter((id): id is string => Boolean(id))
+      (identifiers ?? []).map(assetIdFromIdentifier).filter((id): id is string => Boolean(id))
     ),
   ];
   if (!ids.length) return [];
@@ -91,28 +89,46 @@ export async function bindAssetReferences(
 
 async function referencedStoreId(refType: string, refId: string) {
   if (refType === "CUSTOMER_ORDER") {
-    return (await prisma.customerOrder.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.customerOrder.findUnique({ where: { id: refId }, select: { storeId: true } })
+    )?.storeId;
   }
   if (refType === "PURCHASE_ORDER") {
-    return (await prisma.purchaseOrder.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.purchaseOrder.findUnique({ where: { id: refId }, select: { storeId: true } })
+    )?.storeId;
   }
   if (refType === "INBOUND_SHIPMENT") {
-    return (await prisma.inboundShipment.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.inboundShipment.findUnique({ where: { id: refId }, select: { storeId: true } })
+    )?.storeId;
   }
   if (refType === "ITEM_UNIT") {
-    return (await prisma.itemUnit.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (await prisma.itemUnit.findUnique({ where: { id: refId }, select: { storeId: true } }))
+      ?.storeId;
   }
   if (refType === "INVENTORY_LOT") {
-    return (await prisma.inventoryLot.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.inventoryLot.findUnique({ where: { id: refId }, select: { storeId: true } })
+    )?.storeId;
   }
   if (refType === "WITHDRAWAL_REQUEST") {
-    return (await prisma.withdrawalRequest.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.withdrawalRequest.findUnique({ where: { id: refId }, select: { storeId: true } })
+    )?.storeId;
   }
   if (refType === "PAYOUT_RECORD") {
-    return (await prisma.payoutRecord.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.payoutRecord.findUnique({ where: { id: refId }, select: { storeId: true } })
+    )?.storeId;
   }
   if (refType === "FULFILLMENT_REQUEST") {
-    return (await prisma.fulfillmentRequest.findUnique({ where: { id: refId }, select: { storeId: true } }))?.storeId;
+    return (
+      await prisma.fulfillmentRequest.findUnique({
+        where: { id: refId },
+        select: { storeId: true },
+      })
+    )?.storeId;
   }
   if (refType === "PRODUCT_INTELLIGENCE_CAPTURE") {
     return (
@@ -134,20 +150,27 @@ async function referencedStoreId(refType: string, refId: string) {
 }
 
 /** Object-level read authorization for a bound private asset. */
-export async function canReadPrivateAssetReference(userId: string, asset: PrivateAssetReference) {
-  if (asset.userId === userId) return true;
-
+export async function canReadPrivateAssetReference(
+  userId: string,
+  activeOrganizationId: string | null,
+  asset: PrivateAssetReference
+) {
   const membership = await prisma.membership.findFirst({
     where: {
       organizationId: asset.organizationId,
       userId,
-      status: "ACTIVE",
-      role: { in: ["OWNER", "ADMIN"] },
     },
-    select: { id: true },
+    select: { id: true, role: true, status: true },
   });
-  if (membership) return true;
-  if (!asset.refType || !asset.refId) return false;
+  if (membership && membership.status !== "ACTIVE") return false;
+  const memberIsInActiveOrganization = Boolean(
+    membership && activeOrganizationId === asset.organizationId
+  );
+  if (membership && !memberIsInActiveOrganization) return false;
+  if (memberIsInActiveOrganization && ["OWNER", "ADMIN"].includes(membership!.role)) return true;
+  if (!asset.refType || !asset.refId) {
+    return asset.userId === userId && (!membership || memberIsInActiveOrganization);
+  }
 
   const [storeId, assignedTask] = await Promise.all([
     referencedStoreId(asset.refType, asset.refId),
@@ -157,16 +180,37 @@ export async function canReadPrivateAssetReference(userId: string, asset: Privat
         storeId: asset.storeId,
         refType: asset.refType,
         refId: asset.refId,
+        status: { in: ["ASSIGNED", "IN_PROGRESS", "OVERDUE"] },
         OR: [{ assignedToId: userId }, { delegatedToId: userId }, { createdById: userId }],
       },
-      select: { id: true },
+      select: {
+        assignedToId: true,
+        delegatedToId: true,
+        createdById: true,
+        fulfillmentLocationId: true,
+      },
     }),
   ]);
-  if (assignedTask) return true;
   if (!storeId || storeId !== asset.storeId) return false;
+  const storeAccess = await prisma.storeAccess.findFirst({
+    where: { storeId, userId },
+    select: { id: true },
+  });
+  if (storeAccess && memberIsInActiveOrganization) return true;
+  if (
+    !assignedTask?.fulfillmentLocationId ||
+    (assignedTask.assignedToId !== userId && assignedTask.delegatedToId !== userId)
+  ) {
+    return false;
+  }
   return Boolean(
-    await prisma.storeAccess.findFirst({
-      where: { storeId, userId },
+    await prisma.locationFulfiller.findFirst({
+      where: {
+        organizationId: asset.organizationId,
+        locationId: assignedTask.fulfillmentLocationId,
+        userId,
+        status: "ACTIVE",
+      },
       select: { id: true },
     })
   );

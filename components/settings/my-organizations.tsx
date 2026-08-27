@@ -13,6 +13,8 @@ const ROLE_LABELS: Record<string, string> = {
   OWNER: "所有者",
   ADMIN: "管理员",
   MANAGER: "运营负责人",
+  PROCUREMENT: "采购",
+  WAREHOUSE: "仓库",
   LISTING: "上架人员",
   FULFILLMENT: "打包/发货",
   FINANCE: "财务结算",

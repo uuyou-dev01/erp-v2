@@ -1,27 +1,38 @@
 # ERP v0.9.0 screenshot index
 
-Status: **107 current screenshots reviewed; release matrix still incomplete**
-Review time: 2026-08-28 01:44 CST (Asia/Shanghai)
+Status: **194 current screenshots reviewed; release matrix still incomplete**
+Review time: 2026-08-28 03:10 CST (Asia/Shanghai)
 
 All files use synthetic E2E identities. Invitation and reset links are redacted
-before capture. The primary reviewer opened every image through the labelled
-contact sheets `traces/review-contact-sheets/all-review-01.jpg` through
-`all-review-12.jpg` and observed no Runtime Error overlay, blank failed route,
-real password, token or private address.
+before capture. The final directory was reviewed by the primary reviewer through
+the labelled contact sheets `traces/review-contact-sheets/all-review-01.jpg`
+through `all-review-17.jpg`.
+No Runtime Error overlay, blank failed route, real password, token or private
+address was observed.
 
-| File group | Scenario / actor / route | Expected and observed result | DB / test assertion | Reviewed |
-|---|---|---|---|---|
-| `01-01-*` … `01-11-*` | 1; owner and invited member; team/invite/reset/login/workbench | invite-only registration, locked email, one-time reset, old-session rejection, revoked and expired invite denial | `internal-account-onboarding.spec.ts` | yes (11/11) |
-| `05-01-*` … `05-09-*` | 5; requesting and target organizations; connections/notifications | exact-code request, counterparty accept, immutable end/reject/reconnect history and both-side notifications | `organization-connection-flow.spec.ts` | yes (9/9) |
-| `06-01-*` … `06-11-*` | 6; client and provider organizations; business structure/notifications | proposal, no self-confirm, counterparty activation, pause/resume, v2 revision, v1 preserved, end | `service-agreement-lifecycle.spec.ts` plus v1/v2 DB reads | yes (11/11) |
-| `01-purchase-*` … `15-consolidation-*` | 12; synthetic owner/store; procurement/inventory/listing/sales/logistics/reports | CNY purchase, receipt, listing, sale, shipment, profit and consolidation status flow | `full-flow-evidence.spec.ts` | yes (15/15) |
-| `16-task-*` … `19-assignee-*` | 9 partial; assigner and assignee; workbench/notifications | unassigned task, assignment and assignee receipt | `full-flow-evidence.spec.ts` | yes (4/4) |
-| `18-desktop-*` | 18; synthetic owner; all production desktop navigation routes | 46 routes render under production build without runtime overlay | `release-route-screenshots.spec.ts` | yes (46/46) |
-| `18-mobile-*` | 18 and 16 partial; synthetic owner; key `/m` routes | 11 mobile routes render at phone viewport without runtime overlay | `release-route-screenshots.spec.ts` | yes (11/11) |
+| File group                             | Scenario / actor / route                                                         | Expected and observed result                                                                                                                                            | DB / test assertion                                                 | Reviewed    |
+| -------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ----------- |
+| `01-01-*` … `01-11-*`                  | 1; owner and invited member; team/invite/reset/login/workbench                   | invite-only registration, locked email, one-time reset, old-session rejection, revoked and expired invite denial                                                        | `internal-account-onboarding.spec.ts`                               | yes (11/11) |
+| `02-01-*` … `02-05-*`                  | 2; one owner account; two organizations and four stores                          | store selection survives refresh; organization switch changes store scope; old-organization item direct link is a 404 with no item data                                 | `rc-multi-account-permissions.spec.ts`                              | yes (5/5)   |
+| `03-01-*` … `03-10-*`                  | 3; OWNER, ADMIN, FINANCE, PROCUREMENT, WAREHOUSE and FULFILLMENT                 | role-specific menus are visible; four restricted direct URLs return to workbench with an explicit denial                                                                | `rc-multi-account-permissions.spec.ts`                              | yes (10/10) |
+| `04-01-*` … `04-08-*`                  | 4; owner and scoped member in two organizations                                  | role/store scope changes take effect on reload; removed-store objects are hidden; deactivation removes only the target organization                                     | `rc-multi-account-permissions.spec.ts`                              | yes (8/8)   |
+| `05-01-*` … `05-09-*`                  | 5; requesting and target organizations; connections/notifications                | exact-code request, counterparty accept, immutable end/reject/reconnect history and both-side notifications                                                             | `organization-connection-flow.spec.ts`                              | yes (9/9)   |
+| `06-01-*` … `06-11-*`                  | 6; client and provider organizations; business structure/notifications           | proposal, no self-confirm, counterparty activation, pause/resume, v2 revision, v1 preserved, end                                                                        | `service-agreement-lifecycle.spec.ts` plus v1/v2 DB reads           | yes (11/11) |
+| `07-01-*` … `07-10-*`                  | 7; owner A, connected B and unrelated C; offer form/market/detail                | public visibility, delist, B-only visibility, cost privacy, C empty market and direct-URL 404                                                                           | `release-scenarios-07-08-14.spec.ts`                                | yes (10/10) |
+| `08-01-*` … `08-10-*`                  | 8; owner A and reseller B; fulfillment/offer/item inventory                      | five reservations, disabled sixth order, cancellation release, two exact identities and no same-SKU substitution                                                        | `release-scenarios-07-08-14.spec.ts` plus DB reads                  | yes (10/10) |
+| `11-01-*` … `11-09-*`                  | 11; requester B, provider assignee and same-provider non-assignee                | request creation, provider acceptance, address disclosure after acceptance, non-assignee ship denial, assignee shipment and requester counterparty view                 | `release-scenarios-11-13.spec.ts` plus DB reads                     | yes (9/9)   |
+| `13-01-*` … `13-14-*`                  | 13; supplier A, reseller B and provider C                                        | offer, resale, fulfillment, supply/service settlements, reseller/assignee wallets, workload and reports; all business transitions use UI                                | `release-scenarios-11-13.spec.ts` plus DB reads                     | yes (14/14) |
+| `14-01-*` … `14-08-*`                  | 14; reseller B; resale listing and FX validation                                 | valid FX creates once after double click; missing, future-only and expired rates block with zero records                                                                | `release-scenarios-07-08-14.spec.ts` plus DB counts                 | yes (8/8)   |
+| `01-purchase-*` … `15-consolidation-*` | 12; synthetic owner/store; procurement/inventory/listing/sales/logistics/reports | CNY purchase, receipt, listing, sale, shipment, profit and consolidation status flow                                                                                    | `full-flow-evidence.spec.ts`                                        | yes (15/15) |
+| `16-task-*` … `19-assignee-*`          | 9 partial; assigner and assignee; workbench/notifications                        | unassigned task, assignment and assignee receipt                                                                                                                        | `full-flow-evidence.spec.ts`                                        | yes (4/4)   |
+| `10-01-*` … `10-07-*`                  | 10 partial; owner and two external warehouse collaborators                       | invitation scope, pre-claim address redaction, one-winner concurrent claim, winner address visibility and return                                                        | `deployment-collaboration-security.spec.ts` plus DB reads           | yes (7/7)   |
+| `16-01-*`, `17-00-*` … `17-04-*`       | 16/17 partial; private proof and object authorization                            | MIME-validated proof upload; active-tenant owner allowed; adjacent-tenant owner, losing collaborator, guessed UUID, returned uploader and suspended collaborator denied | `deployment-collaboration-security.spec.ts` plus HTTP/DB assertions | yes (6/6)   |
+| `18-desktop-*`                         | 18; synthetic owner; all production desktop navigation routes                    | 46 routes render under production build without runtime overlay                                                                                                         | `release-route-screenshots.spec.ts`                                 | yes (46/46) |
+| `18-mobile-*`                          | 18 and 16 partial; synthetic owner; key `/m` routes                              | 11 mobile routes render at phone viewport without runtime overlay                                                                                                       | `release-route-screenshots.spec.ts`                                 | yes (11/11) |
 
-Total: **107/107 files visually reviewed**.
+Primary review total: **194/194 files visually reviewed**. The contact-sheet headers
+record the sorted source-file ranges used for reconciliation.
 
 This index intentionally does not mark the absent evidence as passed. Scenarios
-2–4, 7–8, 10–11 and 13–14 are missing their current multi-actor UI sequence;
-scenarios 9 and 15–17 are only partially evidenced. See `acceptance-report.md`
+9–10 and 15–17 are only partially evidenced. See `acceptance-report.md`
 for the production hold decision.

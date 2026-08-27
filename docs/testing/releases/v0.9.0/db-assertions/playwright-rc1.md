@@ -7,14 +7,15 @@
 - Browser: Playwright Chromium
 - Concurrency: one worker, one BrowserContext per actor in multi-account flows
 - Generic `db:seed` / `prisma db push`: not used
-- Result: **36/36 tests passed in 1.6 minutes**
-- Screenshots produced and retained: **107**
+- Result: **44/44 tests passed in 2.2 minutes**
+- Screenshots produced and retained: **194**
 
 The suite covers route smoke, purchase-to-profit, consolidation, task assignment,
 invite-only onboarding and reset/revocation, listing eligibility, sales/shipment,
 mobile/OCR/idempotency/device isolation, organization connection history,
-procurement, service agreement lifecycle, supply-offer publishing and
-collaboration surfaces.
+procurement, service agreement lifecycle, supply-offer publishing, multi-tenant
+role/scope isolation, shared-inventory reservations, fulfillment/settlement/wallet
+flows and private-asset revocation surfaces.
 
 The lifecycle flows use database writes only for isolated fixture setup and
 cleanup. After browser interaction begins, state transitions occur through the

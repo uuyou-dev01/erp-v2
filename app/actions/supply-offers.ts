@@ -312,7 +312,14 @@ async function resolveOfferInventoryScope(input: {
     }),
     prisma.itemUnit.findMany({
       where: { id: { in: itemUnitIds } },
-      select: { id: true, skuId: true, storeId: true, inventoryPoolId: true, status: true, costStatus: true },
+      select: {
+        id: true,
+        skuId: true,
+        storeId: true,
+        inventoryPoolId: true,
+        status: true,
+        costStatus: true,
+      },
     }),
     getStoreStockBreakdown(input.storeId),
   ]);
@@ -550,25 +557,27 @@ async function withEffectiveAvailability(offer: RawSupplyOffer): Promise<RawSupp
       liveUnreserved = new Decimal(stock.get(item.skuId)?.sellableQty ?? 0);
     }
     if (liveUnreserved == null) return item;
-    const liveIncludingThisOfferReservations = liveUnreserved.plus(item.quantityReserved.toString());
+    const liveIncludingThisOfferReservations = liveUnreserved.plus(
+      item.quantityReserved.toString()
+    );
     return {
       ...item,
-      quantityAvailable: Decimal.min(item.quantityAvailable.toString(), liveIncludingThisOfferReservations),
+      quantityAvailable: Decimal.min(
+        item.quantityAvailable.toString(),
+        liveIncludingThisOfferReservations
+      ),
     };
   });
   const liveTotal = items.reduce(
     (sum, item) => sum.plus(item.quantityAvailable.toString()),
-    new Decimal(0),
+    new Decimal(0)
   );
   return {
     ...offer,
     items,
     availableQty: Decimal.max(
       offer.reservedQty.toString(),
-      Decimal.min(
-        offer.availableQty.toString(),
-        liveTotal.minus(offer.safetyStockQty.toString()),
-      ),
+      Decimal.min(offer.availableQty.toString(), liveTotal.minus(offer.safetyStockQty.toString()))
     ),
   };
 }
@@ -655,7 +664,9 @@ export async function getMarketplaceOffers(storeId?: string) {
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
   });
 
-  return Promise.all(offers.map(async (offer) => serializeOffer(await withEffectiveAvailability(offer))));
+  return Promise.all(
+    offers.map(async (offer) => serializeOffer(await withEffectiveAvailability(offer)))
+  );
 }
 
 export async function getSupplyOfferVisibilityStoreOptions(
@@ -911,7 +922,9 @@ export async function getMySupplyOffers(storeId?: string) {
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
   });
 
-  return Promise.all(offers.map(async (offer) => serializeOffer(await withEffectiveAvailability(offer))));
+  return Promise.all(
+    offers.map(async (offer) => serializeOffer(await withEffectiveAvailability(offer)))
+  );
 }
 
 export async function getSupplyOfferById(id: string, storeId?: string) {
@@ -966,6 +979,9 @@ export async function createSupplyOfferAction(data: {
     const title = data.title.trim();
     if (!title) throw new Error("货盘标题不能为空");
     const items = normalizeOfferItems(data.items);
+    const rawOfferUnitPrice =
+      data.unitPrice ?? (items.length === 1 ? (items[0]?.unitPrice ?? undefined) : undefined);
+    const offerUnitPrice = rawOfferUnitPrice == null ? undefined : rawOfferUnitPrice.toString();
     const safetyStockQty = parseDecimal(data.safetyStockQty || "0", "安全库存", {
       required: true,
       min: 0,
@@ -1057,7 +1073,7 @@ export async function createSupplyOfferAction(data: {
         publishedQty: totalQty,
         availableQty: totalQty,
         safetyStockQty,
-        unitPrice: parseDecimal(data.unitPrice, "供货单价", { min: 0 }),
+        unitPrice: parseDecimal(offerUnitPrice, "供货单价", { min: 0 }),
         currency: data.currency || items[0]?.currency || null,
         settlementCurrency: data.settlementCurrency || data.currency || items[0]?.currency || null,
         commissionType,
@@ -1065,7 +1081,11 @@ export async function createSupplyOfferAction(data: {
         commissionFixedAmount,
         dropshipFee: parseDecimal(data.dropshipFee, "代发服务费", { min: 0 }),
         dropshipFeeCurrency:
-          data.dropshipFeeCurrency || data.settlementCurrency || data.currency || items[0]?.currency || null,
+          data.dropshipFeeCurrency ||
+          data.settlementCurrency ||
+          data.currency ||
+          items[0]?.currency ||
+          null,
         agreementTerms: data.agreementTerms?.trim() || null,
         agreementRule: toAgreementJson(agreementRule),
         agreementVersion: 1,
@@ -1159,6 +1179,9 @@ export async function updateSupplyOfferAction(
     const title = data.title.trim();
     if (!title) throw new Error("货盘标题不能为空");
     const items = normalizeOfferItems(data.items);
+    const rawOfferUnitPrice =
+      data.unitPrice ?? (items.length === 1 ? (items[0]?.unitPrice ?? undefined) : undefined);
+    const offerUnitPrice = rawOfferUnitPrice == null ? undefined : rawOfferUnitPrice.toString();
     if (existing.reservedQty.gt(0) || existing.fulfilledQty.gt(0)) {
       throw new Error("货盘已有订单或履约历史，不能再改商品与交易规则；请暂停后新建货盘");
     }
@@ -1205,7 +1228,10 @@ export async function updateSupplyOfferAction(
       rate: data.commissionRate,
       fixedAmount: data.commissionFixedAmount,
       fixedCurrency:
-        data.settlementCurrency || data.currency || existing.settlementCurrency || existing.currency,
+        data.settlementCurrency ||
+        data.currency ||
+        existing.settlementCurrency ||
+        existing.currency,
       profitDeductions: data.profitDeductions,
     });
     const agreementTerms = data.agreementTerms?.trim() || null;
@@ -1311,7 +1337,7 @@ export async function updateSupplyOfferAction(
           publishedQty: totalQty.plus(existing.fulfilledQty),
           availableQty: totalQty,
           safetyStockQty,
-          unitPrice: parseDecimal(data.unitPrice, "供货单价", { min: 0 }),
+          unitPrice: parseDecimal(offerUnitPrice, "供货单价", { min: 0 }),
           currency: data.currency || items[0]?.currency || null,
           settlementCurrency:
             data.settlementCurrency || data.currency || items[0]?.currency || null,

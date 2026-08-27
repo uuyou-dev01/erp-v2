@@ -97,7 +97,23 @@ docker compose --env-file .env.production \
 `scripts/backup-production.sh`；详细的 OSS 保留、失败告警和每月恢复演练见
 `docs/deployment/backup-restore.md`。该 cron 不放进应用 scheduler，避免应用容器重启或卡死时连带失去备份。
 
-## 5. 资源与外部依赖
+## 5. 监控与告警
+
+在阿里云云监控和现有公司的告警渠道中至少建立以下检查，并在 UAT
+阶段主动触发一次以确认通知能送达：
+
+- ECS CPU 持续 10 分钟高于 80%，内存高于 85%，系统盘或数据盘高于 80%。
+- HTTPS 站点监控请求 `/api/health/ready`，连续 3 次非 200 或超时告警；
+  响应中的 `appVersion`、`gitSha` 必须与当前发布记录一致。
+- `docker compose ps` 出现 app、db、scheduler、代理容器退出、反复重启或
+  unhealthy；生产日志出现 `startup-config`、OOM、队列超时或数据库连接耗尽。
+- `.runtime/backups` 7 小时内无新备份，备份脚本退出非零，或 OSS 对象同步失败。
+- PostgreSQL 慢查询、连接数接近 50、通知 outbox 持续积压以及资产卷可用空间不足。
+
+告警规则 ID、联系人、实际触发截图和解除截图保存到本版本 UAT 证据后，
+才能勾选发布记录中的监控门槛。
+
+## 6. 资源与外部依赖
 
 - App 限制约 2.25 GB，并给 Chromium 512 MB `/dev/shm`。
 - PostgreSQL 限制 768 MB、50 个连接；应用连接池默认限制为 5。
@@ -121,7 +137,7 @@ docker compose --env-file .env.production -f compose.production.yml \
 
 三种 OCR 都必须返回非空文本，Chromium 必须输出 `chromium: ok`。再从实际页面完成一次商品链接采集和手机凭证 OCR，确认容器网络、字体、队列限制和业务鉴权一起生效。
 
-## 6. 当前资产迁移边界
+## 7. 当前资产迁移边界
 
 新桌面上传与移动上传会写入统一的 `mobile_assets` 记录和 `.runtime/assets` 宿主卷，使用魔数、大小、像素、SHA-256、UUID、企业和店铺归属校验。商品目录图可公开缓存；业务凭证默认私有。未绑定时只允许上传者或企业 OWNER/ADMIN 读取；绑定后按对应业务对象的店铺授权以及具体委托任务参与人授权读取，不能仅凭“同企业、同店铺”枚举其他凭证。
 

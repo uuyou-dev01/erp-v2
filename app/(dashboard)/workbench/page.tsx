@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
 export default async function WorkbenchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ scope?: string }>;
+  searchParams: Promise<{ scope?: string; access?: string; from?: string }>;
 }) {
   const context = await requireUserContext();
   const storeId = context.activeStoreId;
@@ -231,6 +231,15 @@ export default async function WorkbenchPage({
 
   return (
     <div>
+      {pageParams.access === "denied" ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+        >
+          当前角色无权访问该页面
+          {pageParams.from ? `：${pageParams.from}` : ""}。已返回工作台。
+        </div>
+      ) : null}
       <PageHeader
         title="工作台"
         description="按商品生命周期查看待办，在列表中直接完成下一步动作。"

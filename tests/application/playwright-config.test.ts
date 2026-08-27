@@ -26,12 +26,14 @@ describe("playwright config", () => {
       FORCE_COLOR: "0",
       NODE_ENV: "production",
       E2E_MODE: "true",
-      DATABASE_URL: "postgresql://localhost/erp_e2e",
+      DATABASE_URL: "postgresql://localhost/erp_e2e?connection_limit=5&pool_timeout=10",
+      TEST_DATABASE_URL: "postgresql://localhost/erp_e2e?connection_limit=5&pool_timeout=10",
       AUTH_SELF_SIGNUP_ENABLED: "false",
       APP_BASE_URL: "https://e2e.invalid",
       GIT_SHA: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     });
     expect(webServer?.env).not.toHaveProperty("ERP_DEV_USER_EMAIL");
+    expect(process.env.DATABASE_URL).toBe(webServer?.env?.DATABASE_URL);
     expect(webServer?.env?.ERP_SESSION_SECRET).toMatch(/^e2e-only-session-secret-/);
     expect(webServer?.env?.AUTH_AUDIT_PEPPER).toMatch(/^e2e-only-audit-pepper-/);
     expect(config.projects?.find((project) => project.name === "chrome")?.dependencies).toEqual([

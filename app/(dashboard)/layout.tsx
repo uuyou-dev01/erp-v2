@@ -3,6 +3,8 @@ import { requireAuthenticatedUser, requireUserContext } from "@/lib/auth/user-co
 import { prisma } from "@/lib/prisma";
 import { getCollaborationTaskSummaryForUser } from "@/lib/application/collaboration-task-summary";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { isNavigationHrefAllowed } from "@/lib/auth/permissions";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const authenticatedUser = await requireAuthenticatedUser().catch(() => redirect("/login"));
@@ -13,6 +15,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     });
     redirect(collaboration ? "/collaboration/tasks" : "/onboarding");
   });
+  const pathname = (await headers()).get("x-erp-pathname") ?? "/workbench";
+  if (!isNavigationHrefAllowed(context.role, pathname)) {
+    redirect(`/workbench?access=denied&from=${encodeURIComponent(pathname)}`);
+  }
   const [stores, account, organizations, collaboration] = await Promise.all([
     prisma.store.findMany({
       where: { id: { in: context.storeIds } },

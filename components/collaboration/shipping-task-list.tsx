@@ -456,9 +456,7 @@ export function ShippingTaskList({
                 </div>
               </section>
 
-              {mode === "workbench" &&
-              selected.status !== "DONE" &&
-              selected.status !== "CANCELLED" ? (
+              {selected.status !== "DONE" && selected.status !== "CANCELLED" ? (
                 <section className="space-y-3 border-t pt-5" aria-label="任务协作操作">
                   <div className="flex flex-wrap gap-2">
                     {selected.isAssignedToMe !== false && selected.status === "IN_PROGRESS" ? (

@@ -4,9 +4,13 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireActiveCompanionDevice } from "@/lib/mobile/device-auth";
-import { requireAuthenticatedUser } from "@/lib/auth/user-context";
+import { getActiveOrganizationIdForUser, requireAuthenticatedUser } from "@/lib/auth/user-context";
 import { mobileApiError } from "@/lib/mobile/http";
-import { mobileAssetDriver, readMobileAsset, resolveMobileAssetPath } from "@/lib/mobile/asset-storage";
+import {
+  mobileAssetDriver,
+  readMobileAsset,
+  resolveMobileAssetPath,
+} from "@/lib/mobile/asset-storage";
 import { inspectImage } from "@/lib/assets/image-validation";
 import { canReadPrivateAssetReference } from "@/lib/assets/references";
 
@@ -27,7 +31,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       : asset.itemUnitId
         ? { ...asset, refType: "ITEM_UNIT", refId: asset.itemUnitId }
         : asset;
-    if (!(await canReadPrivateAssetReference(user.id, legacyReference))) {
+    const activeOrganizationId = await getActiveOrganizationIdForUser(user.id);
+    if (!(await canReadPrivateAssetReference(user.id, activeOrganizationId, legacyReference))) {
       throw new Error("证据文件不存在或无权访问");
     }
     const bytes = await readMobileAsset(asset.storageKey);
@@ -48,7 +53,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   try {
     const [{ context }, { id }] = await Promise.all([requireActiveCompanionDevice(), params]);
     const asset = await prisma.mobileAsset.findFirst({
-      where: { id, organizationId: context.organizationId, storeId: context.activeStoreId, userId: context.userId, status: "PENDING" },
+      where: {
+        id,
+        organizationId: context.organizationId,
+        storeId: context.activeStoreId,
+        userId: context.userId,
+        status: "PENDING",
+      },
     });
     if (!asset) throw new Error("上传凭证不存在、已完成或无权访问");
     if (mobileAssetDriver() !== "local") throw new Error("对象存储上传必须使用申请得到的签名地址");

@@ -21,7 +21,7 @@ echo "✅ Homebrew is installed"
 # Install PostgreSQL if not installed
 if ! command -v psql &> /dev/null; then
     echo "📦 Installing PostgreSQL..."
-    brew install postgresql@15
+    brew install postgresql@17
     echo "✅ PostgreSQL installed"
 else
     echo "✅ PostgreSQL is already installed"
@@ -29,7 +29,7 @@ fi
 
 # Start PostgreSQL
 echo "🔄 Starting PostgreSQL..."
-brew services start postgresql@15
+brew services start postgresql@17
 sleep 3
 echo "✅ PostgreSQL is running"
 
@@ -57,7 +57,7 @@ echo "✅ .env file created"
 
 # Install dependencies
 echo "📦 Installing npm dependencies..."
-npm install
+npm ci
 
 # Generate Prisma Client
 echo "🔧 Generating Prisma Client..."
@@ -65,7 +65,7 @@ npx prisma generate
 
 # Run migrations
 echo "🔄 Running database migrations..."
-npx prisma migrate dev --name init
+npx prisma migrate deploy
 
 # Ask about seeding
 echo ""

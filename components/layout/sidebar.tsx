@@ -3,15 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  Box,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  X,
-  Plus,
-  PackageCheck,
-} from "lucide-react";
+import { Box, ChevronLeft, ChevronRight, ChevronDown, X, Plus, PackageCheck } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
 import {
@@ -102,13 +94,7 @@ function NavLink({
   );
 }
 
-export function Sidebar({
-  mobileOpen,
-  onMobileClose,
-  storeId,
-  role,
-  collaboration,
-}: SidebarProps) {
+export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboration }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
@@ -123,7 +109,15 @@ export function Sidebar({
           items: group.items.flatMap((item) => {
             const submenu = item.submenu?.filter((sub) => isNavigationHrefAllowed(role, sub.href));
             if (!isNavigationHrefAllowed(role, item.href) && !submenu?.length) return [];
-            return [{ ...item, submenu }];
+            return [
+              {
+                ...item,
+                href: isNavigationHrefAllowed(role, item.href)
+                  ? item.href
+                  : (submenu?.[0]?.href ?? item.href),
+                submenu,
+              },
+            ];
           }),
         }))
         .filter((group) => group.items.length > 0),

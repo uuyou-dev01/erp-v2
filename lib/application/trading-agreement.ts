@@ -57,12 +57,12 @@ export function buildAgreementRule(input: {
     throw new Error("当前试算方式需要填写每件固定金额");
   }
 
-  const profitDeductions = input.profitDeductions == null
-    ? [...AGREEMENT_PROFIT_DEDUCTIONS]
-    : input.profitDeductions.filter(
-        (value): value is AgreementProfitDeduction =>
-          AGREEMENT_PROFIT_DEDUCTIONS.includes(value as AgreementProfitDeduction),
-      );
+  const profitDeductions =
+    input.profitDeductions == null
+      ? [...AGREEMENT_PROFIT_DEDUCTIONS]
+      : input.profitDeductions.filter((value): value is AgreementProfitDeduction =>
+          AGREEMENT_PROFIT_DEDUCTIONS.includes(value as AgreementProfitDeduction)
+        );
   if (input.profitDeductions && profitDeductions.length !== input.profitDeductions.length) {
     throw new Error("利润试算包含系统无法识别的费用项目");
   }
@@ -93,7 +93,10 @@ export function parseAgreementRule(value: Prisma.JsonValue | null | undefined): 
   const source = value as Record<string, unknown>;
   return buildAgreementRule({
     kind: typeof source.kind === "string" ? source.kind : undefined,
-    rate: typeof source.rate === "string" || typeof source.rate === "number" ? String(source.rate) : undefined,
+    rate:
+      typeof source.rate === "string" || typeof source.rate === "number"
+        ? String(source.rate)
+        : undefined,
     fixedAmount:
       typeof source.fixedAmount === "string" || typeof source.fixedAmount === "number"
         ? String(source.fixedAmount)
@@ -179,6 +182,12 @@ export async function calculateAgreement(input: {
 
   let distributableProfit: Decimal | null = null;
   let resellerCommission = new Decimal(0);
+  if (input.rule.kind === "MARGIN") {
+    // Under a margin agreement the supplier still receives the agreed supply
+    // price; the reseller keeps the positive spread already collected from
+    // the customer. This amount is informational on the supplier settlement.
+    resellerCommission = Decimal.max(saleAmount.minus(supplyCost), 0);
+  }
   if (input.rule.kind === "SALE_PERCENT" || input.rule.kind === "SALE_PERCENT_PLUS_FIXED") {
     resellerCommission = resellerCommission.plus(saleAmount.mul(input.rule.rate ?? 0));
   }
@@ -195,9 +204,12 @@ export async function calculateAgreement(input: {
     const deductions = new Set(input.rule.profitDeductions ?? AGREEMENT_PROFIT_DEDUCTIONS);
     distributableProfit = saleAmount;
     if (deductions.has("SUPPLY_COST")) distributableProfit = distributableProfit.minus(supplyCost);
-    if (deductions.has("PLATFORM_FEE")) distributableProfit = distributableProfit.minus(platformFee);
-    if (deductions.has("FULFILLMENT_FEE")) distributableProfit = distributableProfit.minus(fulfillmentFee);
-    if (deductions.has("SHIPPING_FEE")) distributableProfit = distributableProfit.minus(shippingFee);
+    if (deductions.has("PLATFORM_FEE"))
+      distributableProfit = distributableProfit.minus(platformFee);
+    if (deductions.has("FULFILLMENT_FEE"))
+      distributableProfit = distributableProfit.minus(fulfillmentFee);
+    if (deductions.has("SHIPPING_FEE"))
+      distributableProfit = distributableProfit.minus(shippingFee);
     distributableProfit = Decimal.max(0, distributableProfit);
     resellerCommission = distributableProfit.mul(input.rule.rate ?? 0);
   }

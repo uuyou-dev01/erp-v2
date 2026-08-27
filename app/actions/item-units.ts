@@ -7,7 +7,12 @@ import { actionSuccess, toActionFailure } from "@/lib/application/action-result"
 import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { requireUserContext } from "@/lib/auth/user-context";
-import { canViewInventoryCost, hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
+import {
+  canAccessScopedObjectInActiveOrganization,
+  canViewInventoryCost,
+  hasRoleAtLeast,
+  ROLES,
+} from "@/lib/auth/permissions";
 import { hasLocationCapability } from "@/lib/auth/scope-access";
 import {
   itemConditionReadyForSale,
@@ -81,10 +86,7 @@ export async function getItemUnits(storeId: string) {
       .map((receipt) => receipt.itemUnitId)
       .filter((id): id is string => Boolean(id))
   );
-  const inspectionByRef = new Map<
-    string,
-    { result: string; failureReason: string | null }
-  >();
+  const inspectionByRef = new Map<string, { result: string; failureReason: string | null }>();
   for (const inspection of inspections) {
     const key = `${inspection.refType}:${inspection.refId}`;
     if (!inspectionByRef.has(key)) {
@@ -136,6 +138,7 @@ export async function getItemUnitById(id: string) {
     where: { id },
     include: {
       sku: true,
+      store: { select: { organizationId: true } },
       location: true,
       listings: {
         include: { platform: true },
@@ -155,10 +158,19 @@ export async function getItemUnitById(id: string) {
 
   if (!item) return null;
 
-  const canAccess =
+  const hasScopedAccess =
     context.storeIds.includes(item.storeId) ||
     Boolean(item.inventoryPoolId && context.inventoryPoolIds.includes(item.inventoryPoolId));
-  if (!canAccess) return null;
+  if (
+    !canAccessScopedObjectInActiveOrganization({
+      activeOrganizationId: context.organizationId,
+      membershipOrganizationIds: context.organizationIds,
+      objectOrganizationId: item.store.organizationId,
+      hasScopedAccess,
+    })
+  ) {
+    return null;
+  }
   let showCost = context.storeIds.includes(item.storeId) && canViewInventoryCost(context.role);
   if (!showCost && item.inventoryPoolId) {
     const poolAccess = await prisma.inventoryPoolAccess.findUnique({

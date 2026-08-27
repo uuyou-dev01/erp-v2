@@ -15,6 +15,8 @@ import { notifyUser } from "@/lib/application/notifications";
 const TEAM_ROLES = [
   ROLES.ADMIN,
   ROLES.MANAGER,
+  ROLES.PROCUREMENT,
+  ROLES.WAREHOUSE,
   ROLES.LISTING,
   ROLES.FULFILLMENT,
   ROLES.FINANCE,
@@ -164,7 +166,8 @@ export async function updateTeamMemberAccess(formData: FormData) {
     where: { organizationId_userId: { organizationId: context.organizationId, userId } },
     select: { role: true, status: true },
   });
-  if (!targetMembership || targetMembership.status !== "ACTIVE") throw new Error("成员不存在或已停用");
+  if (!targetMembership || targetMembership.status !== "ACTIVE")
+    throw new Error("成员不存在或已停用");
   if (targetMembership.role === ROLES.OWNER) throw new Error("不能修改企业所有者的权限");
   if (
     !hasRoleAtLeast(context.role, ROLES.ADMIN) &&
@@ -203,7 +206,9 @@ export async function updateTeamMemberAccess(formData: FormData) {
     for (const storeId of storeIds) {
       const currentPermissions = existingPermissions.get(storeId);
       const permissionRecord =
-        currentPermissions && typeof currentPermissions === "object" && !Array.isArray(currentPermissions)
+        currentPermissions &&
+        typeof currentPermissions === "object" &&
+        !Array.isArray(currentPermissions)
           ? (currentPermissions as Record<string, unknown>)
           : {};
       const permissions = {
@@ -300,9 +305,14 @@ export async function deactivateTeamMember(formData: FormData) {
   if (targetMembership.role === ROLES.OWNER) throw new Error("不能停用企业所有者");
   if (
     !hasRoleAtLeast(context.role, ROLES.ADMIN) &&
-    ![ROLES.LISTING, ROLES.FULFILLMENT, ROLES.FINANCE, ROLES.VIEWER].includes(
-      targetMembership.role as typeof ROLES.LISTING
-    )
+    ![
+      ROLES.PROCUREMENT,
+      ROLES.WAREHOUSE,
+      ROLES.LISTING,
+      ROLES.FULFILLMENT,
+      ROLES.FINANCE,
+      ROLES.VIEWER,
+    ].includes(targetMembership.role as typeof ROLES.LISTING)
   ) {
     throw new Error("运营负责人只能停用普通业务成员");
   }

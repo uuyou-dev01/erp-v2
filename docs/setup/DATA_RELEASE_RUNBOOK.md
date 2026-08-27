@@ -119,7 +119,7 @@ npm run data:retention -- apply \
 
 正式上线还必须：
 
-- 将 13 个未跟踪 migration 纳入 release commit，并从空库验证 `prisma migrate deploy`；
+- 发布前发现的迁移现已全部纳入 RC；59 个迁移已从空 PostgreSQL 17.2 验证 `prisma migrate deploy`。最终 release commit 仍须再次确认无未跟踪迁移；
 - 记录 release commit SHA、应用版本、manifest SHA 和备份 SHA；
 - 阿里云部署后先只读 smoke，再开放写入；
 - 原始备份与清理后备份至少保留 30 天，确认稳定后按公司数据政策销毁。

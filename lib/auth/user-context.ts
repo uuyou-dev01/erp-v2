@@ -16,8 +16,7 @@ export interface UserContext {
   activeInventoryPoolId: string | null;
 }
 
-export const USER_CONTEXT_COOKIE =
-  isSecureCookieEnabled() ? "__Host-erp_session" : "erp_session";
+export const USER_CONTEXT_COOKIE = isSecureCookieEnabled() ? "__Host-erp_session" : "erp_session";
 export const ACTIVE_STORE_COOKIE = "erp_active_store_id";
 export const ACTIVE_ORGANIZATION_COOKIE = "erp_active_organization_id";
 async function getCurrentSessionIdentity() {
@@ -60,12 +59,30 @@ export async function requireAuthenticatedUser() {
   return user;
 }
 
+export async function getActiveOrganizationIdForUser(userId: string) {
+  const [activeMemberships, cookieStore] = await Promise.all([
+    prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      orderBy: { createdAt: "asc" },
+      select: { organizationId: true },
+    }),
+    cookies(),
+  ]);
+  const requestedOrganizationId = cookieStore.get(ACTIVE_ORGANIZATION_COOKIE)?.value;
+  return (
+    activeMemberships.find((item) => item.organizationId === requestedOrganizationId)
+      ?.organizationId ??
+    activeMemberships[0]?.organizationId ??
+    null
+  );
+}
+
 export async function requireUserContext(input?: { storeId?: string }): Promise<UserContext> {
   const identity = await getCurrentSessionIdentity();
   const user = await prisma.user.findUnique({
     where: "userId" in identity ? { id: identity.userId } : { email: identity.email },
     include: {
-      memberships: true,
+      memberships: { orderBy: { createdAt: "asc" } },
       storeAccesses: { include: { store: true } },
       inventoryPoolAccesses: { include: { inventoryPool: true } },
       channelAccesses: { include: { salesChannelAccount: true } },
