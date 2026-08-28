@@ -32,6 +32,7 @@ remain release blockers. The contaminated local `erp` database was not used.
 - [x] Production dependency audit: 0 vulnerabilities
 - [x] Weak/missing production secret startup exits with code 1 and leaves the port closed
 - [x] Complete current Playwright suite: 54/54 in 2.6 minutes, serial, isolated database
+- [x] Final mobile/cross-device regression: 18/18 in 2.2 minutes on a fresh isolated database
 - [ ] User backup restore and retention apply/restore drill
 - [ ] Final container Chromium and Tesseract Chinese/Japanese/English verification
 - [ ] Ten sessions plus one OCR/scrape resource test
@@ -86,7 +87,7 @@ required current UI evidence exists; `partial` does not satisfy the release gate
 
 ## Final decision
 
-- [x] Primary reviewer inspected all 232 canonical screenshots through 20 current labelled contact sheets, plus 16 current product-audit after-images and 6 independent browser-review images individually (254 current evidence images; 16 before-images retained for comparison).
+- [x] Primary reviewer inspected all 232 canonical screenshots through 20 current labelled contact sheets, plus 16 current product-audit after-images, 6 independent browser-review images and 8 final mobile-linkage images individually (262 current evidence images; 16 before-images retained for comparison).
 - [x] Current automated database assertions were reviewed, not only their exit status.
 - [x] Current business flows do not continue through direct DB writes after UI start; setup and negative clock fixtures are documented exceptions.
 - [x] No real password, token or private address was observed in the evidence.

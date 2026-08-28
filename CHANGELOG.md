@@ -32,6 +32,8 @@ All notable changes to this project are documented here. The format follows
   notification deep links switch context safely, and invalid objects use a recoverable Chinese 404.
 - External warehouse login preserves the requested task, task handoff/withdrawal are available in
   the UI, notification labels are human-readable, and mobile notifications route to their business target.
+- Mobile operational forms expose explicit accessible names for logistics, arrival, warehouse,
+  shipping, return and note controls; the final mobile/cross-device regression passes 18/18.
 
 ### Security
 
