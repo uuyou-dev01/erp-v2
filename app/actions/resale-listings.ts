@@ -1,6 +1,7 @@
 "use server";
 
 import Decimal from "decimal.js";
+import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { calculateAgreement, parseAgreementRule } from "@/lib/application/trading-agreement";
@@ -113,7 +114,12 @@ type RawResaleListing = Omit<
   estimatedGrossProfit: StringableDecimal | null;
   supplyOffer: Omit<
     SerializedResaleListing["supplyOffer"],
-    "availableQty" | "unitPrice" | "commissionRate" | "commissionFixedAmount" | "dropshipFee" | "items"
+    | "availableQty"
+    | "unitPrice"
+    | "commissionRate"
+    | "commissionFixedAmount"
+    | "dropshipFee"
+    | "items"
   > & {
     availableQty: StringableDecimal;
     unitPrice: StringableDecimal | null;
@@ -132,14 +138,19 @@ type RawResaleListing = Omit<
   };
 };
 
-function parseDecimal(value: string | undefined, label: string, options: { required?: boolean; min?: Decimal.Value } = {}) {
+function parseDecimal(
+  value: string | undefined,
+  label: string,
+  options: { required?: boolean; min?: Decimal.Value } = {}
+) {
   if (!value || value.trim() === "") {
     if (options.required) throw new Error(`${label}不能为空`);
     return null;
   }
   const decimal = new Decimal(value);
   if (!decimal.isFinite()) throw new Error(`${label}必须是有效数字`);
-  if (options.min !== undefined && decimal.lt(options.min)) throw new Error(`${label}不能小于 ${options.min}`);
+  if (options.min !== undefined && decimal.lt(options.min))
+    throw new Error(`${label}不能小于 ${options.min}`);
   return decimal;
 }
 
@@ -307,6 +318,7 @@ export async function createResaleListingAction(data: {
   platformId: string;
   title: string;
   externalListingNo?: string;
+  idempotencyKey?: string;
   targetPrice: string;
   currency?: string;
   quantityPlanned?: string;
@@ -322,9 +334,24 @@ export async function createResaleListingAction(data: {
 }) {
   try {
     const context = await requireUserContext(data.storeId ? { storeId: data.storeId } : undefined);
+    const idempotencyKey = data.idempotencyKey?.trim() || null;
+    if (idempotencyKey && idempotencyKey.length > 200) {
+      throw new Error("操作幂等键格式无效");
+    }
+    if (idempotencyKey) {
+      const existing = await prisma.resaleListing.findFirst({
+        where: { sellerOrganizationId: context.organizationId, idempotencyKey },
+        select: { id: true },
+      });
+      if (existing) return actionSuccess({ id: existing.id });
+    }
     const [offer, platform] = await Promise.all([
       prisma.supplyOffer.findFirst({
-        where: visibleSupplyOfferWhere(context.activeStoreId, context.organizationId, data.supplyOfferId),
+        where: visibleSupplyOfferWhere(
+          context.activeStoreId,
+          context.organizationId,
+          data.supplyOfferId
+        ),
         include: { salesChannels: { where: { status: "ACTIVE" } }, items: true },
       }),
       prisma.platform.findFirst({
@@ -341,34 +368,50 @@ export async function createResaleListingAction(data: {
         ? offer.items[0]
         : null;
     if (!offerItem) throw new Error("请选择当前货盘中要代卖的具体商品");
-    if (offer.agreementStatus !== "CONFIRMED" || !offer.agreementRule || !offer.agreementTerms?.trim()) {
+    if (
+      offer.agreementStatus !== "CONFIRMED" ||
+      !offer.agreementRule ||
+      !offer.agreementTerms?.trim()
+    ) {
       throw new Error("货盘合作约定尚未由货主确认，暂不能创建代卖上架");
     }
 
     const title = data.title.trim();
     if (!title) throw new Error("代卖标题不能为空");
     const targetPrice = parseDecimal(data.targetPrice, "代卖售价", { required: true, min: 0 })!;
-    const quantityPlanned = parseDecimal(data.quantityPlanned || "1", "计划代卖数量", { required: true, min: 0 })!;
+    const quantityPlanned = parseDecimal(data.quantityPlanned || "1", "计划代卖数量", {
+      required: true,
+      min: 0,
+    })!;
     const supplyUnitPrice = parseDecimal(
       offerItem.unitPrice?.toString() ?? offer.unitPrice?.toString(),
       "供货单价",
-      { min: 0 },
+      { min: 0 }
     );
-    const platformFeeRate = parseRate(data.platformFeeRate ?? platform.defaultFeeRate?.toString(), "平台费率");
+    const platformFeeRate = parseRate(
+      data.platformFeeRate ?? platform.defaultFeeRate?.toString(),
+      "平台费率"
+    );
     const commissionRate = offer.commissionRate;
     const commissionType = offer.commissionType;
     const commissionFixedAmount = offer.commissionFixedAmount;
     const dropshipFee = parseDecimal(offer.dropshipFee?.toString(), "代发服务费", { min: 0 });
     const saleCurrency = data.currency || platform.defaultCurrency || offer.currency || "CNY";
     const supplyCurrency = offerItem.currency || offer.currency || null;
-    const dropshipFeeCurrency = offer.dropshipFeeCurrency || offer.settlementCurrency || offer.currency;
+    const dropshipFeeCurrency =
+      offer.dropshipFeeCurrency || offer.settlementCurrency || offer.currency;
     const agreementRule = parseAgreementRule(offer.agreementRule);
     const salesChannelAccountId = platform.salesChannelAccount?.id ?? null;
-    const offerChannel = offer.salesChannels.find((channel) =>
-      (salesChannelAccountId && channel.salesChannelAccountId === salesChannelAccountId) ||
-      (!salesChannelAccountId && channel.storeId === context.activeStoreId),
+    const offerChannel = offer.salesChannels.find(
+      (channel) =>
+        (salesChannelAccountId && channel.salesChannelAccountId === salesChannelAccountId) ||
+        (!salesChannelAccountId && channel.storeId === context.activeStoreId)
     );
-    if (offer.salesChannels.length > 0 && !offerChannel && offer.organizationId !== context.organizationId) {
+    if (
+      offer.salesChannels.length > 0 &&
+      !offerChannel &&
+      offer.organizationId !== context.organizationId
+    ) {
       throw new Error("当前销售账号未被这个货盘授权");
     }
     const estimates = await calculateEstimates({
@@ -383,41 +426,58 @@ export async function createResaleListingAction(data: {
       agreementRule,
     });
 
-    const listing = await prisma.resaleListing.create({
-      data: {
-        storeId: context.activeStoreId,
-        sellerOrganizationId: context.organizationId,
-        salesChannelAccountId,
-        supplyOfferChannelId: offerChannel?.id ?? null,
-        supplyOfferId: offer.id,
-        supplyOfferItemId: offerItem.id,
-        platformId: platform.id,
-        title,
-        externalListingNo: data.externalListingNo || null,
-        targetPrice,
-        currency: saleCurrency,
-        quantityPlanned,
-        supplyUnitPrice,
-        supplyCurrency,
-        commissionRate,
-        commissionType,
-        commissionFixedAmount,
-        dropshipFee,
-        dropshipFeeCurrency,
-        agreementTermsSnapshot: offer.agreementTerms,
-        agreementRuleSnapshot: offer.agreementRule,
-        agreementVersion: offer.agreementVersion,
-        agreementAcceptedAt: new Date(),
-        platformFeeRate,
-        estimatedPlatformFee: estimates.estimatedPlatformFee,
-        estimatedCommission: estimates.estimatedCommission,
-        estimatedGrossProfit: estimates.estimatedGrossProfit,
-        fulfillmentMode: offer.fulfillmentMode,
-        notes: data.notes || null,
-        createdById: context.userId,
-        updatedById: context.userId,
-      },
-    });
+    let listing;
+    try {
+      listing = await prisma.resaleListing.create({
+        data: {
+          storeId: context.activeStoreId,
+          sellerOrganizationId: context.organizationId,
+          salesChannelAccountId,
+          supplyOfferChannelId: offerChannel?.id ?? null,
+          supplyOfferId: offer.id,
+          supplyOfferItemId: offerItem.id,
+          platformId: platform.id,
+          title,
+          externalListingNo: data.externalListingNo || null,
+          idempotencyKey,
+          targetPrice,
+          currency: saleCurrency,
+          quantityPlanned,
+          supplyUnitPrice,
+          supplyCurrency,
+          commissionRate,
+          commissionType,
+          commissionFixedAmount,
+          dropshipFee,
+          dropshipFeeCurrency,
+          agreementTermsSnapshot: offer.agreementTerms,
+          agreementRuleSnapshot: offer.agreementRule,
+          agreementVersion: offer.agreementVersion,
+          agreementAcceptedAt: new Date(),
+          platformFeeRate,
+          estimatedPlatformFee: estimates.estimatedPlatformFee,
+          estimatedCommission: estimates.estimatedCommission,
+          estimatedGrossProfit: estimates.estimatedGrossProfit,
+          fulfillmentMode: offer.fulfillmentMode,
+          notes: data.notes || null,
+          createdById: context.userId,
+          updatedById: context.userId,
+        },
+      });
+    } catch (error) {
+      if (
+        idempotencyKey &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const replayed = await prisma.resaleListing.findFirst({
+          where: { sellerOrganizationId: context.organizationId, idempotencyKey },
+          select: { id: true },
+        });
+        if (replayed) return actionSuccess({ id: replayed.id });
+      }
+      throw error;
+    }
 
     revalidateResaleSurfaces(listing.id, offer.id);
     return actionSuccess({ id: listing.id });
@@ -446,7 +506,7 @@ export async function updateResaleListingAction(
     platformFeeRate?: string;
     fulfillmentMode?: string;
     notes?: string;
-  },
+  }
 ) {
   try {
     const existing = await prisma.resaleListing.findUnique({
@@ -477,35 +537,47 @@ export async function updateResaleListingAction(
       where: { offerId: existing.supplyOfferId, status: "ACTIVE" },
     });
     const salesChannelAccountId = platform.salesChannelAccount?.id ?? null;
-    const offerChannel = offerChannels.find((channel) =>
-      (salesChannelAccountId && channel.salesChannelAccountId === salesChannelAccountId) ||
-      (!salesChannelAccountId && channel.storeId === context.activeStoreId),
+    const offerChannel = offerChannels.find(
+      (channel) =>
+        (salesChannelAccountId && channel.salesChannelAccountId === salesChannelAccountId) ||
+        (!salesChannelAccountId && channel.storeId === context.activeStoreId)
     );
-    if (offerChannels.length > 0 && !offerChannel && existing.supplyOffer.organizationId !== context.organizationId) {
+    if (
+      offerChannels.length > 0 &&
+      !offerChannel &&
+      existing.supplyOffer.organizationId !== context.organizationId
+    ) {
       throw new Error("当前销售账号未被这个货盘授权");
     }
 
     const targetPrice = parseDecimal(data.targetPrice, "代卖售价", { required: true, min: 0 })!;
-    const quantityPlanned = parseDecimal(data.quantityPlanned || existing.quantityPlanned.toString(), "计划代卖数量", {
-      required: true,
-      min: 0,
-    })!;
+    const quantityPlanned = parseDecimal(
+      data.quantityPlanned || existing.quantityPlanned.toString(),
+      "计划代卖数量",
+      {
+        required: true,
+        min: 0,
+      }
+    )!;
     if (quantityPlanned.lt(existing.quantitySold)) {
       throw new Error("计划数量不能小于已售数量");
     }
     const supplyUnitPrice = parseDecimal(
       existing.supplyUnitPrice?.toString() ?? offerItem.unitPrice?.toString(),
       "供货单价",
-      { min: 0 },
+      { min: 0 }
     );
-    const platformFeeRate = parseRate(data.platformFeeRate ?? platform.defaultFeeRate?.toString(), "平台费率");
+    const platformFeeRate = parseRate(
+      data.platformFeeRate ?? platform.defaultFeeRate?.toString(),
+      "平台费率"
+    );
     const commissionRate = existing.commissionRate;
     const commissionType = existing.commissionType;
     const commissionFixedAmount = existing.commissionFixedAmount;
     const dropshipFee = parseDecimal(
       existing.dropshipFee?.toString() ?? existing.supplyOffer.dropshipFee?.toString(),
       "代发服务费",
-      { min: 0 },
+      { min: 0 }
     );
     const saleCurrency = data.currency || platform.defaultCurrency || existing.currency;
     const supplyCurrency = existing.supplyCurrency || offerItem.currency;
@@ -566,7 +638,7 @@ export async function updateResaleListingAction(
 
 export async function changeResaleListingStatusAction(
   id: string,
-  nextStatus: "ACTIVE" | "PAUSED" | "DELISTED" | "DRAFT",
+  nextStatus: "ACTIVE" | "PAUSED" | "DELISTED" | "DRAFT"
 ) {
   try {
     const existing = await prisma.resaleListing.findUnique({
@@ -584,7 +656,8 @@ export async function changeResaleListingStatusAction(
     }
     if (
       nextStatus === "ACTIVE" &&
-      (!existing.supplyOfferItemId || !existing.supplyOffer.items.some((item) => item.id === existing.supplyOfferItemId))
+      (!existing.supplyOfferItemId ||
+        !existing.supplyOffer.items.some((item) => item.id === existing.supplyOfferItemId))
     ) {
       throw new Error("启用前必须选择明确的货盘商品");
     }
@@ -593,7 +666,7 @@ export async function changeResaleListingStatusAction(
       where: { id },
       data: {
         status: nextStatus,
-        listedAt: nextStatus === "ACTIVE" ? existing.listedAt ?? new Date() : existing.listedAt,
+        listedAt: nextStatus === "ACTIVE" ? (existing.listedAt ?? new Date()) : existing.listedAt,
         pausedAt: nextStatus === "PAUSED" ? new Date() : null,
         delistedAt: nextStatus === "DELISTED" ? new Date() : existing.delistedAt,
         updatedById: context.userId,

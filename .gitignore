@@ -42,6 +42,7 @@ next-env.d.ts
 /public/uploads
 /.data/mobile-assets
 /.data/assets
+/.data/tesseract-cache
 /.runtime
 
 # local Codex work and generated OCR artifacts

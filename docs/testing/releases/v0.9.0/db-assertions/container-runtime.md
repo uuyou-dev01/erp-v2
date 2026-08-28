@@ -72,6 +72,11 @@ Docker Hub 仍不可达。因此没有把网络失败误报为镜像或应用构
 - Tesseract `eng` 英文识别。
 - 三语数据包、worker 路径和字体在最终镜像中的实际可用性。
 
+后续本机 production-mode RC2 验收已确认三个 Tesseract.js worker 可以启动，并发现其默认
+cache 会尝试写应用工作目录。代码现已把 cache 固定到可持久化、可写的
+`/app/.data/tesseract-cache`（本机对应 `.data/tesseract-cache`）。这只消除了一个明确的
+非 root 写权限风险，不能替代本节要求的最终镜像验证。
+
 ## 解除阻塞后的复验
 
 恢复 Docker Hub 访问，或配置经审核的阿里云容器镜像代理后，重新执行上述构建。构建成功后，在临时目录准备脱敏的 `chi_sim.png`、`jpn.png`、`eng.png`，以只读卷运行：

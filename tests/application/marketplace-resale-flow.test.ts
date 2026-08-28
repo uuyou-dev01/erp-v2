@@ -241,6 +241,35 @@ describe("marketplace resale collaboration flow", () => {
     expect(invalidOffer).toBeNull();
   });
 
+  it("returns the same listing for a replayed create idempotency key", async () => {
+    const idempotencyKey = `resale-create:${runId}`;
+    const payload = {
+      storeId: resellerStoreId,
+      supplyOfferId: offerId,
+      platformId,
+      title: "Idempotent Resale Listing",
+      targetPrice: "10000",
+      currency: "JPY",
+      quantityPlanned: "1",
+      idempotencyKey,
+    };
+
+    const [first, replay] = await Promise.all([
+      createResaleListingAction(payload),
+      createResaleListingAction(payload),
+    ]);
+
+    expect(first.success).toBe(true);
+    expect(replay.success).toBe(true);
+    if (!first.success || !replay.success) return;
+    expect(replay.id).toBe(first.id);
+    await expect(
+      prisma.resaleListing.count({
+        where: { storeId: resellerStoreId, idempotencyKey },
+      })
+    ).resolves.toBe(1);
+  });
+
   it("creates resale, reserves fulfillment quantity, ships, and settles", async () => {
     const resaleResult = await createResaleListingAction({
       storeId: resellerStoreId,
@@ -334,7 +363,10 @@ describe("marketplace resale collaboration flow", () => {
     expect(pendingEarning.status).toBe("PENDING");
     expect(pendingEarning.earningAmount.toString()).toBe("100");
 
-    const settlementResult = await createSettlementFromFulfillmentAction(fulfillmentRequestId, resellerStoreId);
+    const settlementResult = await createSettlementFromFulfillmentAction(
+      fulfillmentRequestId,
+      resellerStoreId
+    );
     expect(settlementResult.success).toBe(true);
     if (settlementResult.success) {
       expect(settlementResult.created).toBe(false);
@@ -400,7 +432,7 @@ describe("marketplace resale collaboration flow", () => {
     expect(
       await prisma.walletLedgerEntry.count({
         where: { earningEventId: earning.id },
-      }),
+      })
     ).toBe(1);
 
     const paidSettlementSummary = await getSettlementSummary(resellerStoreId);
@@ -458,7 +490,9 @@ describe("marketplace resale collaboration flow", () => {
     expect(cancelledRequest.status).toBe("CANCELLED");
     expect(cancelledRequest.reservation?.status).toBe("RELEASED");
 
-    const resaleListing = await prisma.resaleListing.findUniqueOrThrow({ where: { id: resaleResult.id } });
+    const resaleListing = await prisma.resaleListing.findUniqueOrThrow({
+      where: { id: resaleResult.id },
+    });
     expect(resaleListing.quantitySold.toString()).toBe("0");
   });
 });

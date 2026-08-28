@@ -18,11 +18,15 @@ export function MobileTaskAssignment({
   workItemId,
   assignedToId,
   assignedToName,
+  currentUserId,
+  taskStatus,
   members,
 }: {
   workItemId: string;
   assignedToId: string | null;
   assignedToName: string | null;
+  currentUserId: string;
+  taskStatus: string | null;
   members: Member[];
 }) {
   const router = useRouter();
@@ -62,7 +66,12 @@ export function MobileTaskAssignment({
           disabled={!assignee || pending || assignee === assignedToId}
           onClick={() =>
             startTransition(async () => {
-              try { await ensureMobileDeviceRegistered(); } catch (error) { setMessage(error instanceof Error ? error.message : "设备绑定失败"); return; }
+              try {
+                await ensureMobileDeviceRegistered();
+              } catch (error) {
+                setMessage(error instanceof Error ? error.message : "设备绑定失败");
+                return;
+              }
               const result = await assignMobileTaskAction(workItemId, assignee, { dueAt, note });
               if (!result.success) {
                 setMessage(result.error);
@@ -79,12 +88,47 @@ export function MobileTaskAssignment({
       <details className="mt-3 text-xs text-slate-500">
         <summary className="cursor-pointer select-none">添加截止时间和说明</summary>
         <div className="mt-3 grid gap-2">
-          <input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3" />
-          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="例如：到货后请拍照" className="h-10 rounded-xl border border-slate-200 bg-white px-3" />
+          <input
+            type="datetime-local"
+            value={dueAt}
+            onChange={(event) => setDueAt(event.target.value)}
+            className="h-10 rounded-xl border border-slate-200 bg-white px-3"
+          />
+          <input
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="例如：到货后请拍照"
+            className="h-10 rounded-xl border border-slate-200 bg-white px-3"
+          />
         </div>
       </details>
       {message ? <p className="mt-2 text-xs text-slate-500">{message}</p> : null}
-      {!assignedToId ? <button type="button" className="mt-3 text-xs font-semibold text-blue-700" disabled={pending} onClick={() => startTransition(async () => { try { await ensureMobileDeviceRegistered(); } catch (error) { setMessage(error instanceof Error ? error.message : "设备绑定失败"); return; } const result = await startMobileTaskAction(workItemId); if (!result.success) { setMessage(result.error); return; } setMessage("任务已领取并开始处理"); router.refresh(); })}>领取并开始处理</button> : null}
+      {!assignedToId || (assignedToId === currentUserId && taskStatus === "ASSIGNED") ? (
+        <button
+          type="button"
+          className="mt-3 text-xs font-semibold text-blue-700"
+          disabled={pending}
+          onClick={() =>
+            startTransition(async () => {
+              try {
+                await ensureMobileDeviceRegistered();
+              } catch (error) {
+                setMessage(error instanceof Error ? error.message : "设备绑定失败");
+                return;
+              }
+              const result = await startMobileTaskAction(workItemId);
+              if (!result.success) {
+                setMessage(result.error);
+                return;
+              }
+              setMessage(assignedToId ? "任务已开始处理" : "任务已领取并开始处理");
+              router.refresh();
+            })
+          }
+        >
+          {assignedToId ? "开始处理" : "领取并开始处理"}
+        </button>
+      ) : null}
     </section>
   );
 }

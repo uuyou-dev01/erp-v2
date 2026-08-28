@@ -34,6 +34,7 @@ import { actionSuccess, toActionFailure } from "@/lib/application/action-result"
 import { requireActiveCompanionDevice } from "@/lib/mobile/device-auth";
 import { assertMobileRateLimit } from "@/lib/mobile/rate-limit";
 import { bindAssetReferences } from "@/lib/assets/references";
+import { reconcileNotificationResolutions } from "@/lib/application/notifications";
 
 export interface ExecuteMobileTaskInput {
   taskId: string;
@@ -91,7 +92,14 @@ async function ensureMobileTask(workItemId: string) {
 
 function requestHash(input: ExecuteMobileTaskInput) {
   return createHash("sha256")
-    .update(JSON.stringify({ taskId: input.taskId, action: input.action, fields: input.fields, confirmation: input.confirmation }))
+    .update(
+      JSON.stringify({
+        taskId: input.taskId,
+        action: input.action,
+        fields: input.fields,
+        confirmation: input.confirmation,
+      })
+    )
     .digest("hex");
 }
 
@@ -118,7 +126,10 @@ async function executeDomainAction(input: ExecuteMobileTaskInput) {
   }
 
   const fields = input.fields;
-  if (policy.requiredEvidence?.includes("PHOTO") && !((fields.imageUrls as string[] | undefined)?.length)) {
+  if (
+    policy.requiredEvidence?.includes("PHOTO") &&
+    !(fields.imageUrls as string[] | undefined)?.length
+  ) {
     throw new Error("该节点必须上传至少一张凭证照片");
   }
   const assetIds = (fields.assetIds as string[] | undefined)?.filter(Boolean) ?? [];
@@ -136,24 +147,44 @@ async function executeDomainAction(input: ExecuteMobileTaskInput) {
       current.summary.entityId
     );
   }
-  if ((input.action === "confirmArrival" || input.action === "receivePurchase") && fields.isComplete === false && !((fields.imageUrls as string[] | undefined)?.length)) {
+  if (
+    (input.action === "confirmArrival" || input.action === "receivePurchase") &&
+    fields.isComplete === false &&
+    !(fields.imageUrls as string[] | undefined)?.length
+  ) {
     throw new Error("部分或异常到货必须上传现场照片");
   }
-  if (input.action === "shipOrder" && !((fields.imageUrls as string[] | undefined)?.length)) {
+  if (input.action === "shipOrder" && !(fields.imageUrls as string[] | undefined)?.length) {
     throw new Error("确认发货必须上传至少一张凭证照片");
   }
   if (input.action === "fillLogistics") {
-    await submitFillLogistics(current.summary.entityType, current.summary.entityId, fields as FillLogisticsPayload);
+    await submitFillLogistics(
+      current.summary.entityType,
+      current.summary.entityId,
+      fields as FillLogisticsPayload
+    );
   } else if (input.action === "confirmArrival" || input.action === "receivePurchase") {
-    await submitConfirmArrival(current.summary.entityType, current.summary.entityId, fields as ConfirmArrivalPayload);
+    await submitConfirmArrival(
+      current.summary.entityType,
+      current.summary.entityId,
+      fields as ConfirmArrivalPayload
+    );
   } else if (input.action === "shipOrder") {
     await submitShipOrder(current.summary.entityId, fields as ShipOrderPayload);
   } else if (input.action === "inbound") {
-    await submitInbound(current.summary.entityType, current.summary.entityId, fields as InboundPayload);
+    await submitInbound(
+      current.summary.entityType,
+      current.summary.entityId,
+      fields as InboundPayload
+    );
   } else if (input.action === "disposition") {
     const mode = String(fields.mode || "inbound");
     if (mode === "inbound") {
-      await submitInbound(current.summary.entityType, current.summary.entityId, fields as InboundPayload);
+      await submitInbound(
+        current.summary.entityType,
+        current.summary.entityId,
+        fields as InboundPayload
+      );
     } else if (mode === "consolidate") {
       await submitConsolidatePurchase(current.summary.entityType, current.summary.entityId, {
         batchMode: "existing",
@@ -182,7 +213,9 @@ async function executeDomainAction(input: ExecuteMobileTaskInput) {
       shippingFeeReversal: String(fields.shippingFeeReversal || ""),
     });
   } else if (input.action === "approveReturnInspection") {
-    await submitApproveReturnInspection(current.summary.entityId, { note: String(fields.note || "") });
+    await submitApproveReturnInspection(current.summary.entityId, {
+      note: String(fields.note || ""),
+    });
   } else {
     throw new Error("当前操作类型不受支持");
   }
@@ -192,7 +225,12 @@ async function executeDomainAction(input: ExecuteMobileTaskInput) {
 
 export async function executeMobileTaskAction(input: ExecuteMobileTaskInput) {
   const activeDevice = await requireActiveCompanionDevice();
-  await assertMobileRateLimit({ organizationId: activeDevice.context.organizationId, subjectId: activeDevice.device.id, key: "task-action", limit: 90 });
+  await assertMobileRateLimit({
+    organizationId: activeDevice.context.organizationId,
+    subjectId: activeDevice.device.id,
+    key: "task-action",
+    limit: 90,
+  });
   const context = await requireUserContext();
   if (!input.idempotencyKey.trim()) throw new Error("缺少操作幂等键");
   const hash = requestHash(input);
@@ -263,7 +301,10 @@ export async function executeMobileTaskAction(input: ExecuteMobileTaskInput) {
     revalidatePath(`/m/tasks/${encodeURIComponent(input.taskId)}`);
     return response;
   } catch (error) {
-    const latest = await prisma.mobileActionRequest.findUnique({ where: { id: request.id }, select: { status: true } });
+    const latest = await prisma.mobileActionRequest.findUnique({
+      where: { id: request.id },
+      select: { status: true },
+    });
     if (latest?.status !== "DOMAIN_COMPLETED") {
       await prisma.mobileActionRequest.update({
         where: { id: request.id },
@@ -320,13 +361,37 @@ export async function startMobileTaskAction(taskId: string) {
     await requireActiveCompanionDevice();
     const context = await requireUserContext();
     const persisted = await ensureMobileTask(taskId);
-    const task = await prisma.task.findFirst({ where: { id: persisted.taskId, organizationId: context.organizationId } });
-    if (!task) throw new Error("任务不存在或无权访问");
-    if (task.assignedToId && task.assignedToId !== context.userId) throw new Error("该任务已指派给其他成员");
-    await prisma.task.update({
-      where: { id: task.id },
-      data: { assignedToId: context.userId, delegatedToId: context.userId, assignedAt: task.assignedAt ?? new Date(), startedAt: new Date(), status: "IN_PROGRESS" },
+    const task = await prisma.task.findFirst({
+      where: { id: persisted.taskId, organizationId: context.organizationId },
     });
+    if (!task) throw new Error("任务不存在或无权访问");
+    if (task.assignedToId && task.assignedToId !== context.userId)
+      throw new Error("该任务已指派给其他成员");
+    const started = await prisma.task.updateMany({
+      where: {
+        id: task.id,
+        organizationId: context.organizationId,
+        status: { in: ["OPEN", "ASSIGNED", "OVERDUE"] },
+        OR: [{ assignedToId: null }, { assignedToId: context.userId }],
+      },
+      data: {
+        assignedToId: context.userId,
+        delegatedToId: context.userId,
+        assignedAt: task.assignedAt ?? new Date(),
+        startedAt: new Date(),
+        status: "IN_PROGRESS",
+      },
+    });
+    if (!started.count) {
+      const current = await prisma.task.findFirst({
+        where: { id: task.id, organizationId: context.organizationId },
+        select: { status: true, assignedToId: true },
+      });
+      if (current?.status !== "IN_PROGRESS" || current.assignedToId !== context.userId) {
+        throw new Error("任务状态已变化，请刷新后重试");
+      }
+    }
+    await reconcileNotificationResolutions(context.userId);
     revalidatePath("/m");
     revalidatePath("/m/tasks");
     revalidatePath(`/m/tasks/${encodeURIComponent(taskId)}`);

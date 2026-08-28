@@ -284,7 +284,7 @@ test.describe.serial("v0.9.0 RC multi-account and authorization evidence", () =>
     await page.goto(`/inventory/items/${fixture.removedItemId}`);
     await shot(page, "02-05-cross-organization-direct-link-blocked-rc1.png");
     await expect(page.getByRole("heading", { name: "RC 范围隔离商品" })).toHaveCount(0);
-    await expect(page.locator("body")).toContainText("This page could not be found");
+    await expect(page.getByRole("heading", { name: "没有找到这个页面" })).toBeVisible();
 
     await page.goto("/workbench");
     await selectContextOption(page, "当前经营主体", fixture.defaultOrganizationId);
@@ -412,7 +412,7 @@ test.describe.serial("v0.9.0 RC multi-account and authorization evidence", () =>
       await targetPage.goto(`/inventory/items/${fixture.removedItemId}`);
       await shot(targetPage, "04-05-removed-store-direct-item-blocked-rc1.png");
       await expect(targetPage.getByRole("heading", { name: "RC 范围隔离商品" })).toHaveCount(0);
-      await expect(targetPage.locator("body")).toContainText("This page could not be found");
+      await expect(targetPage.getByRole("heading", { name: "没有找到这个页面" })).toBeVisible();
 
       await page.goto("/settings/team");
       await page
@@ -431,7 +431,7 @@ test.describe.serial("v0.9.0 RC multi-account and authorization evidence", () =>
       await targetPage.goto(`/inventory/items/${fixture.removedItemId}`);
       await shot(targetPage, "04-08-deactivated-organization-object-blocked-rc1.png");
       await expect(targetPage.getByRole("heading", { name: "RC 范围隔离商品" })).toHaveCount(0);
-      await expect(targetPage.locator("body")).toContainText("This page could not be found");
+      await expect(targetPage.getByRole("heading", { name: "没有找到这个页面" })).toBeVisible();
     } finally {
       await targetContext.close();
     }

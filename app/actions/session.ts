@@ -170,7 +170,9 @@ export async function switchCurrentUserAction(formData: FormData) {
           requestedNext?.startsWith("/invite/warehouse/")
         ? requestedNext
         : user.hasWarehouseCollaboration
-          ? "/collaboration/tasks"
+          ? requestedNext?.startsWith("/collaboration/tasks")
+            ? requestedNext
+            : "/collaboration/tasks"
           : "/onboarding";
     return actionSuccess({ email: user.email, destination });
   } catch (error) {

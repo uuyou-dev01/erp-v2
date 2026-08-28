@@ -79,6 +79,7 @@ export function Header({
   }, [accountMenuOpen]);
 
   const initials = (account.name || account.email).trim().slice(0, 1).toUpperCase();
+  const activeStoreName = stores.find((store) => store.id === activeStoreId)?.name ?? "当前店铺";
   const companySettingsHref = settingsAreaRoutes["/settings/company"].find((href) =>
     isNavigationHrefAllowed(role, href)
   );
@@ -112,7 +113,8 @@ export function Header({
 
       <div className="ml-auto flex items-center gap-1">
         {organizations.length > 1 ? (
-          <div className="hidden items-center gap-2 sm:flex">
+          <label className="hidden items-center gap-1.5 sm:flex">
+            <span className="text-[11px] font-medium text-muted-foreground">企业</span>
             <select
               aria-label="当前经营主体"
               className="h-8 max-w-48 rounded-md border bg-background px-2 text-xs font-medium"
@@ -133,10 +135,11 @@ export function Header({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
         ) : null}
         {stores.length > 1 ? (
-          <div className="hidden items-center gap-2 sm:flex">
+          <label className="hidden items-center gap-1.5 sm:flex">
+            <span className="text-[11px] font-medium text-muted-foreground">店铺</span>
             <select
               aria-label="当前店铺"
               className="h-8 max-w-48 rounded-md border bg-background px-2 text-xs"
@@ -158,7 +161,7 @@ export function Header({
               ))}
             </select>
             {storeError ? <span className="text-xs text-destructive">{storeError}</span> : null}
-          </div>
+          </label>
         ) : null}
         <Link
           href="/notifications"
@@ -203,8 +206,68 @@ export function Header({
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">{account.email}</p>
                 <p className="mt-2 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
                   <Building2 className="h-3.5 w-3.5" />
-                  {account.organizationName}
+                  {account.organizationName} · {activeStoreName}
                 </p>
+              </div>
+              <div role="none" className="space-y-3 border-b px-3 py-3 sm:hidden">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  当前工作空间
+                </p>
+                {organizations.length > 1 ? (
+                  <label className="block space-y-1.5 text-xs font-medium">
+                    <span>经营主体</span>
+                    <select
+                      aria-label="移动端当前经营主体"
+                      className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                      value={activeOrganizationId}
+                      onChange={async (event) => {
+                        setStoreError(null);
+                        const result = await switchActiveOrganizationAction(event.target.value);
+                        if (!result.success) {
+                          setStoreError(result.error);
+                          return;
+                        }
+                        router.refresh();
+                      }}
+                    >
+                      {organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {organization.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {stores.length > 1 ? (
+                  <label className="block space-y-1.5 text-xs font-medium">
+                    <span>店铺</span>
+                    <select
+                      aria-label="移动端当前店铺"
+                      className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                      value={activeStoreId}
+                      onChange={async (event) => {
+                        setStoreError(null);
+                        const result = await switchActiveStoreAction(event.target.value);
+                        if (!result.success) {
+                          setStoreError(result.error);
+                          return;
+                        }
+                        router.refresh();
+                      }}
+                    >
+                      {stores.map((store) => (
+                        <option key={store.id} value={store.id}>
+                          {store.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {storeError ? (
+                  <p role="alert" className="text-xs text-destructive">
+                    {storeError}
+                  </p>
+                ) : null}
               </div>
               <div className="p-1.5">
                 <Link

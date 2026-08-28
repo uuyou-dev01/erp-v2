@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Bell, Check, CheckCircle2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,8 +25,25 @@ interface NotificationRow {
 const TYPE_LABELS: Record<string, string> = {
   TASK_ASSIGNED: "任务指派",
   TASK_DONE: "任务完成",
+  WAREHOUSE_TASK_AVAILABLE: "仓库任务",
   LOCATION_ACCESS_ADDED: "仓库授权",
   ORGANIZATION_CONNECTION_REQUEST: "企业连接",
+  ORGANIZATION_CONNECTION_ACCEPTED: "企业连接",
+  ORGANIZATION_CONNECTION_ENDED: "企业连接",
+  SERVICE_AGREEMENT_PROPOSED: "服务协议",
+  SERVICE_AGREEMENT_REVISION_PROPOSED: "服务协议修订",
+  SERVICE_AGREEMENT_ACCEPTED: "服务协议",
+  SERVICE_AGREEMENT_PAUSED: "服务协议",
+  SERVICE_AGREEMENT_RESUMED: "服务协议",
+  SERVICE_AGREEMENT_ENDED: "服务协议",
+  SUPPLY_OFFER_STATUS_CHANGED: "货盘状态",
+  FULFILLMENT_REQUESTED: "履约请求",
+  FULFILLMENT_STATUS_CHANGED: "履约状态",
+  SETTLEMENT_STATUS_CHANGED: "结算状态",
+  MEMBERSHIP_ACCESS_CHANGED: "成员权限",
+  MEMBERSHIP_DEACTIVATED: "成员停用",
+  MEMBERSHIP_INVITATION_ACCEPTED: "成员邀请",
+  PRODUCT_RECORD_READY: "商品资料",
 };
 
 const RESOLUTION_LABELS: Record<string, string> = {
@@ -42,14 +58,7 @@ const RESOLUTION_LABELS: Record<string, string> = {
 };
 
 function notificationHref(notification: NotificationRow) {
-  if (notification.actionUrl) return notification.actionUrl;
-  if (notification.refType === "CUSTOMER_ORDER" && notification.refId) {
-    return `/sales/${notification.refId}`;
-  }
-  if (notification.refType === "LISTING" && notification.refId) {
-    return `/listing/${notification.refId}`;
-  }
-  return "/workbench";
+  return `/notifications/open/${encodeURIComponent(notification.id)}`;
 }
 
 function dateLabel(value: string) {
@@ -106,9 +115,13 @@ export function NotificationList({ notifications }: { notifications: Notificatio
               {notification.resolvedAt ? (
                 <p className="font-medium">{notification.title}</p>
               ) : (
-                <Link href={notificationHref(notification)} className="font-medium hover:underline">
+                <a
+                  href={notificationHref(notification)}
+                  className="inline-flex items-center gap-1 font-medium hover:underline"
+                >
                   {notification.title}
-                </Link>
+                  <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                </a>
               )}
               {!notification.readAt && (
                 <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
@@ -132,21 +145,21 @@ export function NotificationList({ notifications }: { notifications: Notificatio
               {TYPE_LABELS[notification.type] ?? notification.type}
             </p>
             {notification.resolvedAt && notification.actionUrl ? (
-              <Link
+              <a
                 href={notificationHref(notification)}
                 className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
               >
                 查看相关记录
                 <ExternalLink className="h-3 w-3" />
-              </Link>
+              </a>
             ) : null}
           </div>
           {!notification.readAt && (
             <Button
               type="button"
               variant="ghost"
-              size="icon"
-              className="h-8 w-8"
+              size="sm"
+              className="h-8 shrink-0 px-2 text-xs"
               disabled={pending}
               aria-label={`将“${notification.title}”标记为已读`}
               onClick={() => {
@@ -167,7 +180,8 @@ export function NotificationList({ notifications }: { notifications: Notificatio
                 });
               }}
             >
-              <Check className="h-4 w-4" />
+              <Check className="mr-1 h-3.5 w-3.5" />
+              标为已读
             </Button>
           )}
         </div>

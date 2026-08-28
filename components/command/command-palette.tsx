@@ -41,9 +41,10 @@ export function CommandPalette({ open, onOpenChange, role }: CommandPaletteProps
   }, [open, query]);
 
   const items = useMemo<CommandSearchResult[]>(
-    () => (query.trim() ? results : commandQuickActions).filter((item) =>
-      isNavigationHrefAllowed(role, item.href),
-    ),
+    () =>
+      (query.trim() ? results : commandQuickActions).filter((item) =>
+        isNavigationHrefAllowed(role, item.href)
+      ),
     [query, results, role]
   );
   if (!open) return null;
@@ -55,21 +56,37 @@ export function CommandPalette({ open, onOpenChange, role }: CommandPaletteProps
   };
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/20 p-4" onClick={() => onOpenChange(false)}>
+    <div
+      role="presentation"
+      className="fixed inset-0 z-[80] bg-black/20 p-4"
+      onClick={() => onOpenChange(false)}
+    >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="command-palette-title"
         className="mx-auto mt-20 w-full max-w-xl overflow-hidden rounded-xl border bg-background shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
+        <h2 id="command-palette-title" className="sr-only">
+          全局搜索与快捷操作
+        </h2>
         <div className="flex items-center gap-2 border-b p-3">
           <Search className="h-4 w-4 text-muted-foreground" />
           <Input
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            aria-label="搜索商品、订单或物流单号"
             placeholder="搜索商品、SKU、订单号、物流单号..."
             className="border-0 shadow-none focus-visible:ring-0"
           />
-          <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="关闭全局搜索"
+            onClick={() => onOpenChange(false)}
+          >
             <X className="h-4 w-4" />
           </Button>
         </div>

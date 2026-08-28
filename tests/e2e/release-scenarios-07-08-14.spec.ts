@@ -521,7 +521,7 @@ test.describe("release scenarios 07, 08 and 14", () => {
     await shot(page, "07-09-outsider-no-visible-offers-rc1.png");
     const response = await page.goto(`/marketplace/${directedOfferId}`);
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/could not be found|找不到/i)).toBeVisible();
+    await expect(page.getByText(/could not be found|没有找到|找不到/i)).toBeVisible();
     await shot(page, "07-10-outsider-direct-url-denied-rc1.png");
   });
 

@@ -19,6 +19,7 @@ import {
   returnShipOrderTask,
   withdrawShipOrderTask,
 } from "@/lib/application/shipping-dispatch-lifecycle";
+import { capabilitiesForLocationFulfillerRole } from "@/lib/application/collaboration-capabilities";
 
 const ACTIVE_TASK_STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "OVERDUE"];
 const VISIBLE_CREATED_TASK_STATUSES = [...ACTIVE_TASK_STATUSES, "DONE", "CANCELLED"];
@@ -38,7 +39,44 @@ function revalidateCollaborationTaskViews() {
 
 export async function getCollaborationShippingTasks() {
   const user = await requireAuthenticatedUser();
-  return getCollaborationShippingTasksForUser(user.id);
+  const tasks = await getCollaborationShippingTasksForUser(user.id);
+  if (!tasks.length) return tasks;
+  const organizationIds = Array.from(new Set(tasks.map((task) => task.organizationId)));
+  const locationIds = Array.from(new Set(tasks.map((task) => task.fulfillmentLocationId)));
+  const roster = await prisma.locationFulfiller.findMany({
+    where: {
+      organizationId: { in: organizationIds },
+      locationId: { in: locationIds },
+      status: "ACTIVE",
+      userId: { not: null },
+    },
+    select: {
+      organizationId: true,
+      locationId: true,
+      userId: true,
+      role: true,
+      user: { select: { name: true, email: true } },
+    },
+  });
+  return tasks.map((task) => ({
+    ...task,
+    transferCandidates: roster.flatMap((candidate) =>
+      candidate.organizationId === task.organizationId &&
+      candidate.locationId === task.fulfillmentLocationId &&
+      candidate.userId &&
+      (capabilitiesForLocationFulfillerRole(candidate.role) as readonly string[]).includes(
+        "warehouse.ship"
+      )
+        ? [
+            {
+              id: candidate.userId,
+              name: candidate.user?.name || candidate.user?.email || "未命名协作者",
+              email: candidate.user?.email || "",
+            },
+          ]
+        : []
+    ),
+  }));
 }
 
 export async function getMyCollaborationWorkMetrics() {
@@ -83,8 +121,7 @@ export async function getWarehouseCollaborationTaskInbox() {
       [
         ...createdRows.map((task) => task.fulfillmentLocationId),
         ...assignedTasks.map((task) => task.fulfillmentLocationId),
-      ]
-        .filter(Boolean) as string[]
+      ].filter(Boolean) as string[]
     )
   );
   const organizationIds = Array.from(

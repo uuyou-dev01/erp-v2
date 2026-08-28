@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Box, ChevronLeft, ChevronRight, ChevronDown, X, Plus, PackageCheck } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
 import {
   getSellablePalletNavItems,
@@ -101,6 +101,8 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
   const [expandedItems, setExpandedItems] = useState<string[]>(["库存管理"]);
   const [counts, setCounts] = useState<QueueCounts | null>(null);
   const [sellablePallets, setSellablePallets] = useState<SellablePalletNavItem[]>([]);
+  const mobileDialogRef = useRef<HTMLElement>(null);
+  const mobileWasOpenRef = useRef(false);
   const visibleOperationsNavigation = useMemo(
     () =>
       operationsNavigation
@@ -148,6 +150,48 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
       };
     }
   }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) {
+      if (mobileWasOpenRef.current) {
+        mobileWasOpenRef.current = false;
+        window.requestAnimationFrame(() => {
+          document.querySelector<HTMLButtonElement>('[aria-label="打开主导航"]')?.focus();
+        });
+      }
+      return;
+    }
+    mobileWasOpenRef.current = true;
+    window.requestAnimationFrame(() => {
+      mobileDialogRef.current
+        ?.querySelector<HTMLButtonElement>('[aria-label="关闭侧边栏"]')
+        ?.focus();
+    });
+    const handleDialogKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onMobileClose?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        mobileDialogRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleDialogKeyboard);
+    return () => window.removeEventListener("keydown", handleDialogKeyboard);
+  }, [mobileOpen, onMobileClose]);
 
   useEffect(() => {
     const activeParents = visibleOperationsNavigation
@@ -480,9 +524,20 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
         {sidebarContent}
       </aside>
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={onMobileClose} />
-          <aside className="relative flex h-full w-56 flex-col border-r bg-sidebar shadow-xl">
+        <div className="fixed inset-0 z-[60] md:hidden">
+          <button
+            type="button"
+            aria-label="关闭主导航"
+            className="absolute inset-0 h-full w-full bg-black/40"
+            onClick={onMobileClose}
+          />
+          <aside
+            ref={mobileDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="主导航"
+            className="relative flex h-full w-56 flex-col border-r bg-sidebar shadow-xl"
+          >
             {sidebarContent}
           </aside>
         </div>

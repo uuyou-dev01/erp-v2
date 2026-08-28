@@ -34,14 +34,17 @@ export function ResaleListingForm({
   initialData?: SerializedResaleListing;
 }) {
   const router = useRouter();
+  const [createIdempotencyKey] = useState(() => `resale-create:${globalThis.crypto.randomUUID()}`);
   const sourceOffer = supplyOffer ?? initialData?.supplyOffer;
   const offerItems = sourceOffer?.items ?? [];
-  const initialOfferItem = offerItems.find((item) => item.id === initialData?.supplyOfferItemId) ?? offerItems[0];
+  const initialOfferItem =
+    offerItems.find((item) => item.id === initialData?.supplyOfferItemId) ?? offerItems[0];
   const initialPlatform =
     platforms.find((platform) => platform.id === initialData?.platformId) ?? platforms[0];
-  const sourceAgreementRule = sourceOffer?.agreementRule && typeof sourceOffer.agreementRule === "object"
-    ? sourceOffer.agreementRule as { kind?: string; profitDeductions?: string[] }
-    : null;
+  const sourceAgreementRule =
+    sourceOffer?.agreementRule && typeof sourceOffer.agreementRule === "object"
+      ? (sourceOffer.agreementRule as { kind?: string; profitDeductions?: string[] })
+      : null;
   const waitsForActualShippingFee =
     sourceAgreementRule?.kind === "PROFIT_PERCENT" &&
     sourceAgreementRule.profitDeductions?.includes("SHIPPING_FEE");
@@ -53,16 +56,21 @@ export function ResaleListingForm({
     title: initialData?.title ?? initialOfferItem?.title ?? sourceOffer?.title ?? "",
     externalListingNo: initialData?.externalListingNo ?? "",
     targetPrice: initialData?.targetPrice ?? "",
-    currency: initialData?.currency ?? initialPlatform?.defaultCurrency ?? sourceOffer?.currency ?? "JPY",
+    currency:
+      initialData?.currency ?? initialPlatform?.defaultCurrency ?? sourceOffer?.currency ?? "JPY",
     quantityPlanned: initialData?.quantityPlanned ?? "1",
-    supplyUnitPrice: initialData?.supplyUnitPrice ?? initialOfferItem?.unitPrice ?? sourceOffer?.unitPrice ?? "",
-    supplyCurrency: initialData?.supplyCurrency ?? initialOfferItem?.currency ?? sourceOffer?.currency ?? "",
+    supplyUnitPrice:
+      initialData?.supplyUnitPrice ?? initialOfferItem?.unitPrice ?? sourceOffer?.unitPrice ?? "",
+    supplyCurrency:
+      initialData?.supplyCurrency ?? initialOfferItem?.currency ?? sourceOffer?.currency ?? "",
     commissionRate: initialData?.commissionRate ?? sourceOffer?.commissionRate ?? "",
     commissionType: initialData?.commissionType ?? sourceOffer?.commissionType ?? "MARGIN",
-    commissionFixedAmount: initialData?.commissionFixedAmount ?? sourceOffer?.commissionFixedAmount ?? "",
+    commissionFixedAmount:
+      initialData?.commissionFixedAmount ?? sourceOffer?.commissionFixedAmount ?? "",
     dropshipFee: initialData?.dropshipFee ?? sourceOffer?.dropshipFee ?? "",
     platformFeeRate: initialData?.platformFeeRate ?? initialPlatform?.defaultFeeRate ?? "",
-    fulfillmentMode: initialData?.fulfillmentMode ?? sourceOffer?.fulfillmentMode ?? "SUPPLIER_SHIPS",
+    fulfillmentMode:
+      initialData?.fulfillmentMode ?? sourceOffer?.fulfillmentMode ?? "SUPPLIER_SHIPS",
     notes: initialData?.notes ?? "",
   });
 
@@ -94,6 +102,7 @@ export function ResaleListingForm({
         platformFeeRate: formData.platformFeeRate || undefined,
         fulfillmentMode: formData.fulfillmentMode || undefined,
         notes: formData.notes || undefined,
+        idempotencyKey: initialData ? undefined : createIdempotencyKey,
       };
 
       const result = initialData
@@ -123,9 +132,17 @@ export function ResaleListingForm({
         <div className="rounded-md border border-border/60 bg-muted/30 p-4 text-sm">
           <div className="font-medium">来源货盘：{sourceOffer.title}</div>
           <div className="mt-1 text-muted-foreground">
-            经营主体共享库存 · 供货价 {sourceOffer.currency ?? ""} {sourceOffer.unitPrice ?? "-"} · 货盘总余量 {Math.max(Number(sourceOffer.availableQty) - Number("reservedQty" in sourceOffer ? sourceOffer.reservedQty ?? 0 : 0), 0)}
+            经营主体共享库存 · 供货价 {sourceOffer.currency ?? ""} {sourceOffer.unitPrice ?? "-"} ·
+            货盘总余量{" "}
+            {Math.max(
+              Number(sourceOffer.availableQty) -
+                Number("reservedQty" in sourceOffer ? (sourceOffer.reservedQty ?? 0) : 0),
+              0
+            )}
           </div>
-          <div className="mt-2 rounded bg-blue-50 px-3 py-2 text-xs text-blue-800">创建上架不会占用库存；实际成交时才原子锁货，因此同一商品可以在多个账号同时曝光。</div>
+          <div className="mt-2 rounded bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            创建上架不会占用库存；实际成交时才原子锁货，因此同一商品可以在多个账号同时曝光。
+          </div>
         </div>
       )}
 
@@ -149,11 +166,14 @@ export function ResaleListingForm({
             <option value="">请选择货盘商品</option>
             {offerItems.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.title} · 明细总余量 {Math.max(Number(item.quantityAvailable) - Number(item.quantityReserved), 0)}
+                {item.title} · 明细总余量{" "}
+                {Math.max(Number(item.quantityAvailable) - Number(item.quantityReserved), 0)}
               </option>
             ))}
           </Select>
-          <p className="text-xs text-muted-foreground">代卖记录会绑定到这一条货盘明细，成交时只锁定对应标准商品或指定单件。</p>
+          <p className="text-xs text-muted-foreground">
+            代卖记录会绑定到这一条货盘明细，成交时只锁定对应标准商品或指定单件。
+          </p>
         </div>
       ) : null}
 
@@ -194,19 +214,44 @@ export function ResaleListingForm({
       <div className="grid gap-4 md:grid-cols-3">
         <div className="space-y-2">
           <Label htmlFor="targetPrice">代卖售价</Label>
-          <Input id="targetPrice" type="number" min="0" step="0.01" value={formData.targetPrice} onChange={(event) => updateField({ targetPrice: event.target.value })} required />
+          <Input
+            id="targetPrice"
+            type="number"
+            min="0"
+            step="0.01"
+            value={formData.targetPrice}
+            onChange={(event) => updateField({ targetPrice: event.target.value })}
+            required
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="currency">销售币种</Label>
-          <Input id="currency" value={formData.currency} onChange={(event) => updateField({ currency: event.target.value.toUpperCase() })} />
+          <Input
+            id="currency"
+            value={formData.currency}
+            onChange={(event) => updateField({ currency: event.target.value.toUpperCase() })}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="quantityPlanned">计划数量</Label>
-          <Input id="quantityPlanned" type="number" min="0" step="0.01" value={formData.quantityPlanned} onChange={(event) => updateField({ quantityPlanned: event.target.value })} required />
+          <Input
+            id="quantityPlanned"
+            type="number"
+            min="0"
+            step="0.01"
+            value={formData.quantityPlanned}
+            onChange={(event) => updateField({ quantityPlanned: event.target.value })}
+            required
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="externalListingNo">外部编号</Label>
-          <Input id="externalListingNo" value={formData.externalListingNo} onChange={(event) => updateField({ externalListingNo: event.target.value })} placeholder="平台 Listing ID" />
+          <Input
+            id="externalListingNo"
+            value={formData.externalListingNo}
+            onChange={(event) => updateField({ externalListingNo: event.target.value })}
+            placeholder="平台 Listing ID"
+          />
         </div>
       </div>
 
@@ -221,15 +266,27 @@ export function ResaleListingForm({
         </div>
         <div className="space-y-2">
           <Label htmlFor="platformFeeRate">平台费率</Label>
-          <Input id="platformFeeRate" type="number" min="0" max="1" step="0.0001" value={formData.platformFeeRate} onChange={(event) => updateField({ platformFeeRate: event.target.value })} />
+          <Input
+            id="platformFeeRate"
+            type="number"
+            min="0"
+            max="1"
+            step="0.0001"
+            value={formData.platformFeeRate}
+            onChange={(event) => updateField({ platformFeeRate: event.target.value })}
+          />
         </div>
       </div>
 
       <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/60 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="font-medium text-blue-950">合作约定（版本 {sourceOffer?.agreementVersion ?? "-"}）</p>
-            <p className="mt-1 text-xs text-blue-800">创建代卖上架表示接受这一版本；系统模板只用于试算。</p>
+            <p className="font-medium text-blue-950">
+              合作约定（版本 {sourceOffer?.agreementVersion ?? "-"}）
+            </p>
+            <p className="mt-1 text-xs text-blue-800">
+              创建代卖上架表示接受这一版本；系统模板只用于试算。
+            </p>
           </div>
           <span className="rounded-full bg-white px-3 py-1 text-xs text-blue-800">
             {formData.commissionType === "MANUAL" ? "成交后双方确认" : "可由系统试算"}
@@ -240,12 +297,14 @@ export function ResaleListingForm({
         </p>
         {formData.dropshipFee ? (
           <p className="text-xs text-blue-800">
-            约定代发服务费：{sourceOffer?.dropshipFeeCurrency || sourceOffer?.currency || ""} {formData.dropshipFee} / 件
+            约定代发服务费：{sourceOffer?.dropshipFeeCurrency || sourceOffer?.currency || ""}{" "}
+            {formData.dropshipFee} / 件
           </p>
         ) : null}
         {waitsForActualShippingFee ? (
           <p className="rounded bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            约定包含“扣本单实际运费”。运费尚未发生，本页不会把 0 当成实际运费计算精确分成；发货后按实际金额结算。
+            约定包含“扣本单实际运费”。运费尚未发生，本页不会把 0
+            当成实际运费计算精确分成；发货后按实际金额结算。
           </p>
         ) : null}
       </div>
@@ -262,7 +321,12 @@ export function ResaleListingForm({
         </div>
         <div className="space-y-2">
           <Label htmlFor="notes">备注</Label>
-          <Textarea id="notes" rows={3} value={formData.notes} onChange={(event) => updateField({ notes: event.target.value })} />
+          <Textarea
+            id="notes"
+            rows={3}
+            value={formData.notes}
+            onChange={(event) => updateField({ notes: event.target.value })}
+          />
         </div>
       </div>
 
