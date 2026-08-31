@@ -91,6 +91,8 @@ services:
     image: erp-v2-app:v${APP_VERSION:?APP_VERSION is required}-${GIT_SHA:?GIT_SHA is required}
     restart: unless-stopped
     command: ["node", "scripts/production-scheduler.mjs"]
+    healthcheck:
+      disable: true
     env_file:
       - .env.production
     environment:
