@@ -10,6 +10,21 @@ All notable changes to this project are documented here. The format follows
 
 - Future release changes are recorded here before they move into a versioned section.
 
+## [0.9.0-rc.2] - 2026-09-01
+
+### Added
+
+- Added a guided opening-stock count after warehouse creation.
+- Added warehouse-scoped opening inventory entry with explicit batch labels, quantity, unit cost,
+  currency and per-batch value traceability.
+
+### Changed
+
+- Warehouse details now keep both opening-stock and existing-stock count actions available whether
+  the warehouse is empty or already contains inventory.
+- Newly created warehouses now open their detail page with the initial inventory setup as the next
+  operational step.
+
 ## [0.9.0-rc.1] - 2026-08-28
 
 ### Added

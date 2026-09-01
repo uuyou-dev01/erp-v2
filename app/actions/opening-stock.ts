@@ -6,10 +6,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
-import {
-  createInboundInventoryLot,
-  createInboundItemUnit,
-} from "@/lib/application/inventory";
+import { createInboundInventoryLot, createInboundItemUnit } from "@/lib/application/inventory";
 
 const SUPPORTED_CURRENCIES = new Set(["CNY", "JPY", "USD", "EUR"]);
 const MAX_LINES = 200;
@@ -24,6 +21,7 @@ export interface CreateOpeningStockLineInput {
   quantity: string;
   unitCost: string;
   currency: string;
+  batchLabel?: string;
   conditionGrade?: string;
   note?: string;
 }
@@ -131,16 +129,13 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
     const row = index + 1;
     const quantity = parsePositiveDecimal(line.quantity, `第 ${row} 行数量`);
     const unitCost = parseNonNegativeDecimal(line.unitCost, `第 ${row} 行单位成本`);
-    const trackingMode =
-      line.trackingMode === "ITEM_UNIT" ? "ITEM_UNIT" : "LOT";
+    const trackingMode = line.trackingMode === "ITEM_UNIT" ? "ITEM_UNIT" : "LOT";
     if (trackingMode === "ITEM_UNIT") {
       if (!quantity.isInteger()) {
         throw new Error(`第 ${row} 行按单件管理时，数量必须是整数`);
       }
       if (quantity.gt(MAX_ITEM_UNITS_PER_LINE)) {
-        throw new Error(
-          `第 ${row} 行单件数量不能超过 ${MAX_ITEM_UNITS_PER_LINE}`,
-        );
+        throw new Error(`第 ${row} 行单件数量不能超过 ${MAX_ITEM_UNITS_PER_LINE}`);
       }
     }
     const currency = line.currency.trim().toUpperCase();
@@ -150,21 +145,24 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
     if (!line.skuId || !line.locationId) {
       throw new Error(`第 ${row} 行请选择商品和仓库`);
     }
+    const batchLabel = line.batchLabel?.trim() || null;
+    if (batchLabel && batchLabel.length > 100) {
+      throw new Error(`第 ${row} 行批次标识不能超过 100 个字符`);
+    }
     return {
       ...line,
       trackingMode,
       currency,
       quantity,
       unitCost,
+      batchLabel,
       conditionGrade: line.conditionGrade?.trim() || null,
       note: line.note?.trim() || null,
     };
   });
 
   const skuIds = [...new Set(normalizedLines.map((line) => line.skuId))];
-  const locationIds = [
-    ...new Set(normalizedLines.map((line) => line.locationId)),
-  ];
+  const locationIds = [...new Set(normalizedLines.map((line) => line.locationId))];
   const [skus, locations] = await Promise.all([
     prisma.sKU.findMany({
       where: {
@@ -205,6 +203,7 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
     });
 
     for (const [index, line] of normalizedLines.entries()) {
+      const batchLabel = line.batchLabel ?? `${documentNo}-${String(index + 1).padStart(2, "0")}`;
       const createdLine = await tx.openingStockLine.create({
         data: {
           openingStockId: created.id,
@@ -214,6 +213,7 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
           quantity: line.quantity.toFixed(4),
           unitCost: line.unitCost.toFixed(4),
           currency: line.currency,
+          batchLabel,
           conditionGrade: line.conditionGrade,
           note: line.note,
         },
@@ -222,6 +222,7 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
         openingStockId: created.id,
         documentNo,
         lineNumber: index + 1,
+        batchLabel,
       };
 
       if (line.trackingMode === "LOT") {
@@ -235,7 +236,7 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
           sourceType: "OPENING_STOCK",
           sourceId: createdLine.id,
           receivedAt: openingAt,
-          batchLabel: documentNo,
+          batchLabel,
           refType: "OPENING_STOCK_LINE",
           refId: createdLine.id,
           ledgerReason: "OPENING_BALANCE",
@@ -256,7 +257,7 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
             costCurrency: line.currency,
             conditionGrade: line.conditionGrade ?? undefined,
             notes: line.note ?? undefined,
-            batchLabel: documentNo,
+            batchLabel,
             sourceType: "OPENING_STOCK",
             sourceId: createdLine.id,
             receivedAt: openingAt,
@@ -298,6 +299,9 @@ export async function createOpeningStock(data: CreateOpeningStockInput) {
   revalidatePath("/inventory/skus");
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/opening-stock");
+  for (const locationId of locationIds) {
+    revalidatePath(`/inventory/locations/${locationId}`);
+  }
   for (const skuId of skuIds) {
     revalidatePath(`/inventory/skus/${skuId}`);
   }

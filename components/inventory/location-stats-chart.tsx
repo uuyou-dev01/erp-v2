@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
+import { ClipboardCheck, PackagePlus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -20,9 +23,15 @@ interface LocationStatsChartProps {
     allocatedItemCount: number;
     consumedItemCount: number;
   }>;
+  openingStockHref?: string;
+  stocktakeHref?: string;
 }
 
-export function LocationStatsChart({ data }: LocationStatsChartProps) {
+export function LocationStatsChart({
+  data,
+  openingStockHref,
+  stocktakeHref,
+}: LocationStatsChartProps) {
   if (data.length === 0) {
     return (
       <Card>
@@ -30,7 +39,35 @@ export function LocationStatsChart({ data }: LocationStatsChartProps) {
           <CardTitle>可售 SKU 明细</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground py-8 text-center">该仓库暂无库存数据</p>
+          <div className="flex flex-col items-center py-8 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+              <PackagePlus className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="mt-3 text-sm font-medium">该仓库还没有库存数据</p>
+            <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+              若仓库里已有实物，请按批次录入数量、单位成本和币种，系统会生成可追溯的库存流水。
+            </p>
+            {openingStockHref || stocktakeHref ? (
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {openingStockHref ? (
+                  <Button asChild size="sm">
+                    <Link href={openingStockHref}>
+                      <PackagePlus className="mr-1.5 h-4 w-4" />
+                      录入期初库存
+                    </Link>
+                  </Button>
+                ) : null}
+                {stocktakeHref ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={stocktakeHref}>
+                      <ClipboardCheck className="mr-1.5 h-4 w-4" />
+                      前往库存盘点
+                    </Link>
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
     );

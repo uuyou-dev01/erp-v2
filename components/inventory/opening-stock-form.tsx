@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { safeInternalReturnPath } from "@/lib/application/return-navigation";
 
 interface OpeningStockSkuOption {
   id: string;
@@ -37,7 +38,9 @@ interface OpeningStockFormProps {
   locations: OpeningStockLocationOption[];
   presetSkuIds?: string[];
   createdLocationId?: string;
+  fixedLocationId?: string;
   returnTo?: string;
+  locationCreateReturnTo?: string;
 }
 
 interface EditableLine {
@@ -48,6 +51,7 @@ interface EditableLine {
   quantity: string;
   unitCost: string;
   currency: string;
+  batchLabel: string;
   conditionGrade: string;
   note: string;
 }
@@ -61,6 +65,7 @@ function makeLine(currency: string, locationId: string, skuId = "", key: string)
     quantity: "",
     unitCost: "",
     currency,
+    batchLabel: "",
     conditionGrade: "",
     note: "",
   };
@@ -74,11 +79,17 @@ export function OpeningStockForm({
   locations,
   presetSkuIds = [],
   createdLocationId,
-  returnTo = "/inventory/opening-stock/new",
+  fixedLocationId,
+  returnTo = "/inventory/opening-stock",
+  locationCreateReturnTo,
 }: OpeningStockFormProps) {
   const router = useRouter();
+  const safeReturnTo = safeInternalReturnPath(returnTo);
   const defaultLocationId =
-    locations.find((location) => location.id === createdLocationId)?.id ?? locations[0]?.id ?? "";
+    locations.find((location) => location.id === fixedLocationId)?.id ??
+    locations.find((location) => location.id === createdLocationId)?.id ??
+    locations[0]?.id ??
+    "";
   const validPresetIds = [
     ...new Set(presetSkuIds.filter((id) => skus.some((sku) => sku.id === id))),
   ];
@@ -136,7 +147,13 @@ export function OpeningStockForm({
         setError(result.error);
         return;
       }
-      router.push(`/inventory/opening-stock/${result.id}`);
+      const detailParams = new URLSearchParams();
+      if (safeReturnTo) detailParams.set("returnTo", safeReturnTo);
+      router.push(
+        `/inventory/opening-stock/${result.id}${
+          detailParams.size > 0 ? `?${detailParams.toString()}` : ""
+        }`
+      );
       router.refresh();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "确认失败，请重试");
@@ -155,7 +172,7 @@ export function OpeningStockForm({
         <Link
           href={`/inventory/locations?${new URLSearchParams({
             create: "1",
-            returnTo,
+            returnTo: locationCreateReturnTo ?? returnTo,
           }).toString()}`}
         >
           <Button className="mt-4" size="sm">
@@ -204,7 +221,7 @@ export function OpeningStockForm({
           <div>
             <h2 className="text-sm font-semibold">库存明细</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              同一商品在不同仓库或不同成本下可拆成多行。
+              每一行形成一个独立批次；同一商品存在不同进价时，请按批次拆行录入。
             </p>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={addLine}>
@@ -214,7 +231,7 @@ export function OpeningStockForm({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] text-sm">
+          <table className="w-full min-w-[1260px] text-sm">
             <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="w-[250px] px-3 py-2 font-medium">商品 *</th>
@@ -223,6 +240,7 @@ export function OpeningStockForm({
                 <th className="w-[105px] px-3 py-2 font-medium">数量 *</th>
                 <th className="w-[125px] px-3 py-2 font-medium">单位成本 *</th>
                 <th className="w-[95px] px-3 py-2 font-medium">币种</th>
+                <th className="w-[150px] px-3 py-2 font-medium">批次标识</th>
                 <th className="w-[130px] px-3 py-2 font-medium">默认品相</th>
                 <th className="min-w-[160px] px-3 py-2 font-medium">行备注</th>
                 <th className="w-12 px-2 py-2">
@@ -261,6 +279,7 @@ export function OpeningStockForm({
                       className="h-9"
                       value={line.locationId}
                       onChange={(event) => updateLine(line.key, { locationId: event.target.value })}
+                      disabled={Boolean(fixedLocationId)}
                       required
                     >
                       {locations.map((location) => (
@@ -322,6 +341,15 @@ export function OpeningStockForm({
                   </td>
                   <td className="px-3 py-2">
                     <Input
+                      aria-label={`第 ${index + 1} 行批次标识`}
+                      maxLength={100}
+                      value={line.batchLabel}
+                      onChange={(event) => updateLine(line.key, { batchLabel: event.target.value })}
+                      placeholder="留空则自动生成"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <Input
                       aria-label={`第 ${index + 1} 行默认品相`}
                       value={line.conditionGrade}
                       onChange={(event) =>
@@ -366,7 +394,7 @@ export function OpeningStockForm({
       <section className="flex flex-col gap-3 rounded-lg border bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="text-sm font-medium">
-            {lines.length} 行
+            {lines.length} 个批次
             {totals.map(([currency, total]) => (
               <span key={currency} className="ml-3 tabular-nums">
                 {currency} {total.value.toFixed(2)} / 数量 {total.quantity}
@@ -384,7 +412,12 @@ export function OpeningStockForm({
           ) : null}
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button type="button" variant="outline" onClick={() => router.back()} disabled={loading}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push(safeReturnTo ?? "/inventory/opening-stock")}
+            disabled={loading}
+          >
             取消
           </Button>
           <Button type="submit" disabled={loading || skus.length === 0}>

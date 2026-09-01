@@ -4,7 +4,15 @@ import { LocationEditDialog } from "@/components/inventory/location-edit-dialog"
 import { LocationStatsChart } from "@/components/inventory/location-stats-chart";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Box, Layers, CheckCircle, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  Box,
+  Layers,
+  CheckCircle,
+  Send,
+  ClipboardCheck,
+  PackagePlus,
+} from "lucide-react";
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
@@ -25,12 +33,12 @@ export default async function LocationDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; created?: string }>;
 }) {
   const context = await requireUserContext();
   const { activeStoreId: storeId } = context;
   const { id } = await params;
-  const { returnTo } = await searchParams;
+  const { returnTo, created } = await searchParams;
   const returnHref = safeInternalReturnPath(returnTo) ?? "/inventory/locations";
   const [location, stats] = await Promise.all([getLocationById(id), getLocationStats(id)]);
 
@@ -41,6 +49,16 @@ export default async function LocationDetailPage({
     (location.operatorOrganizationId === context.organizationId ||
       (!location.operatorOrganizationId && context.storeIds.includes(location.storeId))) &&
     hasRoleAtLeast(context.role, ROLES.ADMIN);
+  const canManageInventory =
+    location.storeId === context.activeStoreId && hasRoleAtLeast(context.role, ROLES.MANAGER);
+  const locationReturnTo = `/inventory/locations/${location.id}`;
+  const openingStockHref = `/inventory/opening-stock/new?${new URLSearchParams({
+    locationId: location.id,
+    returnTo: locationReturnTo,
+  }).toString()}`;
+  const stocktakeHref = `/inventory/stocktake?${new URLSearchParams({
+    locationId: location.id,
+  }).toString()}`;
   const [roster, existingCandidates] = canManageRoster
     ? await Promise.all([
         getLocationFulfillerRoster(location.id),
@@ -91,22 +109,57 @@ export default async function LocationDetailPage({
               ))}
           </div>
         </div>
-        {canManageRoster ? (
-          <LocationEditDialog
-            storeId={storeId}
-            location={{
-              id: location.id,
-              code: location.code,
-              name: location.name,
-              type: location.type as "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT",
-              region: location.region,
-              isSellableDefault: location.isSellableDefault,
-              capabilities: location.capabilities,
-              shippingLanesFrom: location.shippingLanesFrom,
-            }}
-          />
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {canManageInventory ? (
+            <>
+              <Button asChild size="sm">
+                <Link href={openingStockHref}>
+                  <PackagePlus className="mr-1.5 h-4 w-4" />
+                  期初盘点
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <Link href={stocktakeHref}>
+                  <ClipboardCheck className="mr-1.5 h-4 w-4" />
+                  盘点现有库存
+                </Link>
+              </Button>
+            </>
+          ) : null}
+          {canManageRoster ? (
+            <LocationEditDialog
+              storeId={storeId}
+              location={{
+                id: location.id,
+                code: location.code,
+                name: location.name,
+                type: location.type as "WAREHOUSE" | "FORWARDER" | "PERSON" | "TRANSIT",
+                region: location.region,
+                isSellableDefault: location.isSellableDefault,
+                capabilities: location.capabilities,
+                shippingLanesFrom: location.shippingLanesFrom,
+              }}
+            />
+          ) : null}
+        </div>
       </div>
+
+      {created === "1" && canManageInventory ? (
+        <section className="flex flex-col gap-4 border-l-4 border-primary bg-primary/5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold">仓库已创建，接下来录入期初实存</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              按实际批次登记商品、数量、单位成本和币种；即使暂时没有库存，也可以稍后从本页开始。
+            </p>
+          </div>
+          <Button asChild size="sm" className="shrink-0">
+            <Link href={openingStockHref}>
+              <PackagePlus className="mr-1.5 h-4 w-4" />
+              开始期初盘点
+            </Link>
+          </Button>
+        </section>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
@@ -154,7 +207,11 @@ export default async function LocationDetailPage({
         </Card>
       </div>
 
-      <LocationStatsChart data={stats.skuBreakdown} />
+      <LocationStatsChart
+        data={stats.skuBreakdown}
+        openingStockHref={canManageInventory ? openingStockHref : undefined}
+        stocktakeHref={canManageInventory ? stocktakeHref : undefined}
+      />
 
       {canManageRoster ? (
         <LocationFulfillerManager

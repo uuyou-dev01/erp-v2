@@ -1434,6 +1434,7 @@ model OpeningStockLine {
   quantity             Decimal  @db.Decimal(19, 4)
   unitCost             Decimal  @db.Decimal(19, 4)
   currency             String
+  batchLabel           String?
   conditionGrade       String?
   note                 String?  @db.Text
   generatedLotId       String?

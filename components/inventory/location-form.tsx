@@ -125,6 +125,8 @@ export function LocationForm({
       const returnHref = locationReturnPathWithCreatedId(safeReturnTo, locationId);
       if (returnHref) {
         router.push(returnHref);
+      } else {
+        router.push(`/inventory/locations/${locationId}?created=1`);
       }
       router.refresh();
       return;
