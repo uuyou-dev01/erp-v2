@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Box, ChevronLeft, ChevronRight, ChevronDown, X, Plus, PackageCheck } from "lucide-react";
+import {
+  Box,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ListChecks,
+  PackageCheck,
+  Plus,
+  Settings2,
+  X,
+} from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { getWorkbenchQueueCounts } from "@/app/actions/workbench";
 import {
@@ -23,6 +33,11 @@ interface SidebarProps {
     hasWarehouseCollaboration: boolean;
     pendingTaskCount: number;
   };
+  setupStatus: {
+    completedCoreCount: number;
+    coreStepCount: number;
+    isCoreComplete: boolean;
+  } | null;
 }
 
 function CountBadge({ count, critical }: { count: number; critical?: boolean }) {
@@ -44,7 +59,9 @@ function flattenNavItems(items: NavItem[]): NavItem[] {
 }
 
 const allNavHrefs = [
-  ...operationsNavigation.flatMap((group) => flattenNavItems(group.items).map((item) => item.href)),
+  ...operationsNavigation.flatMap((group) =>
+    flattenNavItems(group.items).flatMap((item) => [item.href, ...(item.matches ?? [])])
+  ),
   ...Object.values(settingsAreaRoutes).flat(),
 ];
 
@@ -94,11 +111,18 @@ function NavLink({
   );
 }
 
-export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboration }: SidebarProps) {
+export function Sidebar({
+  mobileOpen,
+  onMobileClose,
+  storeId,
+  role,
+  collaboration,
+  setupStatus,
+}: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>(["库存管理"]);
+  const [expandedItems, setExpandedItems] = useState<string[]>(["库存看板"]);
   const [counts, setCounts] = useState<QueueCounts | null>(null);
   const [sellablePallets, setSellablePallets] = useState<SellablePalletNavItem[]>([]);
   const mobileDialogRef = useRef<HTMLElement>(null);
@@ -110,13 +134,14 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
           ...group,
           items: group.items.flatMap((item) => {
             const submenu = item.submenu?.filter((sub) => isNavigationHrefAllowed(role, sub.href));
-            if (!isNavigationHrefAllowed(role, item.href) && !submenu?.length) return [];
+            const allowedItemHref = [item.href, ...(item.matches ?? [])].find((href) =>
+              isNavigationHrefAllowed(role, href)
+            );
+            if (!allowedItemHref && !submenu?.length) return [];
             return [
               {
                 ...item,
-                href: isNavigationHrefAllowed(role, item.href)
-                  ? item.href
-                  : (submenu?.[0]?.href ?? item.href),
+                href: allowedItemHref ?? submenu?.[0]?.href ?? item.href,
                 submenu,
               },
             ];
@@ -217,6 +242,23 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
 
   const handleNavClick = () => onMobileClose?.();
 
+  const settingsHref =
+    settingsAreaRoutes["/settings/system"].find((href) => isNavigationHrefAllowed(role, href)) ??
+    settingsAreaRoutes["/settings/company"].find((href) => isNavigationHrefAllowed(role, href)) ??
+    "/settings/personal";
+  const operationActive = visibleOperationsNavigation
+    .flatMap((group) => flattenNavItems(group.items))
+    .some((item) =>
+      [item.href, ...(item.matches ?? [])].some(
+        (href) => pathname === href || pathname.startsWith(`${href}/`)
+      )
+    );
+  const settingsActive =
+    !operationActive &&
+    Object.values(settingsAreaRoutes)
+      .flat()
+      .some((href) => pathname === href || pathname.startsWith(`${href}/`));
+
   const isHrefActive = (href: string, includeDescendants = false) => {
     if (href.includes("?")) {
       const [targetPath, targetSearch = ""] = href.split("?");
@@ -230,20 +272,26 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
     return pathname === href || (includeDescendants && pathname.startsWith(`${href}/`));
   };
 
-  const isBranchActive = (item: NavItem) =>
-    pathname === item.href ||
-    pathname.startsWith(`${item.href}/`) ||
-    (item.submenu?.some((sub) => pathname === sub.href || pathname.startsWith(`${sub.href}/`)) ??
-      false);
+  const isBranchActive = (item: NavItem) => {
+    const itemHrefs = [item.href, ...(item.matches ?? [])];
+    return (
+      itemHrefs.some((href) => pathname === href || pathname.startsWith(`${href}/`)) ||
+      (item.submenu?.some((sub) => pathname === sub.href || pathname.startsWith(`${sub.href}/`)) ??
+        false)
+    );
+  };
 
   const isWorkflowActive = (item: NavItem) => {
     if (!item.queue && item.href !== "/workbench") {
-      const matches = pathname === item.href || pathname.startsWith(`${item.href}/`);
+      const itemHrefs = [item.href, ...(item.matches ?? [])];
+      const matches = itemHrefs.some(
+        (href) => pathname === href || pathname.startsWith(`${href}/`)
+      );
       if (!matches) return false;
       return !allNavHrefs.some(
         (otherHref) =>
-          otherHref !== item.href &&
-          otherHref.startsWith(`${item.href}/`) &&
+          !itemHrefs.includes(otherHref) &&
+          itemHrefs.some((itemHref) => otherHref.startsWith(`${itemHref}/`)) &&
           (pathname === otherHref || pathname.startsWith(`${otherHref}/`))
       );
     }
@@ -306,6 +354,30 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
           </Link>
         </div>
       )}
+
+      {setupStatus && !setupStatus.isCoreComplete ? (
+        <div className="border-b border-sidebar-border p-2">
+          <Link
+            href="/setup"
+            onClick={handleNavClick}
+            title={collapsed ? "开始使用" : undefined}
+            className={cn(
+              "flex items-center gap-2 rounded-md bg-primary/10 px-2 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15",
+              collapsed && "justify-center"
+            )}
+          >
+            <ListChecks className="h-4 w-4 shrink-0" />
+            {!collapsed ? (
+              <>
+                <span className="flex-1 truncate">开始使用</span>
+                <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] tabular-nums">
+                  {setupStatus.completedCoreCount}/{setupStatus.coreStepCount}
+                </span>
+              </>
+            ) : null}
+          </Link>
+        </div>
+      ) : null}
 
       {collaboration.hasWarehouseCollaboration ? (
         <div className="border-b border-sidebar-border p-2">
@@ -510,6 +582,25 @@ export function Sidebar({ mobileOpen, onMobileClose, storeId, role, collaboratio
           </div>
         ))}
       </nav>
+
+      <div className="border-t border-sidebar-border p-2">
+        <Link
+          href={settingsHref}
+          onClick={handleNavClick}
+          title={collapsed ? "设置" : undefined}
+          aria-current={settingsActive ? "page" : undefined}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+            collapsed && "justify-center",
+            settingsActive
+              ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+              : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          )}
+        >
+          <Settings2 className={navIconClass(settingsActive)} />
+          {!collapsed ? <span className="truncate">设置</span> : null}
+        </Link>
+      </div>
     </div>
   );
 

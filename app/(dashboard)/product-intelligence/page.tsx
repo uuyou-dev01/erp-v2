@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ImageIcon, Plus, Search } from "lucide-react";
+import { ImageIcon, Search } from "lucide-react";
 import {
   getProductIntelligenceCategories,
   getProductIntelligenceConditionOptions,
@@ -13,6 +13,8 @@ import {
   IntelligenceStatusBadge,
   VisibilityBadge,
 } from "@/components/product-intelligence/product-intelligence-status";
+import { ProductWorkspaceNav } from "@/components/inventory/product-workspace-nav";
+import { requireUserContext } from "@/lib/auth/user-context";
 
 export const dynamic = "force-dynamic";
 
@@ -172,8 +174,8 @@ function contributorSummary(item: ProductIntelligenceListItem) {
   }
 
   const contributors = Array.from(names);
-  if (contributors.length <= 1) return `贡献方：${contributors[0] ?? item.store.name}`;
-  return `贡献方：${contributors[0]} 等 ${contributors.length} 方`;
+  if (contributors.length <= 1) return `记录方：${contributors[0] ?? item.store.name}`;
+  return `记录方：${contributors[0]} 等 ${contributors.length} 方`;
 }
 
 export default async function ProductIntelligencePage({
@@ -190,7 +192,7 @@ export default async function ProductIntelligencePage({
     priceView?: string;
   }>;
 }) {
-  const params = await searchParams;
+  const [params, context] = await Promise.all([searchParams, requireUserContext()]);
   const columnCount: CardColumnCount =
     params.cols === "8" || params.cols === "10" ? params.cols : "6";
   const priceView: PriceView =
@@ -262,21 +264,16 @@ export default async function ProductIntelligencePage({
       <div className="shrink-0 border-b bg-background px-4 pb-3 pt-4 shadow-sm md:px-6 md:pt-6">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">商品情报</h1>
+            <h1 className="text-xl font-semibold tracking-tight">市场参考</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              按商品组、SKU
-              和成色聚合会员贡献的地区售价、平台来源和品类经验；这里只展示数据，不承接库存和交易。
+              查看外部平台的价格、成色与来源记录；这些数据只用于参考，不替代采购和销售单据。
             </p>
           </div>
-          <Link href="/product-intelligence/new">
-            <Button size="sm">
-              <Plus className="mr-1.5 h-4 w-4" />
-              添加情报
-            </Button>
-          </Link>
         </div>
 
-        <Card>
+        <ProductWorkspaceNav active="market" role={context.role} />
+
+        <Card className="mt-3">
           <CardContent className="p-3">
             <form className="grid gap-3 lg:grid-cols-[minmax(240px,1fr)_150px_130px_130px_130px_110px_auto]">
               <input type="hidden" name="cols" value={columnCount} />
@@ -399,10 +396,10 @@ export default async function ProductIntelligencePage({
         {items.length === 0 ? (
           <EmptyState
             icon={Search}
-            title="暂无商品情报"
-            description="先添加一条你熟悉的商品、行情或价格观察。"
-            actionHref="/product-intelligence/new"
-            actionLabel="添加情报"
+            title="暂无市场参考"
+            description="先整理一条外部商品采集，确认来源后会在这里形成价格参考。"
+            actionHref="/product-intelligence/captures"
+            actionLabel="整理采集"
           />
         ) : (
           <div className={gridClass}>

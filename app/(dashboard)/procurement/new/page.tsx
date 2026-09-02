@@ -18,7 +18,9 @@ export default async function NewPurchaseOrderPage({
         <div>
           <h1 className="text-3xl font-bold">新建采购订单</h1>
           <p className="text-muted-foreground">
-            {skuId ? "已从商品情报预选 SKU，完成基本信息后确认采购数量与成本" : "按步骤创建采购订单并添加商品"}
+            {skuId
+              ? "已从市场采集预选 SKU，完成基本信息后确认采购数量与成本"
+              : "按步骤创建采购订单并添加商品"}
           </p>
         </div>
       </div>

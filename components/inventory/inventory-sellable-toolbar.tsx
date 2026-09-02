@@ -4,16 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { FilterX, Layers3, Search } from "lucide-react";
-import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 
 interface InventorySellableToolbarProps {
-  platforms: Array<{ id: string; name: string; code: string }>;
   locations: Array<{ id: string; label: string; qty: number }>;
   categories: Array<{ value: string; label: string; count: number }>;
-  activePlatformId?: string;
   locationId?: string;
   category?: string;
   productKind?: string;
@@ -31,6 +28,7 @@ interface InventorySellableToolbarProps {
 function withParam(searchParams: { toString(): string }, key: string, value?: string) {
   const params = new URLSearchParams(searchParams.toString());
   params.delete("page");
+  params.delete("platformId");
   if (value) {
     params.set(key, value);
   } else {
@@ -59,10 +57,8 @@ function clearFilterHref(searchParams: { toString(): string }) {
 }
 
 export function InventorySellableToolbar({
-  platforms,
   locations,
   categories,
-  activePlatformId,
   locationId,
   category,
   productKind,
@@ -82,7 +78,6 @@ export function InventorySellableToolbar({
   const [search, setSearch] = useState(query ?? "");
   const hasFilters = Boolean(
     query ||
-    activePlatformId ||
     locationId ||
     category ||
     productKind ||
@@ -96,6 +91,7 @@ export function InventorySellableToolbar({
     event.preventDefault();
     const params = new URLSearchParams(searchParams.toString());
     params.delete("page");
+    params.delete("platformId");
     if (search.trim()) {
       params.set("q", search.trim());
     } else {
@@ -256,41 +252,6 @@ export function InventorySellableToolbar({
             <option value="priceDesc">价格从高到低</option>
             <option value="priceAsc">价格从低到高</option>
           </Select>
-        </div>
-
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">销售平台</span>
-          <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-0.5">
-            <Link href={withParam(searchParams, "platformId")}>
-              <Button
-                variant={!activePlatformId ? "secondary" : "outline"}
-                size="sm"
-                className="h-7 shrink-0 px-2.5 text-xs"
-              >
-                全部平台
-              </Button>
-            </Link>
-            {platforms.map((platform) => (
-              <Link
-                key={platform.id}
-                href={withParam(searchParams, "platformId", platform.id)}
-                title={platform.name}
-              >
-                <Button
-                  variant={activePlatformId === platform.id ? "default" : "outline"}
-                  size="sm"
-                  className="h-7 shrink-0 gap-1.5 px-2 text-xs"
-                >
-                  <ListingPlatformMark
-                    code={platform.code}
-                    name={platform.name}
-                    className="h-4 w-4 rounded border-0 bg-transparent p-0 shadow-none"
-                  />
-                  <span className="max-w-24 truncate">{platform.name}</span>
-                </Button>
-              </Link>
-            ))}
-          </div>
         </div>
       </div>
     </section>

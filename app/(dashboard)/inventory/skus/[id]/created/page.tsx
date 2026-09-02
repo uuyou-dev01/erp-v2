@@ -4,21 +4,35 @@ import { notFound } from "next/navigation";
 import { getSKUById } from "@/app/actions/skus";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  safeSkuReturnPath,
+  skuReturnPathWithCreatedId,
+} from "@/lib/application/sku-create-navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function SkuCreatedPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const { id } = await params;
+  const { returnTo } = await searchParams;
+  const safeReturnTo = safeSkuReturnPath(returnTo);
   const sku = await getSKUById(id);
   if (!sku) notFound();
 
   const isGroup = sku.catalogRole === "GROUP";
   const isVariant = sku.catalogRole === "VARIANT";
   const parentId = sku.parentSkuId;
+  const createdSkuReturnHref = skuReturnPathWithCreatedId(safeReturnTo, sku.id);
+  const variantQuery = new URLSearchParams({
+    mode: "variant",
+    parentSkuId: sku.id,
+  });
+  if (safeReturnTo) variantQuery.set("returnTo", safeReturnTo);
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
@@ -44,7 +58,7 @@ export default async function SkuCreatedPage({
         <div className="divide-y">
           {isGroup ? (
             <Link
-              href={`/inventory/skus/new?mode=variant&parentSkuId=${sku.id}`}
+              href={`/inventory/skus/new?${variantQuery.toString()}`}
               className="group flex items-start gap-4 px-5 py-5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <Layers3 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -58,7 +72,7 @@ export default async function SkuCreatedPage({
             </Link>
           ) : (
             <Link
-              href={`/inventory/opening-stock/new?skuIds=${sku.id}`}
+              href={createdSkuReturnHref ?? `/inventory/opening-stock/new?skuIds=${sku.id}`}
               className="group flex items-start gap-4 px-5 py-5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <PackagePlus className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -91,8 +105,8 @@ export default async function SkuCreatedPage({
       </section>
 
       <div className="flex justify-end gap-2">
-        <Link href="/inventory/skus">
-          <Button variant="outline">返回商品档案</Button>
+        <Link href={safeReturnTo ?? "/inventory/skus"}>
+          <Button variant="outline">{safeReturnTo ? "返回原任务" : "返回商品档案"}</Button>
         </Link>
         <Link
           href={

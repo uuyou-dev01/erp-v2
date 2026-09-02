@@ -21,6 +21,7 @@ import {
 import type { SkuCatalogRole, SkuIdentitySource } from "@/lib/application/sku-identity";
 import { AlertCircle, ImagePlus, Link as LinkIcon, Plus, Star, Upload, X } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { skuReturnPathWithCreatedId } from "@/lib/application/sku-create-navigation";
 
 export interface ParentOption {
   id: string;
@@ -44,6 +45,8 @@ interface SKUFormProps {
   defaultParentSkuId?: string;
   /** 新建成功后进入下一步，而不是直接结束在详情页 */
   continueAfterCreate?: boolean;
+  /** 新建可承接库存的 SKU 后返回原任务并自动回填 */
+  returnTo?: string | null;
   /** 紧凑布局，用于详情页编辑弹层 */
   compact?: boolean;
   /** 保存成功后回调；提供时不再跳转到列表页 */
@@ -169,6 +172,7 @@ export function SKUForm({
   defaultCatalogRole = "GROUP",
   defaultParentSkuId = "",
   continueAfterCreate = false,
+  returnTo,
   initialData,
   compact = false,
   onSaved,
@@ -387,8 +391,21 @@ export function SKUForm({
 
       if (onSaved) {
         onSaved(skuId);
+      } else if (!initialData && formData.catalogRole !== "GROUP") {
+        const returnHref = skuReturnPathWithCreatedId(returnTo, skuId);
+        if (returnHref) {
+          router.push(returnHref);
+        } else if (continueAfterCreate) {
+          router.push(`/inventory/skus/${skuId}/created`);
+        } else {
+          router.push(`/inventory/skus/${skuId}`);
+        }
       } else if (!initialData && continueAfterCreate) {
-        router.push(`/inventory/skus/${skuId}/created`);
+        const query = new URLSearchParams();
+        if (returnTo) query.set("returnTo", returnTo);
+        router.push(
+          `/inventory/skus/${skuId}/created${query.size > 0 ? `?${query.toString()}` : ""}`
+        );
       } else {
         router.push(`/inventory/skus/${skuId}`);
       }

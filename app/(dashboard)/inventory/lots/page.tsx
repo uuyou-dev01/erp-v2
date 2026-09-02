@@ -9,6 +9,7 @@ import { formatCurrency, formatQuantity } from "@/lib/decimal";
 import { LotImportButton } from "@/components/inventory/lot-import-button";
 import { buildInventoryLotDisplayGroups } from "@/lib/application/catalog-display-groups";
 import { InventoryLotDeleteButton } from "@/components/inventory/inventory-lot-delete-button";
+import { InventoryDetailsShell } from "@/components/inventory/inventory-details-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,8 @@ export default async function LotsPage({
 }: {
   searchParams: Promise<{ query?: string }>;
 }) {
-  const { activeStoreId: storeId } = await requireUserContext();
+  const context = await requireUserContext();
+  const storeId = context.activeStoreId;
   const { query: rawQuery } = await searchParams;
   const query = rawQuery?.trim() ?? "";
   const allLots = await getInventoryLots(storeId);
@@ -47,15 +49,11 @@ export default async function LotsPage({
   }, 0);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">库存批次</h1>
-          <p className="text-muted-foreground">
-            新品数量型库存；数量和价值按 StockLedger 流水汇总。
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <InventoryDetailsShell
+      activeTab="lots"
+      role={context.role}
+      actions={
+        <>
           <LotImportButton storeId={storeId} />
           <Link href="/inventory/lots/new">
             <Button>
@@ -63,9 +61,9 @@ export default async function LotsPage({
               新增库存批次
             </Button>
           </Link>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -295,6 +293,6 @@ export default async function LotsPage({
           )}
         </CardContent>
       </Card>
-    </div>
+    </InventoryDetailsShell>
   );
 }

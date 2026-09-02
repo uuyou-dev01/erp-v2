@@ -6,19 +6,20 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { SKUImportButton } from "@/components/inventory/sku-import-button";
 import { SkuCatalogGrid } from "@/components/inventory/sku-catalog-grid";
+import { ProductWorkspaceNav } from "@/components/inventory/product-workspace-nav";
 
 export const dynamic = "force-dynamic";
 
-
 export default async function SKUsPage() {
-  const { activeStoreId: storeId } = await requireUserContext();
+  const context = await requireUserContext();
+  const storeId = context.activeStoreId;
   const items = await getSkuCatalogList(storeId);
 
   return (
     <div className="space-y-4">
       <PageHeader
         className="mb-0"
-        title="商品档案"
+        title="商品资料"
         description="按商品组（类似 SPU）管理系列档案；规格 SKU 和独立 SKU 承接采购、库存、上架与销售。"
         actions={
           <>
@@ -32,6 +33,8 @@ export default async function SKUsPage() {
           </>
         }
       />
+
+      <ProductWorkspaceNav active="catalog" role={context.role} />
 
       <SkuCatalogGrid items={items} />
     </div>

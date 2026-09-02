@@ -192,7 +192,7 @@ export function WebLinkCapture() {
           ? `已保存 ${saved} 个，${failed} 个失败，请检查后重试。`
           : imageFailures
             ? `已保存 ${saved} 个商品；${imageFailures} 张来源图暂未转存，原链接已保留，可在审核时重试。`
-            : `已将 ${saved} 个商品加入商品情报采集箱。`,
+            : `已将 ${saved} 个商品加入待整理采集。`,
       });
       router.refresh();
     });
@@ -399,9 +399,7 @@ export function WebLinkCapture() {
                           <Link href={row.reviewUrl}>打开审核</Link>
                         </Button>
                         {row.imageWarning ? (
-                          <p className="text-[11px] leading-4 text-amber-700">
-                            {row.imageWarning}
-                          </p>
+                          <p className="text-[11px] leading-4 text-amber-700">{row.imageWarning}</p>
                         ) : null}
                       </div>
                     ) : row.saveState === "FAILED" ? (

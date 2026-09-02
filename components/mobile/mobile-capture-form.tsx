@@ -381,7 +381,7 @@ export function MobileCaptureForm({
         text:
           mode === "price"
             ? "observationId" in result && result.observationId
-              ? "价格已进入商品情报时间线"
+              ? "价格已进入市场参考时间线"
               : "价格证据已保存，等待匹配 SKU"
             : "购入已登记，后续物流节点已进入待办",
       });

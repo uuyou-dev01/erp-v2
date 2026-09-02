@@ -5,6 +5,7 @@ import { getCollaborationTaskSummaryForUser } from "@/lib/application/collaborat
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { isNavigationHrefAllowed } from "@/lib/auth/permissions";
+import { getSetupStatus } from "@/lib/application/setup-status";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const authenticatedUser = await requireAuthenticatedUser().catch(() => redirect("/login"));
@@ -19,7 +20,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!isNavigationHrefAllowed(context.role, pathname)) {
     redirect(`/workbench?access=denied&from=${encodeURIComponent(pathname)}`);
   }
-  const [stores, account, organizations, collaboration] = await Promise.all([
+  const [stores, account, organizations, collaboration, setupStatus] = await Promise.all([
     prisma.store.findMany({
       where: { id: { in: context.storeIds } },
       select: { id: true, name: true },
@@ -45,6 +46,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       orderBy: { name: "asc" },
     }),
     getCollaborationTaskSummaryForUser(context.userId),
+    context.role === "OWNER"
+      ? getSetupStatus({ storeId: context.activeStoreId, role: context.role }).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   return (
@@ -60,6 +64,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
       }}
       role={context.role}
       collaboration={collaboration}
+      setupStatus={
+        setupStatus
+          ? {
+              completedCoreCount: setupStatus.completedCoreCount,
+              coreStepCount: setupStatus.coreStepCount,
+              isCoreComplete: setupStatus.isCoreComplete,
+            }
+          : null
+      }
     >
       {children}
     </DashboardShell>

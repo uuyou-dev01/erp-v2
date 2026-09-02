@@ -32,7 +32,7 @@ type ObservationRow = {
 };
 
 function buildMarketGroups(
-  item: NonNullable<Awaited<ReturnType<typeof getProductIntelligenceItemById>>>,
+  item: NonNullable<Awaited<ReturnType<typeof getProductIntelligenceItemById>>>
 ) {
   if (item.parentItem) {
     return {
@@ -104,8 +104,8 @@ export default async function ProductIntelligenceDetailPage({
               {item.parentItem
                 ? `归属商品组：${item.parentItem.title}`
                 : item.childItems.length > 0
-                  ? "商品组详情会聚合规格 SKU、成色和会员贡献的行情观察。"
-                  : "当前是独立商品情报；后续可以编辑挂到商品组，或在同组下新增 SKU。"}
+                  ? "市场参考会按规格 SKU 和成色汇总外部价格记录。"
+                  : "这条市场记录尚未关联正式商品，只作为选品与价格参考。"}
             </p>
           </div>
         </div>
@@ -118,7 +118,7 @@ export default async function ProductIntelligenceDetailPage({
         <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
           <Card>
             <CardHeader>
-              <CardTitle>商品卡片</CardTitle>
+              <CardTitle>来源商品</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid gap-4 md:grid-cols-[180px_1fr]">
@@ -166,20 +166,28 @@ export default async function ProductIntelligenceDetailPage({
                       </div>
                     ) : null}
                     <div>
-                      <p className="text-xs text-muted-foreground">贡献会员</p>
+                      <p className="text-xs text-muted-foreground">记录店铺</p>
                       <p className="font-medium">{item.store.name}</p>
                     </div>
                   </div>
-                  {Array.isArray(item.tags) && item.tags.filter((tag): tag is string => typeof tag === "string").length > 0 ? (
+                  {Array.isArray(item.tags) &&
+                  item.tags.filter((tag): tag is string => typeof tag === "string").length > 0 ? (
                     <div className="flex flex-wrap gap-1.5">
-                      {item.tags.filter((tag): tag is string => typeof tag === "string").map((tag) => (
-                        <span key={tag} className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
-                          {tag}
-                        </span>
-                      ))}
+                      {item.tags
+                        .filter((tag): tag is string => typeof tag === "string")
+                        .map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground"
+                          >
+                            {tag}
+                          </span>
+                        ))}
                     </div>
                   ) : null}
-                  {item.description ? <p className="whitespace-pre-wrap text-sm leading-6">{item.description}</p> : null}
+                  {item.description ? (
+                    <p className="whitespace-pre-wrap text-sm leading-6">{item.description}</p>
+                  ) : null}
                 </div>
               </div>
             </CardContent>

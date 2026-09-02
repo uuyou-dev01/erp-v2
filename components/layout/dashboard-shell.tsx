@@ -18,6 +18,7 @@ export function DashboardShell({
   account,
   role,
   collaboration,
+  setupStatus,
 }: {
   children: React.ReactNode;
   stores: Array<{ id: string; name: string }>;
@@ -34,6 +35,11 @@ export function DashboardShell({
     hasWarehouseCollaboration: boolean;
     pendingTaskCount: number;
   };
+  setupStatus: {
+    completedCoreCount: number;
+    coreStepCount: number;
+    isCoreComplete: boolean;
+  } | null;
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -58,6 +64,7 @@ export function DashboardShell({
           mobileOpen={mobileMenuOpen}
           onMobileClose={() => setMobileMenuOpen(false)}
           collaboration={collaboration}
+          setupStatus={setupStatus}
         />
       </Suspense>
       <div className="flex min-w-0 flex-1 flex-col">

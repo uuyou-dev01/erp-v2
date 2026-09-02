@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Boxes, Package, ArrowRight } from "lucide-react";
 import type { SkuCatalogRole } from "@/lib/application/sku-identity";
+import { safeSkuReturnPath } from "@/lib/application/sku-create-navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -22,20 +23,37 @@ function titleForRole(role: SkuCatalogRole) {
   return "新增商品组";
 }
 
+function newSkuHref({
+  mode,
+  parentSkuId,
+  returnTo,
+}: {
+  mode: "group" | "simple" | "variant";
+  parentSkuId?: string;
+  returnTo?: string | null;
+}) {
+  const query = new URLSearchParams({ mode });
+  if (parentSkuId) query.set("parentSkuId", parentSkuId);
+  if (returnTo) query.set("returnTo", returnTo);
+  return `/inventory/skus/new?${query.toString()}`;
+}
+
 export default async function NewSKUPage({
   searchParams,
 }: {
-  searchParams: Promise<{ mode?: string; parentSkuId?: string }>;
+  searchParams: Promise<{ mode?: string; parentSkuId?: string; returnTo?: string }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
-  const { mode, parentSkuId } = await searchParams;
+  const { mode, parentSkuId, returnTo } = await searchParams;
+  const safeReturnTo = safeSkuReturnPath(returnTo);
+  const backHref = safeReturnTo ?? "/inventory/skus";
   const defaultCatalogRole = modeToRole(mode);
 
   if (!defaultCatalogRole) {
     return (
       <div className="mx-auto max-w-4xl space-y-5">
         <div className="flex items-start gap-2">
-          <Link href="/inventory/skus">
+          <Link href={backHref}>
             <Button variant="ghost" size="icon" className="mt-0.5" aria-label="返回商品档案">
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -56,7 +74,7 @@ export default async function NewSKUPage({
           </div>
           <div className="divide-y">
             <Link
-              href="/inventory/skus/new?mode=group"
+              href={newSkuHref({ mode: "group", returnTo: safeReturnTo })}
               className="group flex items-start gap-4 px-5 py-5 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <Boxes className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -72,7 +90,7 @@ export default async function NewSKUPage({
               <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </Link>
             <Link
-              href="/inventory/skus/new?mode=simple"
+              href={newSkuHref({ mode: "simple", returnTo: safeReturnTo })}
               className="group flex items-start gap-4 px-5 py-5 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <Package className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -98,8 +116,8 @@ export default async function NewSKUPage({
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-2">
-        <Link href="/inventory/skus">
-          <Button variant="ghost" size="icon" className="mt-0.5">
+        <Link href={backHref}>
+          <Button variant="ghost" size="icon" className="mt-0.5" aria-label="返回上一页">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
@@ -122,6 +140,7 @@ export default async function NewSKUPage({
         defaultCatalogRole={defaultCatalogRole}
         defaultParentSkuId={parentSkuId}
         continueAfterCreate
+        returnTo={safeReturnTo}
       />
     </div>
   );

@@ -23,7 +23,7 @@ describe("sidebar navigation source", () => {
   });
 
   it("opens the real inventory parent by default", () => {
-    expect(sidebarSource).toContain('useState<string[]>(["库存管理"])');
+    expect(sidebarSource).toContain('useState<string[]>(["库存看板"])');
   });
 
   it("makes submenu parents navigable independently from their disclosure buttons", () => {

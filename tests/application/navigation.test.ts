@@ -17,40 +17,42 @@ const allNavigationItems = [...operationNavigationItems, ...flatten(settingsNavi
 describe("navigation structure", () => {
   it("groups routes around the current operating model", () => {
     expect(operationsNavigation.map((group) => group.title)).toEqual([
-      "工作台",
-      "采购与仓配",
-      "商品与库存",
-      "上架与订单",
-      "货盘与代卖",
-      "收益与报表",
+      "今日工作",
+      "商品与采购",
+      "库存与仓配",
+      "销售与履约",
+      "货盘协作",
+      "财务与分析",
     ]);
   });
 
-  it("keeps dense product and inventory routes under sidebar submenus", () => {
-    const productGroup = operationsNavigation.find((group) => group.title === "商品与库存");
-    expect(productGroup?.items.map((item) => item.name)).toEqual(["商品档案", "库存管理"]);
+  it("groups product, inventory, and fulfillment entries by business workflow", () => {
+    const productGroup = operationsNavigation.find((group) => group.title === "商品与采购");
+    expect(productGroup?.items.map((item) => item.name)).toEqual(["商品资料", "采购订单"]);
 
-    const catalogItem = productGroup?.items.find((item) => item.name === "商品档案");
-    expect(catalogItem?.submenu?.map((item) => item.name)).toEqual([
-      "商品主档",
-      "商品情报",
-      "情报采集箱",
-    ]);
-
-    const inventoryItem = productGroup?.items.find((item) => item.name === "库存管理");
-    expect(inventoryItem?.submenu?.map((item) => item.name)).toEqual([
+    const inventoryGroup = operationsNavigation.find((group) => group.title === "库存与仓配");
+    expect(inventoryGroup?.items.map((item) => item.name)).toEqual([
       "库存看板",
-      "单件库存",
-      "库存批次",
+      "库存明细",
       "期初库存",
-      "库存调整",
+      "盘点调整",
+      "集运批次",
+      "仓库与位置",
+    ]);
+
+    const fulfillmentGroup = operationsNavigation.find((group) => group.title === "销售与履约");
+    expect(fulfillmentGroup?.items.map((item) => item.name)).toEqual([
+      "上架运营",
+      "销售订单",
+      "售后处理",
+      "代发履约",
     ]);
   });
 
-  it("keeps low-frequency setup entries out of daily operations", () => {
+  it("keeps administrative setup out of daily operations while exposing warehouse locations", () => {
     const operationNames = operationNavigationItems.map((item) => item.name);
     expect(operationNames).not.toContain("销售平台");
-    expect(operationNames).not.toContain("仓库位置");
+    expect(operationNames).toContain("仓库与位置");
     expect(operationNames).not.toContain("团队成员");
     expect(operationNames).not.toContain("店铺管理");
     expect(operationNames).not.toContain("费用子账");
@@ -65,7 +67,7 @@ describe("navigation structure", () => {
   });
 
   it("preserves existing route URLs for compatibility", () => {
-    const hrefs = allNavigationItems.map((item) => item.href);
+    const hrefs = allNavigationItems.flatMap((item) => [item.href, ...(item.matches ?? [])]);
 
     expect(hrefs).toContain("/workbench");
     expect(hrefs).toContain("/notifications");
@@ -74,7 +76,6 @@ describe("navigation structure", () => {
     expect(hrefs).toContain("/fulfillment/requests");
     expect(hrefs).toContain("/inventory/sellable");
     expect(hrefs).toContain("/inventory/skus");
-    expect(hrefs).toContain("/product-intelligence");
     expect(hrefs).toContain("/inventory/items");
     expect(hrefs).toContain("/inventory/lots");
     expect(hrefs).toContain("/inventory/stocktake");
@@ -90,6 +91,20 @@ describe("navigation structure", () => {
     expect(hrefs).toContain("/settings/personal");
     expect(hrefs).toContain("/settings/company");
     expect(hrefs).toContain("/settings/system");
+  });
+
+  it("keeps market collection outside the core sidebar", () => {
+    const navigationHrefs = allNavigationItems.map((item) => item.href);
+    const marketCaptureAction = commandQuickActions.find(
+      (action) => action.id === "qa-market-captures"
+    );
+
+    expect(navigationHrefs).not.toContain("/product-intelligence");
+    expect(navigationHrefs).not.toContain("/product-intelligence/captures");
+    expect(marketCaptureAction).toMatchObject({
+      title: "待整理采集",
+      href: "/product-intelligence/captures",
+    });
   });
 
   it("removes the old dashboard entry from sidebar and command shortcuts", () => {

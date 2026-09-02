@@ -5,6 +5,7 @@ import {
   ClipboardList,
   FileText,
   Globe,
+  MapPin,
   Package,
   PackageCheck,
   PackageOpen,
@@ -30,6 +31,7 @@ export type NavItem = {
   icon: LucideIcon;
   queue?: WorkQueue;
   badgeKey?: keyof QueueCounts;
+  matches?: string[];
   submenu?: NavItem[];
 };
 
@@ -40,10 +42,9 @@ export type NavGroup = {
 
 export const operationsNavigation: NavGroup[] = [
   {
-    title: "工作台",
+    title: "今日工作",
     items: [
       { name: "工作台", href: "/workbench", icon: ClipboardList, badgeKey: "total" },
-      { name: "通知", href: "/notifications", icon: Bell },
       {
         name: "异常中心",
         href: "/workbench?queue=exception",
@@ -51,53 +52,47 @@ export const operationsNavigation: NavGroup[] = [
         queue: "exception",
         badgeKey: "exception",
       },
+      { name: "通知", href: "/notifications", icon: Bell },
     ],
   },
   {
-    title: "采购与仓配",
+    title: "商品与采购",
     items: [
-      { name: "采购单据", href: "/procurement", icon: ShoppingCart },
-      { name: "集运物流", href: "/logistics/consolidations", icon: Truck },
-      { name: "代发履约", href: "/fulfillment/requests", icon: Truck },
+      { name: "商品资料", href: "/inventory/skus", icon: Store },
+      { name: "采购订单", href: "/procurement", icon: ShoppingCart },
     ],
   },
   {
-    title: "商品与库存",
+    title: "库存与仓配",
     items: [
       {
-        name: "商品档案",
-        href: "/inventory/skus",
-        icon: Store,
-        submenu: [
-          { name: "商品主档", href: "/inventory/skus", icon: Store },
-          { name: "商品情报", href: "/product-intelligence", icon: PackageSearch },
-          { name: "情报采集箱", href: "/product-intelligence/captures", icon: PackagePlus },
-        ],
-      },
-      {
-        name: "库存管理",
+        name: "库存看板",
         href: "/inventory/sellable",
         icon: PackageCheck,
-        submenu: [
-          { name: "库存看板", href: "/inventory/sellable", icon: PackageCheck },
-          { name: "单件库存", href: "/inventory/items", icon: PackageOpen },
-          { name: "库存批次", href: "/inventory/lots", icon: Package },
-          { name: "期初库存", href: "/inventory/opening-stock", icon: PackagePlus },
-          { name: "库存调整", href: "/inventory/stocktake", icon: Box },
-        ],
       },
+      {
+        name: "库存明细",
+        href: "/inventory/lots",
+        icon: PackageOpen,
+        matches: ["/inventory/items"],
+      },
+      { name: "期初库存", href: "/inventory/opening-stock", icon: PackagePlus },
+      { name: "盘点调整", href: "/inventory/stocktake", icon: Box },
+      { name: "集运批次", href: "/logistics/consolidations", icon: Truck },
+      { name: "仓库与位置", href: "/inventory/locations", icon: MapPin },
     ],
   },
   {
-    title: "上架与订单",
+    title: "销售与履约",
     items: [
       { name: "上架运营", href: "/listing", icon: Globe },
       { name: "销售订单", href: "/sales", icon: Package },
       { name: "售后处理", href: "/sales/after-sales", icon: RotateCcw },
+      { name: "代发履约", href: "/fulfillment/requests", icon: Truck },
     ],
   },
   {
-    title: "货盘与代卖",
+    title: "货盘协作",
     items: [
       { name: "货盘市场", href: "/marketplace", icon: PackageSearch },
       { name: "我的供给", href: "/marketplace/my-offers", icon: PackageCheck },
@@ -105,7 +100,7 @@ export const operationsNavigation: NavGroup[] = [
     ],
   },
   {
-    title: "收益与报表",
+    title: "财务与分析",
     items: [
       { name: "我的收益", href: "/finance/wallet", icon: Wallet },
       { name: "经营报表", href: "/reports", icon: FileText },
@@ -187,10 +182,10 @@ export const commandQuickActions = [
   },
   { id: "qa-marketplace", title: "货盘市场", subtitle: "查看公开与授权货盘", href: "/marketplace" },
   {
-    id: "qa-product-intelligence",
-    title: "商品情报",
-    subtitle: "会员分享行情与商品经验",
-    href: "/product-intelligence",
+    id: "qa-market-captures",
+    title: "待整理采集",
+    subtitle: "核对外部商品链接与价格来源",
+    href: "/product-intelligence/captures",
   },
   {
     id: "qa-my-offers",

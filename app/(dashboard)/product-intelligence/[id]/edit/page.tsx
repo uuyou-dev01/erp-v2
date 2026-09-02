@@ -27,8 +27,8 @@ export default async function EditProductIntelligencePage({
   return (
     <div className="space-y-4">
       <PageHeader
-        title="编辑商品情报"
-        description="只编辑商品卡片信息；价格和经验请在详情页追加观察记录。"
+        title="编辑市场参考"
+        description="只编辑来源商品信息；价格记录请在详情页追加。"
         actions={
           <Link href={`/product-intelligence/${item.id}`}>
             <Button variant="outline" size="sm">

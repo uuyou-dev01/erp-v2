@@ -116,7 +116,7 @@ export function IntelligenceBusinessActions({
       </div>
 
       <p className="text-[10px] leading-4 text-muted-foreground">
-        采购会生成采购单并进入物流、到货和入库流程；不会从商品情报直接增加库存。
+        采购会生成采购单并进入物流、到货和入库流程；不会从市场参考直接增加库存。
       </p>
     </div>
   );

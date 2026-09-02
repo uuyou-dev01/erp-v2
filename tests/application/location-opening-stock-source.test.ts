@@ -16,7 +16,7 @@ describe("warehouse opening stock workflow", () => {
   it("keeps opening and existing-stock count actions on warehouse details", () => {
     const page = source("app/(dashboard)/inventory/locations/[id]/page.tsx");
 
-    expect(page).toContain("期初盘点");
+    expect(page).toContain("录入已有库存");
     expect(page).toContain("盘点现有库存");
     expect(page).toContain("locationId: location.id");
   });
@@ -26,7 +26,7 @@ describe("warehouse opening stock workflow", () => {
     const action = source("app/actions/opening-stock.ts");
 
     expect(form).toContain("单位成本");
-    expect(form).toContain("批次标识");
+    expect(form).toContain("批次号");
     expect(form).toContain("fixedLocationId");
     expect(action).toContain("batchLabel");
     expect(action).toContain('ledgerReason: "OPENING_BALANCE"');

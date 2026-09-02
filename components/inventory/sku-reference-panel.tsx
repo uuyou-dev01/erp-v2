@@ -16,10 +16,10 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
   return (
     <Card>
       <CardHeader className={compact ? "py-3" : undefined}>
-        <CardTitle className="text-sm font-medium">关联入口</CardTitle>
+        <CardTitle className="text-sm font-medium">{compact ? "关联入口" : "市场参考"}</CardTitle>
         {!compact ? (
           <p className="text-xs text-muted-foreground">
-            档案页只看价格与记录，库存、上架和订单进入对应模块处理。
+            外部价格用于辅助判断，真实采购、库存、上架和销售仍以业务单据为准。
           </p>
         ) : null}
       </CardHeader>
@@ -56,7 +56,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="inline-flex items-center gap-1.5 text-xs font-medium">
                 <Radar className="h-3.5 w-3.5 text-blue-600" />
-                来源情报
+                外部价格记录
               </p>
               <Link
                 href={`/product-intelligence/${sku.intelligence.recentMarketObservations[0].itemId}`}
@@ -142,8 +142,8 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
         ) : null}
 
         <p className="text-[10px] text-muted-foreground">
-          情报 {sku.intelligence.marketObservationCount} · 采购 {reference.purchaseLineCount} · 销售{" "}
-          {reference.salesLineCount}
+          市场参考 {sku.intelligence.marketObservationCount} · 采购 {reference.purchaseLineCount} ·
+          销售 {reference.salesLineCount}
           <Link
             href="/procurement"
             className="ml-1.5 inline-flex items-center gap-0.5 text-primary hover:underline"

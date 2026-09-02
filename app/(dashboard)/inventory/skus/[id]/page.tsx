@@ -39,13 +39,14 @@ function MissingInfoValue() {
   return <span className="font-normal text-muted-foreground">未填写</span>;
 }
 
-type DetailView = "overview" | "inventory" | "sales" | "records";
+type DetailView = "overview" | "inventory" | "sales" | "records" | "market";
 
 const DETAIL_VIEWS: Array<{ id: DetailView; label: string }> = [
   { id: "overview", label: "概览" },
   { id: "inventory", label: "库存与上架" },
   { id: "sales", label: "动销分析" },
   { id: "records", label: "业务流水" },
+  { id: "market", label: "市场参考" },
 ];
 
 function wordParts(value: string) {
@@ -167,12 +168,12 @@ export default async function SKUDetailPage({
       : groupCoverUrl
         ? "商品组图"
         : intelligenceCoverUrl
-          ? "情报图"
+          ? "来源图"
           : "暂无图片"
     : isProductGroup
       ? "商品组图"
       : intelligenceCoverUrl && !ownCoverUrl
-        ? "情报图"
+        ? "来源图"
         : "SKU 图";
   const selectedVariantName = isViewingChildFromParent ? variantDisplayName(sku, displaySku) : null;
   const variantHref = (childId: string) => {
@@ -373,7 +374,9 @@ export default async function SKUDetailPage({
                 ? displaySku.analysis.activeListings.length
                 : item.id === "records"
                   ? displaySku.reference.salesLineCount + displaySku.reference.purchaseLineCount
-                  : null;
+                  : item.id === "market"
+                    ? displaySku.intelligence.marketObservationCount
+                    : null;
           return (
             <Link
               key={item.id}
@@ -478,7 +481,15 @@ export default async function SKUDetailPage({
         </div>
       ) : null}
 
-      <SkuOperationsPanel sku={displaySku} section={activeView} />
+      {activeView === "market" ? (
+        <div className="max-w-3xl">
+          <SKUReferencePanel sku={displaySku} />
+        </div>
+      ) : null}
+
+      {activeView !== "market" ? (
+        <SkuOperationsPanel sku={displaySku} section={activeView} />
+      ) : null}
     </div>
   );
 }

@@ -7,13 +7,7 @@ import { Edit, Trash2 } from "lucide-react";
 import { deleteProductIntelligenceItemAction } from "@/app/actions/product-intelligence";
 import { Button } from "@/components/ui/button";
 
-export function ProductIntelligenceActions({
-  id,
-  isOwner,
-}: {
-  id: string;
-  isOwner: boolean;
-}) {
+export function ProductIntelligenceActions({ id, isOwner }: { id: string; isOwner: boolean }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +15,7 @@ export function ProductIntelligenceActions({
   if (!isOwner) return null;
 
   const handleDelete = async () => {
-    if (!confirm("确认删除这条商品情报？相关观察记录也会一起删除。")) return;
+    if (!confirm("确认删除这条市场记录？相关价格观察也会一起删除。")) return;
     setLoading(true);
     setError(null);
     const result = await deleteProductIntelligenceItemAction(id);

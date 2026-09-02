@@ -16,6 +16,7 @@ import {
   itemFunctionStatusLabel,
   normalizeItemConditionType,
 } from "@/lib/inventory/item-condition";
+import { InventoryDetailsShell } from "@/components/inventory/inventory-details-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -195,24 +196,20 @@ export default async function ItemUnitsPage() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">单件库存</h1>
-          <p className="text-muted-foreground">
-            单件库存工作台用于核对 SKU 层级、标签、图片、库位和上架状态。
-          </p>
-        </div>
-        {canManage ? (
+    <InventoryDetailsShell
+      activeTab="items"
+      role={context.role}
+      actions={
+        canManage ? (
           <Link href="/inventory/items/new">
             <Button>
               <Plus className="mr-2 h-4 w-4" />
               添加单件库存
             </Button>
           </Link>
-        ) : null}
-      </div>
-
+        ) : null
+      }
+    >
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -288,6 +285,6 @@ export default async function ItemUnitsPage() {
           />
         </CardContent>
       </Card>
-    </div>
+    </InventoryDetailsShell>
   );
 }

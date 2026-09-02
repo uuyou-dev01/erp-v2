@@ -115,7 +115,7 @@ export default async function LocationDetailPage({
               <Button asChild size="sm">
                 <Link href={openingStockHref}>
                   <PackagePlus className="mr-1.5 h-4 w-4" />
-                  期初盘点
+                  录入已有库存
                 </Link>
               </Button>
               <Button asChild variant="outline" size="sm">
@@ -147,7 +147,7 @@ export default async function LocationDetailPage({
       {created === "1" && canManageInventory ? (
         <section className="flex flex-col gap-4 border-l-4 border-primary bg-primary/5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-semibold">仓库已创建，接下来录入期初实存</p>
+            <p className="text-sm font-semibold">仓库已创建，接下来可录入已有库存</p>
             <p className="mt-1 text-sm text-muted-foreground">
               按实际批次登记商品、数量、单位成本和币种；即使暂时没有库存，也可以稍后从本页开始。
             </p>
@@ -155,7 +155,7 @@ export default async function LocationDetailPage({
           <Button asChild size="sm" className="shrink-0">
             <Link href={openingStockHref}>
               <PackagePlus className="mr-1.5 h-4 w-4" />
-              开始期初盘点
+              开始录入
             </Link>
           </Button>
         </section>

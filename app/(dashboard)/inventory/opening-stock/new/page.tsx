@@ -15,13 +15,14 @@ export default async function NewOpeningStockPage({
 }: {
   searchParams: Promise<{
     skuIds?: string;
+    createdSkuId?: string;
     createdLocationId?: string;
     locationId?: string;
     returnTo?: string;
   }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
-  const { skuIds, createdLocationId, locationId, returnTo } = await searchParams;
+  const { skuIds, createdSkuId, createdLocationId, locationId, returnTo } = await searchParams;
   const [store, skus, locations] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
@@ -57,11 +58,14 @@ export default async function NewOpeningStockPage({
   const backHref = safeInternalReturnPath(returnTo) ?? "/inventory/opening-stock";
   const returnQuery = new URLSearchParams();
   if (skuIds) returnQuery.set("skuIds", skuIds);
+  if (createdSkuId) returnQuery.set("createdSkuId", createdSkuId);
+  if (createdLocationId) returnQuery.set("createdLocationId", createdLocationId);
   if (locationId) returnQuery.set("locationId", locationId);
   if (returnTo) returnQuery.set("returnTo", backHref);
-  const locationCreateReturnTo = `/inventory/opening-stock/new${
+  const prerequisiteReturnTo = `/inventory/opening-stock/new${
     returnQuery.size > 0 ? `?${returnQuery.toString()}` : ""
   }`;
+  const presetSkuIds = [...(skuIds ?? "").split(","), createdSkuId ?? ""].filter(Boolean);
 
   return (
     <div className="space-y-4">
@@ -73,8 +77,8 @@ export default async function NewOpeningStockPage({
         </Link>
         <PageHeader
           className="mb-0 flex-1"
-          title={targetLocation ? `期初盘点 · ${targetLocation.name}` : "录入期初库存"}
-          description="把系统启用前已经存在的实物，按商品、仓库、批次、数量和单位成本正式开账。"
+          title={targetLocation ? `录入已有库存 · ${targetLocation.name}` : "录入已有库存"}
+          description="把开始使用系统前已经存在的库存录入系统；这不是采购入库。"
         />
       </div>
 
@@ -90,11 +94,13 @@ export default async function NewOpeningStockPage({
           parentName: sku.parentSku?.name ?? null,
         }))}
         locations={locations}
-        presetSkuIds={(skuIds ?? "").split(",").filter(Boolean)}
+        presetSkuIds={presetSkuIds}
+        createdSkuId={createdSkuId}
         createdLocationId={createdLocationId}
         fixedLocationId={targetLocation?.id}
         returnTo={backHref}
-        locationCreateReturnTo={locationCreateReturnTo}
+        locationCreateReturnTo={prerequisiteReturnTo}
+        skuCreateReturnTo={prerequisiteReturnTo}
       />
     </div>
   );

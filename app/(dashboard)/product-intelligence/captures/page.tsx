@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { Button } from "@/components/ui/button";
 import { WebLinkCapture } from "@/components/product-intelligence/web-link-capture";
+import { ProductWorkspaceNav } from "@/components/inventory/product-workspace-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -39,9 +40,9 @@ export default async function CaptureInboxPage() {
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">商品情报采集箱</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">待整理采集</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            先保存公开页面的原始事实，再确认它属于哪个商品或 SKU。
+            保存外部商品链接和价格来源，再确认它属于哪个正式商品或 SKU。
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -56,6 +57,7 @@ export default async function CaptureInboxPage() {
           </Button>
         </div>
       </header>
+      <ProductWorkspaceNav active="captures" role={context.role} />
       <WebLinkCapture />
       <div>
         <div className="mb-3 flex items-center justify-between gap-3">

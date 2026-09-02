@@ -24,13 +24,7 @@ import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillmen
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
-
-function hasPlatform(product: ListingCoverageProduct, platformId?: string) {
-  if (!platformId) return true;
-  return product.records.some(
-    (record) => record.platformId === platformId && record.state === "active"
-  );
-}
+const LEGACY_SELLABLE_PARAMS = new Set(["platformId"]);
 
 function hasStatus(product: ListingCoverageProduct, status?: string) {
   if (!status) return true;
@@ -77,8 +71,6 @@ function matchesQuery(product: ListingCoverageProduct, query?: string) {
     product.skuName,
     ...product.variantRows.map((variant) => variant.skuCode),
     ...product.variantRows.map((variant) => variant.skuName),
-    ...product.records.map((record) => record.platformName),
-    ...product.records.map((record) => record.platformCode),
     product.brand ?? "",
     product.category ?? "",
   ].some((value) => value.toLowerCase().includes(keyword));
@@ -111,7 +103,7 @@ function sortProducts(products: ListingCoverageProduct[], sort?: string) {
 function paginationHref(params: Record<string, string | undefined>, page: number) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value && key !== "page") query.set(key, value);
+    if (value && key !== "page" && !LEGACY_SELLABLE_PARAMS.has(key)) query.set(key, value);
   }
   if (page > 1) query.set("page", String(page));
   const search = query.toString();
@@ -121,7 +113,7 @@ function paginationHref(params: Record<string, string | undefined>, page: number
 function currentHref(params: Record<string, string | undefined>) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value) query.set(key, value);
+    if (value && !LEGACY_SELLABLE_PARAMS.has(key)) query.set(key, value);
   }
   const search = query.toString();
   return search ? `/inventory/sellable?${search}` : "/inventory/sellable";
@@ -152,7 +144,7 @@ function withSellableParams(
 ) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value && key !== "page") query.set(key, value);
+    if (value && key !== "page" && !LEGACY_SELLABLE_PARAMS.has(key)) query.set(key, value);
   }
   for (const [key, value] of Object.entries(next)) {
     if (value) {
@@ -228,7 +220,6 @@ export default async function SellableInventoryPage({
   searchParams,
 }: {
   searchParams: Promise<{
-    platformId?: string;
     status?: string;
     risk?: string;
     sort?: string;
@@ -266,9 +257,6 @@ export default async function SellableInventoryPage({
   const visiblePlatforms = effectiveMarket
     ? platforms.filter((platform) => isPlatformTargetForMarket(platform, effectiveMarket))
     : platforms;
-  const activePlatformId = visiblePlatforms.some((platform) => platform.id === params.platformId)
-    ? params.platformId
-    : undefined;
   const scopedProducts = marketProducts
     .map((product) =>
       buildScopedListingCoverageProduct(product, {
@@ -280,7 +268,6 @@ export default async function SellableInventoryPage({
   const filteredProducts = sortProducts(
     scopedProducts.filter((product) => {
       if (!matchesUnlisted(product, params.unlisted)) return false;
-      if (!hasPlatform(product, activePlatformId)) return false;
       if (!hasStatus(product, params.status)) return false;
       if (!hasRisk(product, params.risk)) return false;
       if (!hasProductKind(product, params.kind)) return false;
@@ -373,17 +360,11 @@ export default async function SellableInventoryPage({
       </div>
 
       <InventorySellableToolbar
-        platforms={visiblePlatforms.map((platform) => ({
-          id: platform.id,
-          name: platform.name,
-          code: platform.code,
-        }))}
         locations={locationOptions.map((location) => ({
           id: location.id,
           label: location.label,
           qty: location.qty,
         }))}
-        activePlatformId={activePlatformId}
         locationId={params.locationId}
         productKind={params.kind}
         category={params.category}
