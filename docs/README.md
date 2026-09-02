@@ -114,7 +114,7 @@ docs/
 2. [系统约束](constraints.md) - 了解设计约束
 3. [UI规范](ui.md) - 遵循UI设计规范
 4. [开发交接规范](handoffs/README.md) - 接手跨模块开发前必读
-5. [当前版本交接](handoffs/2026-08-09-erp-business-intelligence-handoff.md) - 商品情报与 ERP 业务闭环基线
+5. [当前版本交接](handoffs/2026-09-02-opening-stock-hong-kong-deployment-handoff.md) - 期初库存与香港测试环境部署基线
 
 ### 模块开发
 

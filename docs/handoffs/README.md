@@ -4,6 +4,7 @@
 
 ## 当前基线
 
+- [2026-09-02 期初库存与香港测试环境部署交接](2026-09-02-opening-stock-hong-kong-deployment-handoff.md)
 - [2026-08-09 ERP 业务闭环与商品情报版本交接](2026-08-09-erp-business-intelligence-handoff.md)
 
 ## 后续会话的必做步骤

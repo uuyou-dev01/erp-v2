@@ -23,3 +23,4 @@
 - 阿里云杭州 ECS `i-bp1ckvizcsym89272kyu`，公网 IP `47.98.181.237`，仅用于酒店系统。不得把 ERP 域名、容器、数据库、反向代理或发布文件部署到该实例。
 - ERP 的升级、备份、数据库迁移、Nginx/HTTPS 和健康检查都必须以香港实例为目标；任何服务器操作前先核对实例 ID、地域与公网 IP。
 - 详细部署边界见 `docs/deployment/hosting-topology.md`。
+- 当前线上版本、证书、备份、验证证据和遗留事项见 `docs/handoffs/2026-09-02-opening-stock-hong-kong-deployment-handoff.md`；后续会话开始运维或库存开发前必须先阅读。
