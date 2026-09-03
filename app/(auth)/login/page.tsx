@@ -1,7 +1,9 @@
+import { headers } from "next/headers";
 import { LoginUserForm } from "@/components/auth/login-user-form";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { isSelfSignupEnabled } from "@/lib/auth/signup-policy";
 import { getInvitedSignup } from "@/lib/auth/invited-signup";
+import { isMobileUserAgent } from "@/lib/mobile/user-agent";
 
 export const dynamic = "force-dynamic";
 
@@ -11,8 +13,13 @@ export default async function LoginPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const params = await searchParams;
+  const defaultNextPath = isMobileUserAgent((await headers()).get("user-agent"))
+    ? "/m"
+    : "/workbench";
   const nextPath =
-    params.next?.startsWith("/") && !params.next.startsWith("//") ? params.next : "/workbench";
+    params.next?.startsWith("/") && !params.next.startsWith("//")
+      ? params.next
+      : defaultNextPath;
   const invitedSignup = await getInvitedSignup(nextPath);
   return (
     <AuthShell
