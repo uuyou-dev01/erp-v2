@@ -457,11 +457,11 @@ async function resolveSkuCreateIdentity(
   };
 }
 
-function validateSkuCatalogMeta(attributes: Record<string, unknown>) {
+function validateSkuCatalogMeta(attributes: Record<string, unknown>, role?: SkuCatalogRole) {
   const meta = parseSkuCatalogMeta(attributes);
   for (const [label, value] of [
     ["参考售价", meta.referencePrice],
-    ["参考成本", meta.referenceCost],
+    ["目标进货价", meta.referenceCost],
   ] as const) {
     if (!value) continue;
     let decimal: Decimal;
@@ -475,8 +475,35 @@ function validateSkuCatalogMeta(attributes: Record<string, unknown>) {
     }
   }
 
-  if (meta.currency && !SUPPORTED_SKU_CURRENCIES.has(meta.currency)) {
-    throw new Error("币种必须是 CNY、JPY、USD 或 EUR");
+  for (const [label, currency] of [
+    ["售价币种", meta.referencePriceCurrency ?? meta.currency],
+    ["进货价币种", meta.referenceCostCurrency ?? meta.currency],
+  ] as const) {
+    if (currency && !SUPPORTED_SKU_CURRENCIES.has(currency)) {
+      throw new Error(`${label}必须是 CNY、JPY、USD 或 EUR`);
+    }
+  }
+
+  if (role === "GROUP" && meta.physicalDetails) {
+    throw new Error("商品组不能填写 SKU 详细信息，请在具体规格 SKU 中填写");
+  }
+
+  for (const [label, value] of [
+    ["重量", meta.physicalDetails?.weightKg],
+    ["长度", meta.physicalDetails?.lengthCm],
+    ["宽度", meta.physicalDetails?.widthCm],
+    ["高度", meta.physicalDetails?.heightCm],
+  ] as const) {
+    if (!value) continue;
+    let decimal: Decimal;
+    try {
+      decimal = new Decimal(value);
+    } catch {
+      throw new Error(`${label}必须是有效数字`);
+    }
+    if (!decimal.isFinite() || decimal.lte(0)) {
+      throw new Error(`${label}必须大于 0`);
+    }
   }
 }
 
@@ -673,7 +700,7 @@ export async function createSKU(data: CreateSKUInput) {
     ...(data.attributes ?? {}),
     ...(identity.variantValues ?? {}),
   };
-  validateSkuCatalogMeta(attributes);
+  validateSkuCatalogMeta(attributes, identity.role);
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
 
@@ -868,7 +895,7 @@ export async function updateSKU(data: UpdateSKUInput) {
     ...(data.attributes ?? {}),
     ...(variantValues ?? {}),
   };
-  validateSkuCatalogMeta(attributes);
+  validateSkuCatalogMeta(attributes, role);
   const meta = parseSkuCatalogMeta(attributes, data.imageUrl);
   const imageUrl = resolveCoverImageUrl(meta, data.imageUrl) ?? data.imageUrl ?? null;
 

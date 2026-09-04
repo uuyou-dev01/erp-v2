@@ -77,7 +77,6 @@ const PARENT_PRESET_ATTRIBUTES = [
   { key: "材质", value: "" },
   { key: "风格", value: "" },
   { key: "产地", value: "" },
-  { key: "重量", value: "" },
 ];
 
 const VARIANT_AXIS_PRESETS = [
@@ -94,6 +93,13 @@ const CHILD_PRESET_ATTRIBUTES = [
   { key: "型号后缀", value: "" },
   { key: "包装规格", value: "" },
 ];
+
+const CURRENCY_OPTIONS = [
+  { value: "CNY", label: "人民币 (CNY)" },
+  { value: "JPY", label: "日元 (JPY)" },
+  { value: "USD", label: "美元 (USD)" },
+  { value: "EUR", label: "欧元 (EUR)" },
+] as const;
 
 function normalizeCatalogRole(value: unknown, fallback: SkuCatalogRole): SkuCatalogRole {
   return value === "GROUP" || value === "VARIANT" || value === "SIMPLE" ? value : fallback;
@@ -147,9 +153,14 @@ function initialCatalogState(initialData?: SKUFormProps["initialData"]) {
     barcode: parsed?.barcode ?? "",
     referencePrice: parsed?.referencePrice ?? "",
     referenceCost: parsed?.referenceCost ?? "",
-    currency: parsed?.currency ?? "CNY",
+    referencePriceCurrency: parsed?.referencePriceCurrency ?? parsed?.currency ?? "CNY",
+    referenceCostCurrency: parsed?.referenceCostCurrency ?? parsed?.currency ?? "CNY",
     series: parsed?.series ?? "",
     notes: parsed?.notes ?? "",
+    weightKg: parsed?.physicalDetails?.weightKg ?? "",
+    lengthCm: parsed?.physicalDetails?.lengthCm ?? "",
+    widthCm: parsed?.physicalDetails?.widthCm ?? "",
+    heightCm: parsed?.physicalDetails?.heightCm ?? "",
     tagsInput: (parsed?.tags ?? []).join(", "),
     images:
       parsed?.images && parsed.images.length > 0
@@ -324,16 +335,28 @@ export function SKUForm({
         .map((t) => t.trim())
         .filter(Boolean);
 
+      const physicalDetails = {
+        weightKg: catalog.weightKg.trim() || undefined,
+        lengthCm: catalog.lengthCm.trim() || undefined,
+        widthCm: catalog.widthCm.trim() || undefined,
+        heightCm: catalog.heightCm.trim() || undefined,
+      };
+      const hasPhysicalDetails = Object.values(physicalDetails).some(Boolean);
+
       const merged = mergeSkuCatalogAttributes(initialData?.attributes, {
         catalogStatus: catalog.catalogStatus,
         barcode: catalog.barcode || null,
         referencePrice: catalog.referencePrice || null,
         referenceCost: catalog.referenceCost || null,
-        currency: catalog.currency || null,
+        referencePriceCurrency: catalog.referencePriceCurrency || null,
+        referenceCostCurrency: catalog.referenceCostCurrency || null,
+        // 同步旧字段，让尚未迁移的读取端仍把售价显示为正确币种。
+        currency: catalog.referencePriceCurrency || null,
         series: isVariant ? undefined : catalog.series || null,
         notes: catalog.notes || null,
         tags,
         images: catalog.images,
+        physicalDetails: !isGroup && hasPhysicalDetails ? physicalDetails : null,
       });
 
       const attributesPayload = { ...merged, ...variantObj };
@@ -691,39 +714,63 @@ export function SKUForm({
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2">
             <div className="space-y-2">
-              <Label>参考售价</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={catalog.referencePrice}
-                onChange={(e) => setCatalog((c) => ({ ...c, referencePrice: e.target.value }))}
-                placeholder="可选"
-              />
+              <div className="grid grid-cols-[minmax(0,1fr)_9.5rem] gap-2">
+                <Label htmlFor="referencePrice">参考售价</Label>
+                <Label htmlFor="referencePriceCurrency">售价币种</Label>
+                <Input
+                  id="referencePrice"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={catalog.referencePrice}
+                  onChange={(e) => setCatalog((c) => ({ ...c, referencePrice: e.target.value }))}
+                  placeholder="可选"
+                />
+                <select
+                  id="referencePriceCurrency"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={catalog.referencePriceCurrency}
+                  onChange={(e) =>
+                    setCatalog((c) => ({ ...c, referencePriceCurrency: e.target.value }))
+                  }
+                >
+                  {CURRENCY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="space-y-2">
-              <Label>目标进货价</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={catalog.referenceCost}
-                onChange={(e) => setCatalog((c) => ({ ...c, referenceCost: e.target.value }))}
-                placeholder="仅供采购参考，不写入库存成本"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>币种</Label>
-              <select
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={catalog.currency}
-                onChange={(e) => setCatalog((c) => ({ ...c, currency: e.target.value }))}
-              >
-                <option value="CNY">人民币 (CNY)</option>
-                <option value="JPY">日元 (JPY)</option>
-                <option value="USD">美元 (USD)</option>
-                <option value="EUR">欧元 (EUR)</option>
-              </select>
+              <div className="grid grid-cols-[minmax(0,1fr)_9.5rem] gap-2">
+                <Label htmlFor="referenceCost">目标进货价</Label>
+                <Label htmlFor="referenceCostCurrency">进货价币种</Label>
+                <Input
+                  id="referenceCost"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={catalog.referenceCost}
+                  onChange={(e) => setCatalog((c) => ({ ...c, referenceCost: e.target.value }))}
+                  placeholder="可选"
+                />
+                <select
+                  id="referenceCostCurrency"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={catalog.referenceCostCurrency}
+                  onChange={(e) =>
+                    setCatalog((c) => ({ ...c, referenceCostCurrency: e.target.value }))
+                  }
+                >
+                  {CURRENCY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs text-muted-foreground">仅供采购参考，不写入库存成本。</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="barcode">商品条码</Label>
@@ -744,6 +791,88 @@ export function SKUForm({
             </div>
           </CardContent>
         </Card>
+      ) : null}
+
+      {!isGroup ? (
+        <details className="rounded-lg border bg-background" data-testid="sku-physical-details">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 [&::-webkit-details-marker]:hidden">
+            <div>
+              <p className="text-sm font-semibold">SKU 详细信息（可选）</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                补充重量和长宽高；不填写不会影响 SKU 创建。
+              </p>
+            </div>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {[catalog.weightKg, catalog.lengthCm, catalog.widthCm, catalog.heightCm].filter(
+                Boolean
+              ).length > 0
+                ? `已填写 ${
+                    [catalog.weightKg, catalog.lengthCm, catalog.widthCm, catalog.heightCm].filter(
+                      Boolean
+                    ).length
+                  } 项`
+                : "展开填写"}
+            </span>
+          </summary>
+          <div className="grid gap-4 border-t px-4 py-4 md:grid-cols-4">
+            <div className="space-y-2">
+              <Label htmlFor="weightKg">重量（kg）</Label>
+              <Input
+                id="weightKg"
+                type="number"
+                min="0.001"
+                step="0.001"
+                value={catalog.weightKg}
+                onChange={(event) =>
+                  setCatalog((current) => ({ ...current, weightKg: event.target.value }))
+                }
+                placeholder="例如：0.5"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lengthCm">长（cm）</Label>
+              <Input
+                id="lengthCm"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={catalog.lengthCm}
+                onChange={(event) =>
+                  setCatalog((current) => ({ ...current, lengthCm: event.target.value }))
+                }
+                placeholder="例如：30"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="widthCm">宽（cm）</Label>
+              <Input
+                id="widthCm"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={catalog.widthCm}
+                onChange={(event) =>
+                  setCatalog((current) => ({ ...current, widthCm: event.target.value }))
+                }
+                placeholder="例如：20"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="heightCm">高（cm）</Label>
+              <Input
+                id="heightCm"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={catalog.heightCm}
+                onChange={(event) =>
+                  setCatalog((current) => ({ ...current, heightCm: event.target.value }))
+                }
+                placeholder="例如：10"
+              />
+            </div>
+          </div>
+        </details>
       ) : null}
 
       {!isVariant ? (

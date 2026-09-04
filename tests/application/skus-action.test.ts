@@ -205,7 +205,23 @@ describe("sku action results", () => {
 
     expect(invalidCurrency.success).toBe(false);
     if (!invalidCurrency.success) {
-      expect(invalidCurrency.error).toContain("币种必须是 CNY、JPY、USD 或 EUR");
+      expect(invalidCurrency.error).toContain("售价币种必须是 CNY、JPY、USD 或 EUR");
+    }
+
+    const invalidPurchaseCurrency = await createSKUAction({
+      storeId,
+      code: `SKU_${runId}_BAD_PURCHASE_CURRENCY`,
+      name: "Bad Purchase Currency",
+      attributes: {
+        referenceCost: "80",
+        referencePriceCurrency: "CNY",
+        referenceCostCurrency: "ABC",
+      },
+    });
+
+    expect(invalidPurchaseCurrency.success).toBe(false);
+    if (!invalidPurchaseCurrency.success) {
+      expect(invalidPurchaseCurrency.error).toContain("进货价币种必须是 CNY、JPY、USD 或 EUR");
     }
   });
 
@@ -233,6 +249,14 @@ describe("sku action results", () => {
       parentSkuId: groupResult.id,
       variantLabel: "42码",
       variantValues: { 尺码: "42码" },
+      attributes: {
+        physicalDetails: {
+          weightKg: "0.85",
+          lengthCm: "32",
+          widthCm: "21",
+          heightCm: "12",
+        },
+      },
     });
 
     expect(variantResult.success).toBe(true);
@@ -242,6 +266,58 @@ describe("sku action results", () => {
     expect(variantResult.catalogRole).toBe("VARIANT");
     expect(variantResult.variantLabel).toBe("42码");
     expect(variantResult.variantValues).toEqual({ 尺码: "42码" });
+    expect(variantResult.attributes).toMatchObject({
+      physicalDetails: {
+        weightKg: "0.85",
+        lengthCm: "32",
+        widthCm: "21",
+        heightCm: "12",
+      },
+    });
+  });
+
+  it("stores optional physical details on an independent SKU but rejects them on a group", async () => {
+    const simpleResult = await createSKUAction({
+      storeId,
+      catalogRole: "SIMPLE",
+      name: "带物流信息的独立商品",
+      attributes: {
+        physicalDetails: { weightKg: "1.25", lengthCm: "40", widthCm: "25", heightCm: "8" },
+      },
+    });
+
+    expect(simpleResult.success).toBe(true);
+    if (simpleResult.success) {
+      expect(simpleResult.attributes).toMatchObject({
+        physicalDetails: { weightKg: "1.25", lengthCm: "40", widthCm: "25", heightCm: "8" },
+      });
+    }
+
+    const groupResult = await createSKUAction({
+      storeId,
+      catalogRole: "GROUP",
+      name: "不应记录重量的商品组",
+      attributes: { physicalDetails: { weightKg: "1" } },
+    });
+
+    expect(groupResult.success).toBe(false);
+    if (!groupResult.success) {
+      expect(groupResult.error).toContain("商品组不能填写 SKU 详细信息");
+    }
+  });
+
+  it("rejects invalid optional SKU weight and dimensions", async () => {
+    const result = await createSKUAction({
+      storeId,
+      catalogRole: "SIMPLE",
+      name: "无效尺寸商品",
+      attributes: { physicalDetails: { weightKg: "0", lengthCm: "-1" } },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("重量必须大于 0");
+    }
   });
 
   it("rejects inventory operations for an explicit catalog group even before variants exist", async () => {

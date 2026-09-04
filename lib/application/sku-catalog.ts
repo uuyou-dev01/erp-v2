@@ -11,6 +11,17 @@ export interface SkuCatalogImage {
   isCover?: boolean;
 }
 
+export interface SkuPhysicalDetails {
+  /** 标准重量，单位：千克。 */
+  weightKg?: string;
+  /** 商品长度，单位：厘米。 */
+  lengthCm?: string;
+  /** 商品宽度，单位：厘米。 */
+  widthCm?: string;
+  /** 商品高度，单位：厘米。 */
+  heightCm?: string;
+}
+
 export interface SkuNewFields {
   isSealed?: boolean;
   packagingStatus?: string;
@@ -36,11 +47,18 @@ export interface SkuCatalogMeta {
   barcode?: string | null;
   referencePrice?: string | null;
   referenceCost?: string | null;
+  /** 参考售价的币种。旧数据回退到 currency。 */
+  referencePriceCurrency?: string | null;
+  /** 目标进货价的币种。旧数据回退到 currency。 */
+  referenceCostCurrency?: string | null;
+  /** @deprecated 旧版参考价格共用币种；保留用于兼容历史数据。 */
   currency?: string | null;
   tags?: string[];
   series?: string | null;
   notes?: string | null;
   images?: SkuCatalogImage[];
+  /** 可交易 SKU 自身的重量与尺寸；商品组不使用。 */
+  physicalDetails?: SkuPhysicalDetails | null;
   newFields?: SkuNewFields;
   usedFields?: SkuUsedFields;
 }
@@ -51,11 +69,14 @@ const RESERVED_KEYS = new Set([
   "barcode",
   "referencePrice",
   "referenceCost",
+  "referencePriceCurrency",
+  "referenceCostCurrency",
   "currency",
   "tags",
   "series",
   "notes",
   "images",
+  "physicalDetails",
   "newFields",
   "usedFields",
 ]);
@@ -157,6 +178,24 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function optionalMeasurement(value: unknown) {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const normalized = String(value).trim();
+  return normalized || undefined;
+}
+
+function parsePhysicalDetails(value: unknown): SkuPhysicalDetails | null {
+  const raw = asRecord(value);
+  const details = {
+    weightKg: optionalMeasurement(raw.weightKg),
+    lengthCm: optionalMeasurement(raw.lengthCm),
+    widthCm: optionalMeasurement(raw.widthCm),
+    heightCm: optionalMeasurement(raw.heightCm),
+  } satisfies SkuPhysicalDetails;
+
+  return Object.values(details).some(Boolean) ? details : null;
+}
+
 function pickVariantAttributes(raw: Record<string, unknown>) {
   const variant: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
@@ -199,6 +238,7 @@ export function parseSkuCatalogMeta(
   const catalogStatus = raw.catalogStatus === "disabled" ? "disabled" : DEFAULT_META.catalogStatus;
   const productKind = raw.productKind === "USED" ? "USED" : "NEW";
   const newFields = asRecord(raw.newFields) as SkuNewFields;
+  const legacyCurrency = typeof raw.currency === "string" ? raw.currency : null;
 
   return {
     catalogStatus,
@@ -211,11 +251,16 @@ export function parseSkuCatalogMeta(
           : null,
     referencePrice: typeof raw.referencePrice === "string" ? raw.referencePrice : null,
     referenceCost: typeof raw.referenceCost === "string" ? raw.referenceCost : null,
-    currency: typeof raw.currency === "string" ? raw.currency : null,
+    referencePriceCurrency:
+      typeof raw.referencePriceCurrency === "string" ? raw.referencePriceCurrency : legacyCurrency,
+    referenceCostCurrency:
+      typeof raw.referenceCostCurrency === "string" ? raw.referenceCostCurrency : legacyCurrency,
+    currency: legacyCurrency,
     tags: Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === "string") : [],
     series: typeof raw.series === "string" ? raw.series : null,
     notes: typeof raw.notes === "string" ? raw.notes : null,
     images,
+    physicalDetails: parsePhysicalDetails(raw.physicalDetails),
     newFields,
     usedFields: asRecord(raw.usedFields) as SkuUsedFields,
     variantAttributes: pickVariantAttributes(raw),
@@ -229,6 +274,10 @@ export function mergeSkuCatalogAttributes(
   const parsed = parseSkuCatalogMeta(existing);
   const images =
     meta.images !== undefined ? meta.images : (parsed.images?.map((img) => ({ ...img })) ?? []);
+  const physicalDetails =
+    meta.physicalDetails !== undefined
+      ? parsePhysicalDetails(meta.physicalDetails)
+      : parsed.physicalDetails;
 
   const cover = images.find((img) => img.isCover) ?? images[0];
   if (cover) {
@@ -245,11 +294,20 @@ export function mergeSkuCatalogAttributes(
       meta.barcode !== undefined ? (meta.barcode ?? undefined) : (parsed.barcode ?? undefined),
     referencePrice: meta.referencePrice ?? parsed.referencePrice ?? undefined,
     referenceCost: meta.referenceCost ?? parsed.referenceCost ?? undefined,
-    currency: meta.currency ?? parsed.currency ?? undefined,
+    referencePriceCurrency:
+      meta.referencePriceCurrency ?? parsed.referencePriceCurrency ?? undefined,
+    referenceCostCurrency: meta.referenceCostCurrency ?? parsed.referenceCostCurrency ?? undefined,
+    currency:
+      meta.currency ??
+      meta.referencePriceCurrency ??
+      parsed.currency ??
+      parsed.referencePriceCurrency ??
+      undefined,
     tags: meta.tags ?? parsed.tags,
     series: meta.series ?? parsed.series ?? undefined,
     notes: meta.notes ?? parsed.notes ?? undefined,
     images: images.length > 0 ? images : undefined,
+    physicalDetails: physicalDetails ?? undefined,
     newFields: meta.newFields ?? parsed.newFields,
     usedFields: meta.usedFields ?? parsed.usedFields,
   };
@@ -543,9 +601,9 @@ function firstImageFromPayload(value: unknown) {
   const imageUrls = (value as Record<string, unknown>).imageUrls;
   if (!Array.isArray(imageUrls)) return null;
   return (
-    imageUrls.find(
-      (url): url is string => typeof url === "string" && /^https?:\/\//i.test(url.trim())
-    )?.trim() ?? null
+    imageUrls
+      .find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url.trim()))
+      ?.trim() ?? null
   );
 }
 
@@ -687,7 +745,7 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
       catalogStatus: meta.catalogStatus,
       productKind: meta.productKind,
       referencePrice: meta.referencePrice ?? null,
-      currency: meta.currency ?? null,
+      currency: meta.referencePriceCurrency ?? meta.currency ?? null,
       series: meta.series ?? null,
       business: {
         sellableQty: stockMetrics.sellableQty.toString(),
@@ -1041,7 +1099,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     catalogStatus: parsed.catalogStatus,
     productKind: parsed.productKind,
     referencePrice: parsed.referencePrice ?? null,
-    currency: parsed.currency ?? null,
+    currency: parsed.referencePriceCurrency ?? parsed.currency ?? null,
     series: parsed.series ?? null,
     business: {
       sellableQty: stockBreakdown.sellableQty.toString(),

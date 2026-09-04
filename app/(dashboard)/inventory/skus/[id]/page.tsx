@@ -314,6 +314,8 @@ export default async function SKUDetailPage({
               productKind: displaySku.meta.productKind,
               referencePrice: displaySku.meta.referencePrice,
               referenceCost: displaySku.meta.referenceCost,
+              referencePriceCurrency: displaySku.meta.referencePriceCurrency,
+              referenceCostCurrency: displaySku.meta.referenceCostCurrency,
               currency: displaySku.meta.currency,
               tags: displaySku.meta.tags,
               series: displaySku.meta.series,
@@ -321,6 +323,7 @@ export default async function SKUDetailPage({
               images: displaySku.meta.images,
               newFields: displaySku.meta.newFields,
               usedFields: displaySku.meta.usedFields,
+              physicalDetails: displaySku.meta.physicalDetails,
             },
             description: displaySku.description,
             imageUrl: displaySku.imageUrl,
@@ -465,6 +468,32 @@ export default async function SKUDetailPage({
                     }
                   />
                 </dl>
+                {displaySku.catalogRole !== "GROUP" ? (
+                  <dl className="grid gap-3 border-t pt-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <InfoCell
+                      label="重量"
+                      value={
+                        displaySku.meta.physicalDetails?.weightKg ? (
+                          `${displaySku.meta.physicalDetails.weightKg} kg`
+                        ) : (
+                          <MissingInfoValue />
+                        )
+                      }
+                    />
+                    <InfoCell
+                      label="长 × 宽 × 高"
+                      value={
+                        displaySku.meta.physicalDetails?.lengthCm ||
+                        displaySku.meta.physicalDetails?.widthCm ||
+                        displaySku.meta.physicalDetails?.heightCm ? (
+                          `${displaySku.meta.physicalDetails?.lengthCm ?? "—"} × ${displaySku.meta.physicalDetails?.widthCm ?? "—"} × ${displaySku.meta.physicalDetails?.heightCm ?? "—"} cm`
+                        ) : (
+                          <MissingInfoValue />
+                        )
+                      }
+                    />
+                  </dl>
+                ) : null}
                 {displaySku.description ? (
                   <InfoCell label="描述" value={displaySku.description} />
                 ) : null}
