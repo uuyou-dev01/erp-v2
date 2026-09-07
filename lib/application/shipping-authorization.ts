@@ -33,7 +33,7 @@ export async function assertCanShipCustomerOrder(input: {
   userId: string;
   role: string;
 }) {
-  const [allocations, conflictingTask, authorizedLocationIds] = await Promise.all([
+  const [allocations, incompleteTasks, authorizedLocationIds] = await Promise.all([
     prisma.orderAllocation.findMany({
       where: {
         orderLine: { orderId: input.orderId },
@@ -44,17 +44,15 @@ export async function assertCanShipCustomerOrder(input: {
         itemUnit: { select: { locationId: true } },
       },
     }),
-    prisma.task.findFirst({
+    prisma.task.findMany({
       where: {
-        organizationId: input.organizationId,
         storeId: input.storeId,
         type: TASK_TYPE.SHIP_ORDER,
         refType: "CUSTOMER_ORDER",
         refId: input.orderId,
         status: { in: [...INCOMPLETE_TASK_STATUSES] },
-        assignedToId: { not: null },
       },
-      select: { assignedToId: true },
+      select: { organizationId: true, assignedToId: true },
       orderBy: { createdAt: "desc" },
     }),
     getLocationIdsWithCapability(input.userId, "ship"),
@@ -70,6 +68,11 @@ export async function assertCanShipCustomerOrder(input: {
         .filter((locationId): locationId is string => Boolean(locationId))
     )
   );
+
+  if (incompleteTasks.some((task) => task.organizationId !== input.organizationId)) {
+    throw new Error("订单已派发给合作仓，请由仓库任务的执行人完成发货");
+  }
+  const conflictingTask = incompleteTasks.find((task) => task.assignedToId);
 
   assertCurrentShipmentAccess({
     role: input.role,

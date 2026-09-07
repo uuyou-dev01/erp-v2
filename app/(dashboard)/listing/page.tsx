@@ -28,6 +28,8 @@ function flattenListingRecords(products: ListingCoverageProduct[]): ListingOpsIt
   return products.flatMap((product) =>
     product.records.map((record) => ({
       id: record.listingId,
+      salesChannelAccountId: record.salesChannelAccountId,
+      hasResaleSource: record.hasResaleSource,
       listingType: record.listingScope,
       status: record.status,
       skuId: record.skuId,

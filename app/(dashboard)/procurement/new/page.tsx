@@ -12,7 +12,7 @@ export default async function NewPurchaseOrderPage({
   const { activeStoreId: storeId } = await requireUserContext();
   const { skuId } = await searchParams;
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       <div className="flex items-start gap-3">
         <BackButton label="" fallbackHref="/procurement" className="mt-0.5 shrink-0" />
         <div>

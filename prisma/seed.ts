@@ -593,6 +593,7 @@ async function seedDemoCatalog(storeId: string, userId: string) {
       currency: "JPY",
       subtotal: "52000",
       totalPaid: "52000",
+      shippingFeeStatus: "ACTUAL",
       orderStatus: "DELIVERED",
       createdAt: new Date("2026-07-05T00:00:00.000Z"),
       confirmedAt: new Date("2026-07-05T00:00:00.000Z"),

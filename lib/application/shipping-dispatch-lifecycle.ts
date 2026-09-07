@@ -496,7 +496,10 @@ export async function withdrawShipOrderTask(input: {
       locationId: dispatch.task.fulfillmentLocationId,
       userId: input.actorUserId,
     });
-    if (!membership && !warehouseManager) throw new Error("无权撤回这个仓库任务");
+    const isTaskCreator = dispatch.task.createdById === input.actorUserId;
+    if (!membership && !warehouseManager && !isTaskCreator) {
+      throw new Error("无权撤回这个仓库任务");
+    }
     if (dispatch.task.status === TASK_STATUS.DONE) throw new Error("已完成任务不能撤回");
     if (dispatch.task.status === TASK_STATUS.IN_PROGRESS && !reason) {
       throw new Error("任务已经开始，请填写撤回原因");
@@ -558,6 +561,95 @@ export async function withdrawShipOrderTask(input: {
     });
     return { outcome: "withdrawn" as const };
   });
+}
+
+/**
+ * Cancels every still-open shipping task for one exact customer order. This is
+ * called from the order-cancellation transaction so a warehouse cannot keep a
+ * stale, claimable task after inventory has been released.
+ */
+export async function cancelShipOrderTasksForOrderInTransaction(
+  tx: Prisma.TransactionClient,
+  input: { orderId: string; actorUserId: string; reason: string }
+) {
+  const tasks = await tx.task.findMany({
+    where: {
+      type: TASK_TYPE.SHIP_ORDER,
+      refType: "CUSTOMER_ORDER",
+      refId: input.orderId,
+      status: { in: [...INCOMPLETE_TASK_STATUSES] },
+    },
+    include: {
+      dispatch: { include: { request: true } },
+    },
+  });
+  const cancelledAt = new Date();
+
+  for (const task of tasks) {
+    const dispatch = task.dispatch;
+    if (dispatch?.request.status === "OPEN") {
+      await withdrawCollaborationRequest(tx, {
+        requestId: dispatch.requestId,
+        actor: { type: "USER", ref: input.actorUserId },
+        resolutionCode: "ORDER_CANCELLED",
+        withdrawnAt: cancelledAt,
+      });
+    } else if (dispatch?.request.status === "ACCEPTED") {
+      await cancelAcceptedCollaborationRequest(tx, {
+        requestId: dispatch.requestId,
+        actor: { type: "USER", ref: input.actorUserId },
+        resolutionCode: "ORDER_CANCELLED",
+        cancelledAt,
+      });
+    }
+
+    if (dispatch) {
+      const pendingHandoffs = await tx.collaborationRequest.findMany({
+        where: {
+          parentRequestId: dispatch.requestId,
+          kind: "SHIP_ORDER_HANDOFF",
+          status: "OPEN",
+        },
+        select: { id: true },
+      });
+      await tx.collaborationRequest.updateMany({
+        where: { id: { in: pendingHandoffs.map((request) => request.id) } },
+        data: {
+          status: "CANCELLED",
+          cancelledAt,
+          resolvedAt: cancelledAt,
+          resolutionCode: "PARENT_ORDER_CANCELLED",
+        },
+      });
+      for (const handoff of pendingHandoffs) {
+        await tx.collaborationEvent.create({
+          data: {
+            requestId: handoff.id,
+            type: "CANCELLED",
+            actorScopeType: "USER",
+            actorScopeRef: input.actorUserId,
+            dedupeKey: "request:cancelled:order-cancelled",
+            payload: { orderId: input.orderId, reason: input.reason },
+          },
+        });
+      }
+    }
+
+    await tx.task.update({
+      where: { id: task.id },
+      data: { status: TASK_STATUS.CANCELLED, cancelledAt },
+    });
+    await tx.notification.updateMany({
+      where: { taskId: task.id, resolvedAt: null },
+      data: {
+        resolvedAt: cancelledAt,
+        resolutionCode: "ORDER_CANCELLED",
+        resolvedById: input.actorUserId,
+      },
+    });
+  }
+
+  return tasks;
 }
 
 export async function completeShipOrderDispatchInTransaction(

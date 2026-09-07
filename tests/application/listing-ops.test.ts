@@ -10,6 +10,8 @@ function listing(
 ): ListingOpsItem {
   return {
     id,
+    salesChannelAccountId: null,
+    hasResaleSource: false,
     listingType: "SKU",
     status,
     skuId: id,

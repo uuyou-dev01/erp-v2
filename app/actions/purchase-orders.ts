@@ -1812,9 +1812,10 @@ export async function inspectPurchaseReceiptQuantitiesAction(data: {
 
 export async function returnPurchaseOrder(data: ReturnPurchaseOrderInput) {
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "purchase_orders" WHERE "id" = ${data.purchaseOrderId} FOR UPDATE`;
     const order = await tx.purchaseOrder.findUnique({
       where: { id: data.purchaseOrderId },
-      include: { lines: { select: { id: true } } },
+      include: { lines: { select: { id: true, skuId: true } } },
     });
     if (!order) throw new Error("采购单不存在");
     if (order.status !== "RECEIVED") {
@@ -1822,20 +1823,67 @@ export async function returnPurchaseOrder(data: ReturnPurchaseOrderInput) {
     }
 
     const sourceIds = [order.id, ...order.lines.map((line) => line.id)];
-    const [lots, units] = await Promise.all([
+    const [lotRefs, unitRefs] = await Promise.all([
       tx.inventoryLot.findMany({
         where: { storeId: order.storeId, sourceType: "PURCHASE", sourceId: { in: sourceIds } },
-        include: { allocations: { select: { id: true, status: true } } },
+        select: { id: true, skuId: true },
       }),
       tx.itemUnit.findMany({
         where: { storeId: order.storeId, sourceType: "PURCHASE", sourceId: { in: sourceIds } },
-        include: { allocations: { select: { id: true, status: true } } },
+        select: { id: true, skuId: true },
       }),
     ]);
 
+    const skuIds = [
+      ...new Set([
+        ...order.lines.map((line) => line.skuId),
+        ...lotRefs.map((lot) => lot.skuId),
+        ...unitRefs.map((unit) => unit.skuId),
+      ]),
+    ].sort();
+    const lotIds = [...new Set(lotRefs.map((lot) => lot.id))].sort();
+    const itemUnitIds = [...new Set(unitRefs.map((unit) => unit.id))].sort();
+
+    // Keep the same inventory lock order used by sales and fulfillment flows.
+    for (const skuId of skuIds) {
+      await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+    }
+    for (const lotId of lotIds) {
+      await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+    }
+    for (const itemUnitId of itemUnitIds) {
+      await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+    }
+
+    const [lots, units, fulfillmentAllocation] = await Promise.all([
+      tx.inventoryLot.findMany({
+        where: { id: { in: lotIds } },
+        include: {
+          allocations: { select: { id: true } },
+        },
+      }),
+      tx.itemUnit.findMany({
+        where: { id: { in: itemUnitIds } },
+        include: {
+          allocations: { select: { id: true } },
+        },
+      }),
+      tx.fulfillmentInventoryAllocation.findFirst({
+        where: {
+          status: "ALLOCATED",
+          OR: [{ lotId: { in: lotIds } }, { itemUnitId: { in: itemUnitIds } }],
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    if (lots.length !== lotIds.length || units.length !== itemUnitIds.length) {
+      throw new Error("采购库存发生变化，请刷新后重试");
+    }
+
     const allocatedLot = lots.find((lot) => lot.allocations.length > 0);
     const allocatedUnit = units.find((unit) => unit.allocations.length > 0);
-    if (allocatedLot || allocatedUnit) {
+    if (allocatedLot || allocatedUnit || fulfillmentAllocation) {
       throw new Error("采购库存已被销售或分配，不能整单退货；请先处理关联销售单");
     }
     if (lots.some((lot) => lot.status !== "ACTIVE")) {

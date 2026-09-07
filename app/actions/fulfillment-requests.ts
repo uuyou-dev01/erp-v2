@@ -316,7 +316,33 @@ async function shipFulfillmentInventory(
     quantity: { toString(): string };
   }
 ) {
-  const allocations = await tx.fulfillmentInventoryAllocation.findMany({
+  let allocations = await tx.fulfillmentInventoryAllocation.findMany({
+    where: { fulfillmentRequestId: request.id, status: "ALLOCATED" },
+  });
+  const itemUnitIds = allocations.flatMap((allocation) =>
+    allocation.itemUnitId ? [allocation.itemUnitId] : []
+  );
+  const lotIds = allocations.flatMap((allocation) => (allocation.lotId ? [allocation.lotId] : []));
+  const [itemUnits, lots] = await Promise.all([
+    tx.itemUnit.findMany({
+      where: { id: { in: itemUnitIds } },
+      select: { id: true, skuId: true },
+    }),
+    tx.inventoryLot.findMany({
+      where: { id: { in: lotIds } },
+      select: { id: true, skuId: true },
+    }),
+  ]);
+  for (const skuId of [...new Set([...itemUnits, ...lots].map((item) => item.skuId))].sort()) {
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+  }
+  for (const lotId of lots.map((lot) => lot.id).sort()) {
+    await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+  }
+  for (const itemUnitId of itemUnits.map((unit) => unit.id).sort()) {
+    await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+  }
+  allocations = await tx.fulfillmentInventoryAllocation.findMany({
     where: { fulfillmentRequestId: request.id, status: "ALLOCATED" },
   });
   const required = new Decimal(request.quantity.toString());

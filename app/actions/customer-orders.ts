@@ -37,6 +37,7 @@ import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { getEffectiveSellableQuantity } from "@/lib/application/inventory";
 import { getOrderFulfillmentLocationIds } from "@/lib/application/location-fulfillment-roster";
 import {
+  cancelShipOrderTasksForOrderInTransaction,
   completeShipOrderDispatchInTransaction,
   ensureShipOrderTaskDispatch,
 } from "@/lib/application/shipping-dispatch-lifecycle";
@@ -219,13 +220,19 @@ export async function updateOrderNetRevenue(orderId: string, netRevenue: string)
 export async function createCustomerOrder(data: CreateCustomerOrderInput) {
   const context = await requireUserContext({ storeId: data.storeId });
   let platformCountry: string | null = null;
+  let salesChannelAccountId: string | null = null;
   if (data.platformId) {
     const platform = await prisma.platform.findFirst({
       where: { id: data.platformId, storeId: context.activeStoreId },
-      select: { id: true, country: true },
+      select: {
+        id: true,
+        country: true,
+        salesChannelAccount: { select: { id: true } },
+      },
     });
     if (!platform) throw new Error("平台不存在或无权操作");
     platformCountry = platform.country;
+    salesChannelAccountId = platform.salesChannelAccount?.id ?? null;
   }
   const shippingCountry = data.shippingCountry?.trim().toUpperCase() || platformCountry;
   if (shippingCountry && !isFulfillmentDestinationCode(shippingCountry)) {
@@ -235,6 +242,7 @@ export async function createCustomerOrder(data: CreateCustomerOrderInput) {
   const order = await prisma.customerOrder.create({
     data: {
       storeId: context.activeStoreId,
+      salesChannelAccountId,
       orderNumber: data.orderNumber,
       platformId: data.platformId,
       externalOrderNo: data.externalOrderNo,
@@ -272,29 +280,43 @@ export async function addOrderLine(data: CreateOrderLineInput) {
   });
   if (!order) throw new Error("订单不存在或无权修改");
   const context = await requireUserContext({ storeId: order.storeId });
-  await assertOperationalSku(prisma, {
-    storeId: context.activeStoreId,
-    skuId: data.skuId,
-    actionLabel: "销售",
-  });
-
   const quantity = new Decimal(data.quantity);
   const unitPrice = data.unitPrice ? new Decimal(data.unitPrice) : new Decimal(0);
+  if (!quantity.isFinite() || quantity.lte(0)) throw new Error("商品数量必须大于 0");
+  if (!unitPrice.isFinite() || unitPrice.lt(0)) throw new Error("商品单价不能为负数");
   const lineAmount = quantity.times(unitPrice);
 
-  const line = await prisma.orderLine.create({
-    data: {
-      orderId: data.orderId,
+  const line = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${data.orderId} FOR UPDATE`;
+    const freshOrder = await tx.customerOrder.findUnique({
+      where: { id: data.orderId },
+      select: { storeId: true, orderStatus: true },
+    });
+    if (!freshOrder || freshOrder.storeId !== context.activeStoreId) {
+      throw new Error("订单不存在或无权修改");
+    }
+    if (freshOrder.orderStatus !== "DRAFT") {
+      throw new Error("只有草稿订单可以添加商品");
+    }
+    await assertOperationalSku(tx, {
+      storeId: context.activeStoreId,
       skuId: data.skuId,
-      quantity: quantity.toFixed(4),
-      unitPrice: data.unitPrice ? unitPrice.toFixed(4) : null,
-      lineAmount: lineAmount.toFixed(4),
-      supplyType: "FROM_STOCK",
-      supplyStatus: "UNFULFILLED",
-    },
+      actionLabel: "销售",
+    });
+    const created = await tx.orderLine.create({
+      data: {
+        orderId: data.orderId,
+        skuId: data.skuId,
+        quantity: quantity.toFixed(4),
+        unitPrice: data.unitPrice ? unitPrice.toFixed(4) : null,
+        lineAmount: lineAmount.toFixed(4),
+        supplyType: "FROM_STOCK",
+        supplyStatus: "UNFULFILLED",
+      },
+    });
+    await recalculateOrderTotals(data.orderId, tx);
+    return created;
   });
-
-  await recalculateOrderTotals(data.orderId);
 
   revalidatePath("/sales");
   revalidatePath(`/sales/${data.orderId}`);
@@ -312,6 +334,9 @@ export async function addOrderLineAction(data: CreateOrderLineInput) {
 
 export async function allocateInventory(data: AllocateInventoryInput) {
   const quantity = new Decimal(data.quantity);
+  if (!quantity.isFinite() || quantity.lte(0)) {
+    throw new Error("分配数量必须大于 0");
+  }
   const orderLine = await prisma.orderLine.findUnique({
     where: { id: data.orderLineId },
     include: {
@@ -327,9 +352,48 @@ export async function allocateInventory(data: AllocateInventoryInput) {
   if (!orderLine) {
     throw new Error("订单行不存在或无权分配");
   }
-  await requireUserContext({ storeId: orderLine.order.storeId });
+  const context = await requireUserContext({ storeId: orderLine.order.storeId });
 
   const allocation = await prisma.$transaction(async (tx) => {
+    // All concrete inventory reservation paths lock the SKU first. Keeping one
+    // lock order serializes normal orders, bundle orders and fulfillment holds.
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${orderLine.skuId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "order_lines" WHERE "id" = ${data.orderLineId} FOR UPDATE`;
+    const freshOrderLine = await tx.orderLine.findUnique({
+      where: { id: data.orderLineId },
+      include: {
+        allocations: {
+          where: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+          select: { quantity: true },
+        },
+        order: {
+          select: {
+            storeId: true,
+            orderStatus: true,
+            shippingCountry: true,
+            platform: { select: { code: true, country: true } },
+          },
+        },
+      },
+    });
+    if (!freshOrderLine || freshOrderLine.order.storeId !== context.activeStoreId) {
+      throw new Error("订单行不存在或无权分配");
+    }
+    if (freshOrderLine.order.orderStatus !== "DRAFT") {
+      throw new Error("只有草稿订单可以继续分配库存");
+    }
+    const alreadyAllocatedToLine = freshOrderLine.allocations.reduce(
+      (sum, item) => sum.plus(new Decimal(item.quantity.toString())),
+      new Decimal(0)
+    );
+    const remainingRequired = new Decimal(freshOrderLine.quantity.toString()).minus(
+      alreadyAllocatedToLine
+    );
+    if (quantity.gt(remainingRequired)) {
+      throw new Error(`分配数量超过订单行剩余需求（最多 ${remainingRequired.toFixed(4)}）`);
+    }
+
+    await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${data.lotId} FOR UPDATE`;
     const lot = await tx.inventoryLot.findUnique({
       where: { id: data.lotId },
       include: {
@@ -353,12 +417,20 @@ export async function allocateInventory(data: AllocateInventoryInput) {
     if (lot.costStatus !== "CONFIRMED") {
       throw new Error("该批库存成本仍待分摊，不能确认销售利润或分配订单");
     }
-    if (lot.storeId !== orderLine.order.storeId) {
+    if (lot.storeId !== freshOrderLine.order.storeId) {
       throw new Error("库存批次不属于该订单店铺");
     }
+    if (!lot.inventoryPoolId || !context.inventoryPoolIds.includes(lot.inventoryPoolId)) {
+      throw new Error("当前用户没有该库存池的分配权限");
+    }
+    if (lot.skuId !== freshOrderLine.skuId) {
+      throw new Error("库存批次与订单行商品不一致");
+    }
     const destination =
-      (orderLine.order.shippingCountry as SellableMarketCode | null) ??
-      (orderLine.order.platform ? inferMarketFromPlatform(orderLine.order.platform) : null);
+      (freshOrderLine.order.shippingCountry as SellableMarketCode | null) ??
+      (freshOrderLine.order.platform
+        ? inferMarketFromPlatform(freshOrderLine.order.platform)
+        : null);
     if (destination && !locationMatchesMarket(lot.location, destination)) {
       throw new Error("所选库存节点没有到订单收货地的有效客户配送线路");
     }
@@ -372,16 +444,22 @@ export async function allocateInventory(data: AllocateInventoryInput) {
       new Decimal(0)
     );
 
-    const activeAllocations = await tx.orderAllocation.findMany({
-      where: {
-        lotId: data.lotId,
-        status: {
-          in: [...RESERVING_ALLOCATION_STATUSES],
+    const [activeAllocations, fulfillmentAllocations] = await Promise.all([
+      tx.orderAllocation.findMany({
+        where: {
+          lotId: data.lotId,
+          status: {
+            in: [...RESERVING_ALLOCATION_STATUSES],
+          },
         },
-      },
-      select: { quantity: true },
-    });
-    const reserved = activeAllocations.reduce(
+        select: { quantity: true },
+      }),
+      tx.fulfillmentInventoryAllocation.findMany({
+        where: { lotId: data.lotId, status: "ALLOCATED" },
+        select: { quantity: true },
+      }),
+    ]);
+    const reserved = [...activeAllocations, ...fulfillmentAllocations].reduce(
       (sum, item) => sum.plus(new Decimal(item.quantity.toString())),
       new Decimal(0)
     );
@@ -448,28 +526,61 @@ export async function confirmOrder(data: ConfirmOrderInput) {
   }
   const context = await requireUserContext({ storeId: order.storeId });
 
-  // Check all lines have allocations
-  for (const line of order.lines) {
-    if (line.allocations.length === 0) {
-      throw new Error(`Order line ${line.id} has no inventory allocation`);
-    }
-  }
-
   // Transaction: confirm order without deducting inventory (deduct on ship)
-  await prisma.$transaction(async (tx) => {
-    const subtotal = order.lines.reduce(
+  const confirmedOrder = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${data.orderId} FOR UPDATE`;
+    const orderForLock = await tx.customerOrder.findUnique({
+      where: { id: data.orderId },
+      select: { lines: { select: { skuId: true } } },
+    });
+    if (!orderForLock) throw new Error("订单不存在");
+    for (const skuId of [...new Set(orderForLock.lines.map((line) => line.skuId))].sort()) {
+      await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+    }
+    const freshOrder = await tx.customerOrder.findUnique({
+      where: { id: data.orderId },
+      include: {
+        lines: {
+          include: {
+            allocations: {
+              where: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+            },
+          },
+        },
+      },
+    });
+    if (!freshOrder || freshOrder.storeId !== context.activeStoreId) {
+      throw new Error("订单不存在或无权确认");
+    }
+    if (freshOrder.orderStatus !== "DRAFT") {
+      throw new Error("只有草稿订单可以确认");
+    }
+    if (freshOrder.lines.length === 0) {
+      throw new Error("订单没有商品，不能确认");
+    }
+    for (const line of freshOrder.lines) {
+      const allocatedQuantity = line.allocations.reduce(
+        (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
+        new Decimal(0)
+      );
+      if (!allocatedQuantity.eq(new Decimal(line.quantity.toString()))) {
+        throw new Error(`订单商品 ${line.id} 的库存尚未完整分配`);
+      }
+    }
+
+    const subtotal = freshOrder.lines.reduce(
       (sum, line) => sum.plus(new Decimal(line.lineAmount.toString())),
       new Decimal(0)
     );
-    const inventoryCost = order.lines.reduce((sum, line) => {
+    const inventoryCost = freshOrder.lines.reduce((sum, line) => {
       return line.allocations.reduce(
         (lineSum, alloc) => lineSum.plus(new Decimal(alloc.costAmount.toString())),
         sum
       );
     }, new Decimal(0));
 
-    const platform = order.platformId
-      ? await tx.platform.findUnique({ where: { id: order.platformId } })
+    const platform = freshOrder.platformId
+      ? await tx.platform.findUnique({ where: { id: freshOrder.platformId } })
       : null;
     const feeRate = platform?.defaultFeeRate
       ? new Decimal(platform.defaultFeeRate.toString())
@@ -478,7 +589,7 @@ export async function confirmOrder(data: ConfirmOrderInput) {
     const fees = computeOrderFees({
       subtotal,
       platformFeeRate: feeRate,
-      shippingFee: new Decimal(order.shippingFee.toString()),
+      shippingFee: new Decimal(freshOrder.shippingFee.toString()),
       inventoryCost,
     });
     const feeStrings = feeResultToStrings(fees);
@@ -494,40 +605,39 @@ export async function confirmOrder(data: ConfirmOrderInput) {
       },
     });
 
-    for (const line of order.lines) {
+    for (const line of freshOrder.lines) {
       await tx.orderLine.update({
         where: { id: line.id },
-        data: {
-          supplyStatus: line.allocations.length > 0 ? "READY_TO_SHIP" : "UNFULFILLED",
-        },
+        data: { supplyStatus: "READY_TO_SHIP" },
       });
     }
+    return freshOrder;
   });
 
-  const fulfillmentLocationIds = await getOrderFulfillmentLocationIds(order.id);
+  const fulfillmentLocationIds = await getOrderFulfillmentLocationIds(confirmedOrder.id);
   const fulfillmentLocationId =
     fulfillmentLocationIds.length === 1 ? fulfillmentLocationIds[0] : null;
   if (fulfillmentLocationId) {
     await ensureShipOrderTaskDispatch({
       organizationId: context.organizationId,
-      storeId: order.storeId,
-      orderId: order.id,
-      orderNumber: order.orderNumber,
+      storeId: confirmedOrder.storeId,
+      orderId: confirmedOrder.id,
+      orderNumber: confirmedOrder.orderNumber,
       createdById: context.userId,
       locationId: fulfillmentLocationId,
-      description: order.platformId
+      description: confirmedOrder.platformId
         ? "订单已确认，等待仓库领取并发货。"
         : "手工订单已确认，等待仓库领取并发货。",
     });
   } else {
     await createTaskIfMissing({
       organizationId: context.organizationId,
-      storeId: order.storeId,
+      storeId: confirmedOrder.storeId,
       type: TASK_TYPE.SHIP_ORDER,
-      title: `发货订单 ${order.orderNumber}`,
+      title: `发货订单 ${confirmedOrder.orderNumber}`,
       description: "订单包含多个来源仓库，需要先拆分或重新分配库存。",
       refType: "CUSTOMER_ORDER",
-      refId: order.id,
+      refId: confirmedOrder.id,
       createdById: context.userId,
       fulfillmentLocationId: null,
       metadata: { fulfillmentLocationIds, assignmentMode: "MULTI_LOCATION_MANUAL" },
@@ -632,10 +742,13 @@ export async function markOrderDelivered(orderId: string) {
   }
   const context = await requireUserContext({ storeId: order.storeId });
 
-  await prisma.customerOrder.update({
-    where: { id: orderId },
+  const delivered = await prisma.customerOrder.updateMany({
+    where: { id: orderId, orderStatus: "SHIPPED" },
     data: { orderStatus: "DELIVERED" },
   });
+  if (delivered.count !== 1) {
+    throw new Error("该订单已由其他人处理，请刷新后查看");
+  }
 
   await createTaskIfMissing({
     organizationId: context.organizationId,
@@ -717,6 +830,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
     },
   });
   if (!order) throw new Error("订单不存在");
+  const context = await requireUserContext({ storeId: order.storeId });
 
   const cancellable = ["DRAFT", "PLACED", "PAID", "CONFIRMED"];
   if (!cancellable.includes(order.orderStatus)) {
@@ -734,6 +848,73 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${orderId} FOR UPDATE`;
+    const orderForLock = await tx.customerOrder.findUnique({
+      where: { id: orderId },
+      select: { lines: { select: { skuId: true } } },
+    });
+    if (!orderForLock) throw new Error("订单不存在");
+    for (const skuId of [...new Set(orderForLock.lines.map((line) => line.skuId))].sort()) {
+      await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+    }
+    const order = await tx.customerOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        lines: {
+          include: {
+            allocations: {
+              where: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+            },
+          },
+        },
+        fulfillmentRequests: {
+          include: {
+            reservation: true,
+            inventoryAllocations: { where: { status: "ALLOCATED" } },
+          },
+        },
+      },
+    });
+    if (!order || !cancellable.includes(order.orderStatus)) {
+      throw new Error("当前状态不可取消，已发货订单请走退货流程");
+    }
+    if (
+      order.fulfillmentRequests.some((request) => ["SHIPPED", "DELIVERED"].includes(request.status))
+    ) {
+      throw new Error("关联代发已发货，不能直接取消订单");
+    }
+    const lotIds = [
+      ...new Set([
+        ...order.lines.flatMap((line) =>
+          line.allocations.flatMap((allocation) => (allocation.lotId ? [allocation.lotId] : []))
+        ),
+        ...order.fulfillmentRequests.flatMap((request) =>
+          request.inventoryAllocations.flatMap((allocation) =>
+            allocation.lotId ? [allocation.lotId] : []
+          )
+        ),
+      ]),
+    ].sort();
+    const itemUnitIds = [
+      ...new Set([
+        ...order.lines.flatMap((line) =>
+          line.allocations.flatMap((allocation) =>
+            allocation.itemUnitId ? [allocation.itemUnitId] : []
+          )
+        ),
+        ...order.fulfillmentRequests.flatMap((request) =>
+          request.inventoryAllocations.flatMap((allocation) =>
+            allocation.itemUnitId ? [allocation.itemUnitId] : []
+          )
+        ),
+      ]),
+    ].sort();
+    for (const lotId of lotIds) {
+      await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+    }
+    for (const itemUnitId of itemUnitIds) {
+      await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+    }
     const releasedItemUnitIds = new Set<string>();
 
     for (const line of order.lines) {
@@ -901,6 +1082,11 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
         shippingProof: mergedProof as Prisma.InputJsonValue,
       },
     });
+    await cancelShipOrderTasksForOrderInTransaction(tx, {
+      orderId,
+      actorUserId: context.userId,
+      reason: cancelReason,
+    });
   });
 
   revalidatePath("/sales");
@@ -926,14 +1112,12 @@ export interface RegisterReturnInput {
 }
 
 export async function markOrderReturned(orderId: string, data?: RegisterReturnInput) {
-  const order = await prisma.customerOrder.findUnique({
+  const initialOrder = await prisma.customerOrder.findUnique({
     where: { id: orderId },
-    include: {
-      lines: { include: { allocations: true } },
-    },
+    select: { orderStatus: true },
   });
-  if (!order) throw new Error("订单不存在");
-  if (order.orderStatus !== "SHIPPED" && order.orderStatus !== "DELIVERED") {
+  if (!initialOrder) throw new Error("订单不存在");
+  if (initialOrder.orderStatus !== "SHIPPED" && initialOrder.orderStatus !== "DELIVERED") {
     throw new Error("只有已发货或待结算订单可以登记退货");
   }
 
@@ -945,9 +1129,71 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
   const restockMode = data?.restockMode ?? "RETURN_CHECK";
   const returnTrackingNo = data?.returnTrackingNo?.trim();
   const returnedAt = new Date().toISOString();
-  const returnFinancials = computeReturnFinancialAdjustments(order, data);
 
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${orderId} FOR UPDATE`;
+    const lockPlan = await tx.customerOrder.findUnique({
+      where: { id: orderId },
+      select: {
+        orderStatus: true,
+        lines: {
+          select: {
+            skuId: true,
+            allocations: {
+              select: { status: true, lotId: true, itemUnitId: true },
+            },
+          },
+        },
+      },
+    });
+    if (!lockPlan) throw new Error("订单不存在");
+    if (lockPlan.orderStatus !== "SHIPPED" && lockPlan.orderStatus !== "DELIVERED") {
+      throw new Error("该订单已由其他人处理，请刷新后查看");
+    }
+
+    for (const skuId of [...new Set(lockPlan.lines.map((line) => line.skuId))].sort()) {
+      await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+    }
+    const returnableStatuses = new Set<string>([
+      ORDER_ALLOCATION_STATUS.SHIPPED,
+      ORDER_ALLOCATION_STATUS.DELIVERED,
+    ]);
+    const lotIds = [
+      ...new Set(
+        lockPlan.lines.flatMap((line) =>
+          line.allocations.flatMap((allocation) =>
+            returnableStatuses.has(allocation.status) && allocation.lotId ? [allocation.lotId] : []
+          )
+        )
+      ),
+    ].sort();
+    const itemUnitIds = [
+      ...new Set(
+        lockPlan.lines.flatMap((line) =>
+          line.allocations.flatMap((allocation) =>
+            returnableStatuses.has(allocation.status) && allocation.itemUnitId
+              ? [allocation.itemUnitId]
+              : []
+          )
+        )
+      ),
+    ].sort();
+    for (const lotId of lotIds) {
+      await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+    }
+    for (const itemUnitId of itemUnitIds) {
+      await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+    }
+
+    const order = await tx.customerOrder.findUnique({
+      where: { id: orderId },
+      include: { lines: { include: { allocations: true } } },
+    });
+    if (!order || (order.orderStatus !== "SHIPPED" && order.orderStatus !== "DELIVERED")) {
+      throw new Error("该订单已由其他人处理，请刷新后查看");
+    }
+    const returnFinancials = computeReturnFinancialAdjustments(order, data);
+
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
         if (
@@ -961,7 +1207,7 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
           const item = await tx.itemUnit.findUnique({
             where: { id: allocation.itemUnitId },
           });
-          if (!item) continue;
+          if (!item) throw new Error("退货对应的单品库存不存在");
 
           await tx.stockLedger.create({
             data: {
@@ -993,7 +1239,7 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
           const lot = await tx.inventoryLot.findUnique({
             where: { id: allocation.lotId },
           });
-          if (!lot) continue;
+          if (!lot) throw new Error("退货对应的批次库存不存在");
 
           await tx.stockLedger.create({
             data: {
@@ -1119,6 +1365,59 @@ async function performOrderShipment(
     order.id
   );
   const completedTasks = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${orderId} FOR UPDATE`;
+    const orderForLock = await tx.customerOrder.findUnique({
+      where: { id: orderId },
+      select: { lines: { select: { skuId: true } } },
+    });
+    if (!orderForLock) throw new Error("订单不存在");
+    for (const skuId of [...new Set(orderForLock.lines.map((line) => line.skuId))].sort()) {
+      await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+    }
+    const lockedOrder = await tx.customerOrder.findUnique({
+      where: { id: orderId },
+      include: { lines: { include: { allocations: true } } },
+    });
+    if (!lockedOrder || lockedOrder.orderStatus !== "CONFIRMED") {
+      throw new Error("该订单已经由其他人处理，请刷新后查看");
+    }
+    const lotIds = [
+      ...new Set(
+        lockedOrder.lines.flatMap((line) =>
+          line.allocations.flatMap((allocation) => (allocation.lotId ? [allocation.lotId] : []))
+        )
+      ),
+    ].sort();
+    const itemUnitIds = [
+      ...new Set(
+        lockedOrder.lines.flatMap((line) =>
+          line.allocations.flatMap((allocation) =>
+            allocation.itemUnitId ? [allocation.itemUnitId] : []
+          )
+        )
+      ),
+    ].sort();
+    for (const lotId of lotIds) {
+      await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+    }
+    for (const itemUnitId of itemUnitIds) {
+      await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+    }
+    for (const line of lockedOrder.lines) {
+      const reservedQuantity = line.allocations
+        .filter((allocation) =>
+          RESERVING_ALLOCATION_STATUSES.includes(
+            allocation.status as (typeof RESERVING_ALLOCATION_STATUSES)[number]
+          )
+        )
+        .reduce(
+          (sum, allocation) => sum.plus(new Decimal(allocation.quantity.toString())),
+          new Decimal(0)
+        );
+      if (!reservedQuantity.eq(new Decimal(line.quantity.toString()))) {
+        throw new Error(`订单商品 ${line.id} 库存预留不完整，请先完成库存分配`);
+      }
+    }
     const shipmentClaim = await tx.customerOrder.updateMany({
       where: { id: orderId, orderStatus: "CONFIRMED" },
       data: { updatedAt: new Date() },
@@ -1127,7 +1426,7 @@ async function performOrderShipment(
       throw new Error("该订单已经由其他人处理，请刷新后查看");
     }
 
-    for (const line of order.lines) {
+    for (const line of lockedOrder.lines) {
       for (const allocation of line.allocations) {
         if (
           allocation.status === ORDER_ALLOCATION_STATUS.SHIPPED ||
@@ -1143,7 +1442,7 @@ async function performOrderShipment(
 
           await tx.stockLedger.create({
             data: {
-              storeId: order.storeId,
+              storeId: lockedOrder.storeId,
               occurredAt: new Date(),
               entityType: "ITEM_UNIT",
               entityId: item.id,
@@ -1152,7 +1451,7 @@ async function performOrderShipment(
               reason: "OUTBOUND_SALE",
               refType: "ORDER_LINE",
               refId: line.id,
-              meta: { orderId: order.id, allocationId: allocation.id },
+              meta: { orderId: lockedOrder.id, allocationId: allocation.id },
             },
           });
 
@@ -1168,7 +1467,7 @@ async function performOrderShipment(
 
           await tx.stockLedger.create({
             data: {
-              storeId: order.storeId,
+              storeId: lockedOrder.storeId,
               occurredAt: new Date(),
               entityType: "LOT",
               entityId: lot.id,
@@ -1177,7 +1476,7 @@ async function performOrderShipment(
               reason: "OUTBOUND_SALE",
               refType: "ORDER_LINE",
               refId: line.id,
-              meta: { orderId: order.id, allocationId: allocation.id },
+              meta: { orderId: lockedOrder.id, allocationId: allocation.id },
             },
           });
 
@@ -1209,8 +1508,8 @@ async function performOrderShipment(
     }
 
     const mergedProof = options?.shippingProof
-      ? shippingProofToJson(mergeShippingProof(order.shippingProof, options.shippingProof))
-      : shippingProofToJson(parseShippingProof(order.shippingProof));
+      ? shippingProofToJson(mergeShippingProof(lockedOrder.shippingProof, options.shippingProof))
+      : shippingProofToJson(parseShippingProof(lockedOrder.shippingProof));
 
     await tx.customerOrder.update({
       where: { id: orderId },
@@ -1225,22 +1524,22 @@ async function performOrderShipment(
 
     const completed = await completeTasksForRefInTransaction(tx, {
       organizationId: actor.organizationId,
-      storeId: order.storeId,
+      storeId: lockedOrder.storeId,
       type: TASK_TYPE.SHIP_ORDER,
       refType: "CUSTOMER_ORDER",
-      refId: order.id,
+      refId: lockedOrder.id,
       completedById: actor.userId,
       work: {
         code: "SHIP_ORDER",
         name: "订单发货",
-        quantity: order.lines.reduce(
+        quantity: lockedOrder.lines.reduce(
           (sum, line) => sum.plus(line.quantity.toString()),
           new Decimal(0)
         ),
         unit: "件",
         metadata: {
-          orderId: order.id,
-          platformId: order.platformId,
+          orderId: lockedOrder.id,
+          platformId: lockedOrder.platformId,
         },
       },
     });
@@ -1409,6 +1708,10 @@ export async function settleCustomerOrder(
       ? new Decimal(order.platform.defaultFeeRate.toString())
       : null;
 
+  if (order.shippingFeeStatus === "PENDING" && !data.shippingFee?.trim()) {
+    throw new Error("该订单邮费仍待核算，结算前请明确填写实际邮费（实际为 0 也请填写 0）");
+  }
+
   const fees = computeOrderFees({
     subtotal: settlementSubtotal,
     platformFeeAmount: data.platformFee
@@ -1430,6 +1733,7 @@ export async function settleCustomerOrder(
         totalPaid: settlementSubtotal.toFixed(4),
         platformFee: feeStrings.platformFee,
         shippingFee: feeStrings.shippingFee,
+        shippingFeeStatus: "ACTUAL",
         netRevenue: feeStrings.netRevenue,
         settledAt: new Date(),
       },
@@ -1508,8 +1812,11 @@ export async function settleCustomerOrderAction(
   }
 }
 
-async function recalculateOrderTotals(orderId: string) {
-  const lines = await prisma.orderLine.findMany({
+async function recalculateOrderTotals(
+  orderId: string,
+  client: Pick<Prisma.TransactionClient, "orderLine" | "customerOrder"> = prisma
+) {
+  const lines = await client.orderLine.findMany({
     where: { orderId },
   });
 
@@ -1517,7 +1824,7 @@ async function recalculateOrderTotals(orderId: string) {
     return sum.plus(new Decimal(line.lineAmount.toString()));
   }, new Decimal(0));
 
-  await prisma.customerOrder.update({
+  await client.customerOrder.update({
     where: { id: orderId },
     data: {
       subtotal: subtotal.toFixed(4),

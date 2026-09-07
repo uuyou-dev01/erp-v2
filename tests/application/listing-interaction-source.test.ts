@@ -69,4 +69,18 @@ describe("listing interaction source hygiene", () => {
     expect(pageSource).toContain("activeMarket");
     expect(pageSource).toContain("country: platform.country");
   });
+
+  it("lets quick listing creation use an optional listing date that defaults to today", () => {
+    const dialogSource = readFileSync(
+      join(process.cwd(), "components/listing/quick-add-listing-dialog.tsx"),
+      "utf8"
+    );
+    const actionSource = readFileSync(join(process.cwd(), "app/actions/listings.ts"), "utf8");
+
+    expect(dialogSource).toContain("上架时间（选填）");
+    expect(dialogSource).toContain('type="date"');
+    expect(dialogSource).toContain("todayDateInputValue()");
+    expect(dialogSource).toContain("listedAt: listedAt || undefined");
+    expect(actionSource).toContain("listedAt: listedAtInput.value ?? new Date()");
+  });
 });

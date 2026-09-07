@@ -584,6 +584,7 @@ export interface TransferSkuLocationStockInput {
 
 interface TransferableLot {
   id: string;
+  inventoryPoolId: string | null;
   skuId: string;
   locationId: string;
   unitCost: Prisma.Decimal;
@@ -606,6 +607,7 @@ async function getTransferableLots(
     },
     select: {
       id: true,
+      inventoryPoolId: true,
       skuId: true,
       locationId: true,
       unitCost: true,
@@ -620,7 +622,7 @@ async function getTransferableLots(
   if (lots.length === 0) return [];
 
   const lotIds = lots.map((lot) => lot.id);
-  const [ledgerRows, reservations] = await Promise.all([
+  const [ledgerRows, orderReservations, fulfillmentReservations] = await Promise.all([
     tx.stockLedger.groupBy({
       by: ["entityId"],
       where: {
@@ -637,13 +639,17 @@ async function getTransferableLots(
       },
       select: { lotId: true, quantity: true },
     }),
+    tx.fulfillmentInventoryAllocation.findMany({
+      where: { lotId: { in: lotIds }, status: "ALLOCATED" },
+      select: { lotId: true, quantity: true },
+    }),
   ]);
 
   const onHandByLotId = new Map(
     ledgerRows.map((row) => [row.entityId, new Decimal(row._sum.deltaQty?.toString() ?? "0")])
   );
   const reservedByLotId = new Map<string, Decimal>();
-  for (const reservation of reservations) {
+  for (const reservation of [...orderReservations, ...fulfillmentReservations]) {
     if (!reservation.lotId) continue;
     const current = reservedByLotId.get(reservation.lotId) ?? new Decimal(0);
     reservedByLotId.set(reservation.lotId, current.plus(reservation.quantity.toString()));
@@ -675,6 +681,7 @@ export async function transferSkuLocationStock(input: TransferSkuLocationStockIn
   const operationId = randomUUID();
   const occurredAt = new Date();
   const result = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${input.skuId} FOR UPDATE`;
     const [sourceLocation, destinationLocation] = await Promise.all([
       tx.location.findFirst({
         where: { id: input.fromLocationId, storeId: input.storeId },
@@ -705,6 +712,7 @@ export async function transferSkuLocationStock(input: TransferSkuLocationStockIn
 
     if (input.itemUnitId) {
       if (input.quantity !== 1) throw new Error("一物一单商品每次只能移动指定的一件");
+      await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${input.itemUnitId} FOR UPDATE`;
       const unit = await tx.itemUnit.findFirst({
         where: {
           id: input.itemUnitId,
@@ -716,6 +724,11 @@ export async function transferSkuLocationStock(input: TransferSkuLocationStockIn
         },
       });
       if (!unit) throw new Error("该单件商品已被占用、已移动或不在调出位置");
+      const fulfillmentReservation = await tx.fulfillmentInventoryAllocation.findFirst({
+        where: { itemUnitId: unit.id, status: "ALLOCATED" },
+        select: { id: true },
+      });
+      if (fulfillmentReservation) throw new Error("该单件商品已被代发履约占用");
 
       const transferMeta = {
         operationId,
@@ -809,6 +822,7 @@ export async function transferSkuLocationStock(input: TransferSkuLocationStockIn
       const destinationLot = await tx.inventoryLot.create({
         data: {
           storeId: input.storeId,
+          inventoryPoolId: item.lot.inventoryPoolId,
           skuId: item.lot.skuId,
           locationId: input.toLocationId,
           unitCost: item.lot.unitCost,
@@ -838,8 +852,9 @@ export async function transferSkuLocationStock(input: TransferSkuLocationStockIn
 
       await tx.stockLedger.createMany({
         data: [
-          {
-            storeId: input.storeId,
+            {
+              storeId: input.storeId,
+              inventoryPoolId: item.lot.inventoryPoolId,
             occurredAt,
             entityType: "LOT",
             entityId: item.lot.id,
@@ -850,8 +865,9 @@ export async function transferSkuLocationStock(input: TransferSkuLocationStockIn
             refId: operationId,
             meta: transferMeta,
           },
-          {
-            storeId: input.storeId,
+            {
+              storeId: input.storeId,
+              inventoryPoolId: item.lot.inventoryPoolId,
             occurredAt,
             entityType: "LOT",
             entityId: destinationLot.id,

@@ -57,6 +57,31 @@ type PurchaseLineInventory = {
   units: Array<{ id: string }>;
 };
 
+function uniqueSortedIds(ids: Array<string | null | undefined>) {
+  return [...new Set(ids.filter((id): id is string => Boolean(id)))].sort();
+}
+
+async function lockConsolidationSkuRows(
+  tx: Prisma.TransactionClient,
+  skuIds: Array<string | null | undefined>
+) {
+  for (const skuId of uniqueSortedIds(skuIds)) {
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+  }
+}
+
+async function lockConsolidationEntityRows(
+  tx: Prisma.TransactionClient,
+  input: { lotIds: string[]; itemUnitIds: string[] }
+) {
+  for (const lotId of uniqueSortedIds(input.lotIds)) {
+    await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+  }
+  for (const itemUnitId of uniqueSortedIds(input.itemUnitIds)) {
+    await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+  }
+}
+
 async function resolvePurchaseLineInventory(
   tx: Prisma.TransactionClient,
   input: {
@@ -166,6 +191,32 @@ async function resolvePurchaseLineInventory(
   return result;
 }
 
+async function resolveAndLockPurchaseLineInventory(
+  tx: Prisma.TransactionClient,
+  input: {
+    storeId: string;
+    locationId: string;
+    purchaseLines: Array<{ id: string; purchaseOrderId: string; skuId: string }>;
+    lotStatuses: string[];
+    unitStatuses: string[];
+  }
+) {
+  // Every inventory mutation follows one global order: all SKU rows first,
+  // then lot rows, then item-unit rows. Re-read after the locks are held.
+  await lockConsolidationSkuRows(
+    tx,
+    input.purchaseLines.map((line) => line.skuId)
+  );
+  const candidates = await resolvePurchaseLineInventory(tx, input);
+  await lockConsolidationEntityRows(tx, {
+    lotIds: [...candidates.values()].flatMap((inventory) => inventory.lots.map((lot) => lot.id)),
+    itemUnitIds: [...candidates.values()].flatMap((inventory) =>
+      inventory.units.map((unit) => unit.id)
+    ),
+  });
+  return resolvePurchaseLineInventory(tx, input);
+}
+
 async function lockPurchaseLineInventory(
   tx: Prisma.TransactionClient,
   input: {
@@ -177,16 +228,10 @@ async function lockPurchaseLineInventory(
       quantity: Decimal;
       sku: { code: string; name: string };
     };
+    inventory: PurchaseLineInventory;
   }
 ) {
-  const inventoryByLine = await resolvePurchaseLineInventory(tx, {
-    storeId: input.storeId,
-    locationId: input.locationId,
-    purchaseLines: [{ id: input.purchaseLine.id, purchaseOrderId: input.purchaseOrderId }],
-    lotStatuses: ["ACTIVE"],
-    unitStatuses: ["AVAILABLE"],
-  });
-  const { lots, units } = inventoryByLine.get(input.purchaseLine.id) ?? { lots: [], units: [] };
+  const { lots, units } = input.inventory;
 
   const lotIds = lots.map((lot) => lot.id);
   const unitIds = units.map((unit) => unit.id);
@@ -201,23 +246,12 @@ async function lockPurchaseLineInventory(
           _sum: { deltaQty: true },
         })
       : [],
-    lotIds.length || unitIds.length
-      ? tx.orderAllocation.findMany({
-          where: {
-            status: { in: [...RESERVING_ALLOCATION_STATUSES] },
-            OR: [
-              ...(lotIds.length ? [{ lotId: { in: lotIds } }] : []),
-              ...(unitIds.length ? [{ itemUnitId: { in: unitIds } }] : []),
-            ],
-          },
-          select: { lotId: true, itemUnitId: true, quantity: true },
-        })
-      : [],
+    getActiveReservations(tx, { lotIds, itemUnitIds: unitIds }),
   ]);
 
   if (reservations.length > 0) {
     throw new Error(
-      `${input.purchaseLine.sku.code} ${input.purchaseLine.sku.name} 的库存已被销售单占用，不能加入集运`
+      `${input.purchaseLine.sku.code} ${input.purchaseLine.sku.name} 的库存已被销售单或代发履约占用，不能加入集运`
     );
   }
 
@@ -344,6 +378,7 @@ async function addPurchaseOrdersToBatch(batchId: string, purchaseOrderIds: strin
       }
 
       await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${batch.id} FOR UPDATE`;
         const currentBatch = await tx.consolidationBatch.findUnique({
           where: { id: batch.id },
           select: { status: true },
@@ -361,6 +396,17 @@ async function addPurchaseOrdersToBatch(batchId: string, purchaseOrderIds: strin
         });
         if (duplicate) throw new Error("采购单已有明细加入过集运，不能重复加入");
 
+        const inventoryByLine = await resolveAndLockPurchaseLineInventory(tx, {
+          storeId: batch.storeId,
+          locationId: batch.fromLocationId!,
+          purchaseLines: order.lines.map((line) => ({
+            id: line.id,
+            purchaseOrderId: order.id,
+            skuId: line.skuId,
+          })),
+          lotStatuses: ["ACTIVE"],
+          unitStatuses: ["AVAILABLE"],
+        });
         const movableLines: Array<{ sourceId: string; quantity: Decimal }> = [];
         for (const line of order.lines) {
           const quantity = await lockPurchaseLineInventory(tx, {
@@ -368,6 +414,7 @@ async function addPurchaseOrdersToBatch(batchId: string, purchaseOrderIds: strin
             locationId: batch.fromLocationId!,
             purchaseOrderId: order.id,
             purchaseLine: line,
+            inventory: inventoryByLine.get(line.id) ?? { lots: [], units: [] },
           });
           if (quantity.gt(0)) movableLines.push({ sourceId: line.id, quantity });
         }
@@ -805,7 +852,7 @@ export async function updateConsolidationStatus(
   assertConsolidationStatusTransition(batch.status, status);
   const shippingCost = normalizeLogisticsCostInput(
     { amount: data?.shippingCost, currency: data?.shippingCurrency },
-    batch.store.currency,
+    batch.store.currency
   );
   if (status === "SEALED") {
     if (!batch.fromLocationId) throw new Error("请先设置集运起运仓库");
@@ -820,8 +867,16 @@ export async function updateConsolidationStatus(
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${id} FOR UPDATE`;
+    const freshBatch = await tx.consolidationBatch.findUnique({
+      where: { id },
+      include: { lines: true },
+    });
+    if (!freshBatch) throw new Error("集运批次不存在");
+    assertConsolidationStatusTransition(freshBatch.status, status);
     if (status === "SHIPPED") {
-      const validationErrors = await validateConsolidationInventory(tx, batch);
+      await lockConsolidationBatchInventory(tx, freshBatch);
+      const validationErrors = await validateConsolidationInventory(tx, freshBatch);
       if (validationErrors.length > 0) {
         throw new Error(
           `集运库存预检未通过（${validationErrors.length} 项）：${validationErrors.join("；")}。集运状态未改变`
@@ -829,7 +884,7 @@ export async function updateConsolidationStatus(
       }
     }
     if (status === "RECEIVED") {
-      await receiveConsolidationInventory(tx, batch);
+      await receiveConsolidationInventory(tx, freshBatch);
     }
 
     await tx.consolidationBatch.update({
@@ -844,14 +899,14 @@ export async function updateConsolidationStatus(
     });
     if (status === "SHIPPED" && shippingCost) {
       await saveLogisticsShippingCost(tx, {
-        storeId: batch.storeId,
+        storeId: freshBatch.storeId,
         sourceType: LOGISTICS_COST_SOURCE_TYPES.consolidation,
-        sourceId: batch.id,
+        sourceId: freshBatch.id,
         amount: shippingCost.amount.toFixed(4),
         currency: shippingCost.currency,
         fallbackCurrency: batch.store.currency,
         occurredAt: new Date(),
-        note: batch.note ?? undefined,
+        note: freshBatch.note ?? undefined,
       });
     }
   });
@@ -890,9 +945,22 @@ export async function updateConsolidationDestination(id: string, toLocationId: s
   });
   if (!destination) throw new Error("目的仓库不存在或不属于当前店铺");
 
-  await prisma.consolidationBatch.update({
-    where: { id },
-    data: { toLocationId: destination.id },
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${id} FOR UPDATE`;
+    const freshBatch = await tx.consolidationBatch.findUnique({
+      where: { id },
+      select: { status: true, fromLocationId: true },
+    });
+    if (!freshBatch || !["OPEN", "SEALED"].includes(freshBatch.status)) {
+      throw new Error("集运批次状态已变化，发出后不能修改目的仓库");
+    }
+    if (freshBatch.fromLocationId === destination.id) {
+      throw new Error("起运仓库和目的仓库不能相同");
+    }
+    await tx.consolidationBatch.update({
+      where: { id },
+      data: { toLocationId: destination.id },
+    });
   });
   revalidatePath(`/logistics/consolidations/${id}`);
   revalidatePath("/logistics/consolidations");
@@ -913,6 +981,71 @@ type ConsolidationForReceipt = {
   }>;
 };
 
+async function lockConsolidationBatchInventory(
+  tx: Prisma.TransactionClient,
+  batch: ConsolidationForReceipt
+) {
+  const purchaseLineIds = batch.lines
+    .filter((line) => line.sourceType === "PURCHASE_LINE")
+    .map((line) => line.sourceId);
+  const directLotIds = batch.lines
+    .filter((line) => line.sourceType === "LOT")
+    .map((line) => line.sourceId);
+  const directItemUnitIds = batch.lines
+    .filter((line) => line.sourceType === "ITEM_UNIT")
+    .map((line) => line.sourceId);
+  const [purchaseLines, directLots, directItemUnits] = await Promise.all([
+    purchaseLineIds.length
+      ? tx.purchaseLine.findMany({
+          where: { id: { in: purchaseLineIds } },
+          select: { id: true, purchaseOrderId: true, skuId: true },
+        })
+      : [],
+    directLotIds.length
+      ? tx.inventoryLot.findMany({
+          where: { id: { in: directLotIds } },
+          select: { id: true, skuId: true },
+        })
+      : [],
+    directItemUnitIds.length
+      ? tx.itemUnit.findMany({
+          where: { id: { in: directItemUnitIds } },
+          select: { id: true, skuId: true },
+        })
+      : [],
+  ]);
+
+  await lockConsolidationSkuRows(tx, [
+    ...purchaseLines.map((line) => line.skuId),
+    ...directLots.map((lot) => lot.skuId),
+    ...directItemUnits.map((unit) => unit.skuId),
+  ]);
+  const purchaseInventory =
+    batch.fromLocationId && purchaseLines.length > 0
+      ? await resolvePurchaseLineInventory(tx, {
+          storeId: batch.storeId,
+          locationId: batch.fromLocationId,
+          purchaseLines,
+          lotStatuses: ["ACTIVE", "CONSOLIDATING"],
+          unitStatuses: ["AVAILABLE", "CONSOLIDATING"],
+        })
+      : new Map<string, PurchaseLineInventory>();
+  await lockConsolidationEntityRows(tx, {
+    lotIds: [
+      ...directLotIds,
+      ...[...purchaseInventory.values()].flatMap((inventory) =>
+        inventory.lots.map((lot) => lot.id)
+      ),
+    ],
+    itemUnitIds: [
+      ...directItemUnitIds,
+      ...[...purchaseInventory.values()].flatMap((inventory) =>
+        inventory.units.map((unit) => unit.id)
+      ),
+    ],
+  });
+}
+
 async function prepareLegacyPurchaseInventoryForReceipt(batch: ConsolidationForReceipt) {
   if (!batch.fromLocationId) return;
   const purchaseBatchLines = batch.lines.filter((line) => line.sourceType === "PURCHASE_LINE");
@@ -922,6 +1055,7 @@ async function prepareLegacyPurchaseInventoryForReceipt(batch: ConsolidationForR
     where: { id: { in: purchaseBatchLines.map((line) => line.sourceId) } },
     select: {
       id: true,
+      skuId: true,
       quantity: true,
       sku: { select: { code: true, name: true } },
       purchaseOrder: {
@@ -952,16 +1086,34 @@ async function prepareLegacyPurchaseInventoryForReceipt(batch: ConsolidationForR
 
   const batchLineBySourceId = new Map(purchaseBatchLines.map((line) => [line.sourceId, line]));
   await prisma.$transaction(async (tx) => {
-    const lockedInventoryByLine = await resolvePurchaseLineInventory(tx, {
+    const purchaseLineTargets = purchaseLines.map((line) => ({
+      id: line.id,
+      purchaseOrderId: line.purchaseOrder.id,
+      skuId: line.skuId,
+    }));
+    await resolveAndLockPurchaseLineInventory(tx, {
       storeId: batch.storeId,
       locationId: batch.fromLocationId!,
-      purchaseLines: purchaseLines.map((line) => ({
-        id: line.id,
-        purchaseOrderId: line.purchaseOrder.id,
-      })),
-      lotStatuses: ["CONSOLIDATING"],
-      unitStatuses: ["CONSOLIDATING"],
+      purchaseLines: purchaseLineTargets,
+      lotStatuses: ["ACTIVE", "CONSOLIDATING"],
+      unitStatuses: ["AVAILABLE", "CONSOLIDATING"],
     });
+    const [lockedInventoryByLine, availableInventoryByLine] = await Promise.all([
+      resolvePurchaseLineInventory(tx, {
+        storeId: batch.storeId,
+        locationId: batch.fromLocationId!,
+        purchaseLines: purchaseLineTargets,
+        lotStatuses: ["CONSOLIDATING"],
+        unitStatuses: ["CONSOLIDATING"],
+      }),
+      resolvePurchaseLineInventory(tx, {
+        storeId: batch.storeId,
+        locationId: batch.fromLocationId!,
+        purchaseLines: purchaseLineTargets,
+        lotStatuses: ["ACTIVE"],
+        unitStatuses: ["AVAILABLE"],
+      }),
+    ]);
     for (const line of purchaseLines) {
       if (!eligibleOrders.has(line.purchaseOrder.id)) continue;
       const batchLine = batchLineBySourceId.get(line.id);
@@ -975,6 +1127,7 @@ async function prepareLegacyPurchaseInventoryForReceipt(batch: ConsolidationForR
         locationId: batch.fromLocationId!,
         purchaseOrderId: line.purchaseOrder.id,
         purchaseLine: line,
+        inventory: availableInventoryByLine.get(line.id) ?? { lots: [], units: [] },
       });
     }
   });
@@ -1132,16 +1285,24 @@ async function getActiveReservations(
   input: { lotIds: string[]; itemUnitIds: string[] }
 ) {
   if (input.lotIds.length === 0 && input.itemUnitIds.length === 0) return [];
-  return tx.orderAllocation.findMany({
-    where: {
-      status: { in: [...RESERVING_ALLOCATION_STATUSES] },
-      OR: [
-        ...(input.lotIds.length ? [{ lotId: { in: input.lotIds } }] : []),
-        ...(input.itemUnitIds.length ? [{ itemUnitId: { in: input.itemUnitIds } }] : []),
-      ],
-    },
-    select: { id: true },
-  });
+  const targets = [
+    ...(input.lotIds.length ? [{ lotId: { in: input.lotIds } }] : []),
+    ...(input.itemUnitIds.length ? [{ itemUnitId: { in: input.itemUnitIds } }] : []),
+  ];
+  const [orderReservations, fulfillmentReservations] = await Promise.all([
+    tx.orderAllocation.findMany({
+      where: {
+        status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+        OR: targets,
+      },
+      select: { id: true },
+    }),
+    tx.fulfillmentInventoryAllocation.findMany({
+      where: { status: "ALLOCATED", OR: targets },
+      select: { id: true },
+    }),
+  ]);
+  return [...orderReservations, ...fulfillmentReservations];
 }
 
 async function validateConsolidationInventory(
@@ -1235,7 +1396,7 @@ async function validateConsolidationInventory(
         getActiveReservations(tx, { lotIds: [lot.id], itemUnitIds: [] }),
       ]);
       if (reservations.length > 0) {
-        errors.push(`库存批次 ${line.sourceId.slice(-6)}：已被销售单占用`);
+        errors.push(`库存批次 ${line.sourceId.slice(-6)}：已被销售单或代发履约占用`);
       } else if (available.lt(required)) {
         errors.push(
           `库存批次 ${line.sourceId.slice(-6)}：需 ${required.toString()}，可转运 ${available.toString()}`
@@ -1267,7 +1428,7 @@ async function validateConsolidationInventory(
         itemUnitIds: [unit.id],
       });
       if (reservations.length > 0) {
-        errors.push(`单品 ${line.sourceId.slice(-6)}：已被销售单占用`);
+        errors.push(`单品 ${line.sourceId.slice(-6)}：已被销售单或代发履约占用`);
       }
       continue;
     }
@@ -1292,7 +1453,7 @@ async function validateConsolidationInventory(
       getActiveReservations(tx, { lotIds, itemUnitIds }),
     ]);
     if (reservations.length > 0) {
-      errors.push(`${label}：库存已被销售单占用`);
+      errors.push(`${label}：库存已被销售单或代发履约占用`);
       continue;
     }
 
@@ -1326,6 +1487,7 @@ async function receiveConsolidationInventory(
   batch: ConsolidationForReceipt
 ) {
   if (batch.lines.length === 0) return;
+  await lockConsolidationBatchInventory(tx, batch);
   const validationErrors = await validateConsolidationInventory(tx, batch);
   if (validationErrors.length > 0) {
     throw new Error(
@@ -1446,6 +1608,7 @@ export async function repairConsolidationOriginInventory(id: string) {
     where: { id: { in: purchaseLineIds } },
     select: {
       id: true,
+      skuId: true,
       purchaseOrder: {
         select: {
           id: true,
@@ -1480,15 +1643,84 @@ export async function repairConsolidationOriginInventory(id: string) {
 
   let repairedLines = 0;
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${batch.id} FOR UPDATE`;
     const currentBatch = await tx.consolidationBatch.findUnique({
       where: { id: batch.id },
-      select: { status: true },
+      include: { lines: true },
     });
     if (!currentBatch || currentBatch.status === "RECEIVED") {
       throw new Error("集运批次状态已变化，请刷新后重试");
     }
 
-    for (const line of batch.lines) {
+    const currentPurchaseBatchLines = currentBatch.lines.filter(
+      (line) => line.sourceType === "PURCHASE_LINE"
+    );
+    const currentPurchaseLineIds = currentPurchaseBatchLines.map((line) => line.sourceId);
+    const [candidateLots, candidateUnits] = await Promise.all([
+      tx.inventoryLot.findMany({
+        where: {
+          storeId: currentBatch.storeId,
+          sourceType: "PURCHASE",
+          sourceId: { in: currentPurchaseLineIds },
+          status: { in: ["ACTIVE", "CONSOLIDATING"] },
+        },
+        select: { id: true, skuId: true },
+      }),
+      tx.itemUnit.findMany({
+        where: {
+          storeId: currentBatch.storeId,
+          sourceType: "PURCHASE",
+          sourceId: { in: currentPurchaseLineIds },
+          status: { in: ["AVAILABLE", "CONSOLIDATING"] },
+        },
+        select: { id: true, skuId: true },
+      }),
+    ]);
+    await lockConsolidationSkuRows(tx, [
+      ...currentPurchaseLineIds.map((lineId) => purchaseLineById.get(lineId)?.skuId),
+      ...candidateLots.map((lot) => lot.skuId),
+      ...candidateUnits.map((unit) => unit.skuId),
+    ]);
+    await lockConsolidationEntityRows(tx, {
+      lotIds: candidateLots.map((lot) => lot.id),
+      itemUnitIds: candidateUnits.map((unit) => unit.id),
+    });
+    const [freshLots, freshUnits] = await Promise.all([
+      tx.inventoryLot.findMany({
+        where: {
+          id: { in: candidateLots.map((lot) => lot.id) },
+          storeId: currentBatch.storeId,
+          sourceType: "PURCHASE",
+          sourceId: { in: currentPurchaseLineIds },
+          status: { in: ["ACTIVE", "CONSOLIDATING"] },
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      tx.itemUnit.findMany({
+        where: {
+          id: { in: candidateUnits.map((unit) => unit.id) },
+          storeId: currentBatch.storeId,
+          sourceType: "PURCHASE",
+          sourceId: { in: currentPurchaseLineIds },
+          status: { in: ["AVAILABLE", "CONSOLIDATING"] },
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+    const lotsByPurchaseLineId = new Map<string, typeof freshLots>();
+    for (const lot of freshLots) {
+      const values = lotsByPurchaseLineId.get(lot.sourceId) ?? [];
+      values.push(lot);
+      lotsByPurchaseLineId.set(lot.sourceId, values);
+    }
+    const unitsByPurchaseLineId = new Map<string, typeof freshUnits>();
+    for (const unit of freshUnits) {
+      const values = unitsByPurchaseLineId.get(unit.sourceId) ?? [];
+      values.push(unit);
+      unitsByPurchaseLineId.set(unit.sourceId, values);
+    }
+
+    for (const line of currentPurchaseBatchLines) {
       if (line.sourceType !== "PURCHASE_LINE") continue;
       const purchaseLine = purchaseLineById.get(line.sourceId);
       if (!purchaseLine) {
@@ -1499,26 +1731,8 @@ export async function repairConsolidationOriginInventory(id: string) {
         throw new Error(`${purchaseLine.sku.code} ${purchaseLine.sku.name} 的集运数量无效`);
       }
 
-      const [lots, units] = await Promise.all([
-        tx.inventoryLot.findMany({
-          where: {
-            storeId: batch.storeId,
-            sourceType: "PURCHASE",
-            sourceId: line.sourceId,
-            status: { in: ["ACTIVE", "CONSOLIDATING"] },
-          },
-          orderBy: { createdAt: "asc" },
-        }),
-        tx.itemUnit.findMany({
-          where: {
-            storeId: batch.storeId,
-            sourceType: "PURCHASE",
-            sourceId: line.sourceId,
-            status: { in: ["AVAILABLE", "CONSOLIDATING"] },
-          },
-          orderBy: { createdAt: "asc" },
-        }),
-      ]);
+      const lots = lotsByPurchaseLineId.get(line.sourceId) ?? [];
+      const units = unitsByPurchaseLineId.get(line.sourceId) ?? [];
       const lotQuantities = new Map<string, Decimal>();
       for (const lot of lots) {
         lotQuantities.set(lot.id, Decimal.max(await getLotAvailableQuantity(tx, lot.id), 0));
@@ -1529,7 +1743,7 @@ export async function repairConsolidationOriginInventory(id: string) {
       });
       if (reservations.length > 0) {
         throw new Error(
-          `${purchaseLine.sku.code} ${purchaseLine.sku.name} 的库存已被销售单占用，不能补记转仓`
+          `${purchaseLine.sku.code} ${purchaseLine.sku.name} 的库存已被销售单或代发履约占用，不能补记转仓`
         );
       }
 

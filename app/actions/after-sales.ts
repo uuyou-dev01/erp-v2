@@ -416,7 +416,78 @@ export async function resolveAfterSalesCaseAction(id: string, data: {
 
     await ensureSystemChargeCategories();
     await prisma.$transaction(async (tx) => {
-      for (const line of item.lines) {
+      await tx.$queryRaw`SELECT "id" FROM "after_sales_cases" WHERE "id" = ${item.id} FOR UPDATE`;
+      const lockedItem = await tx.afterSalesCase.findUnique({
+        where: { id: item.id },
+        include: {
+          customerOrder: { select: { currency: true, customerName: true } },
+          lines: { include: { receipts: true } },
+        },
+      });
+      if (!lockedItem) throw new Error("售后单不存在或无权访问");
+      if (lockedItem.status === "RESOLVED") throw new Error("售后单已经完成检查");
+      if (lockedItem.status !== "INSPECTING" && lockedItem.type !== "REFUND_ONLY") {
+        throw new Error("退货收货后才能完成检查");
+      }
+
+      const lotIds = [
+        ...new Set(
+          lockedItem.lines.flatMap((line) =>
+            line.receipts.flatMap((receipt) =>
+              receipt.returnedLotId ? [receipt.returnedLotId] : []
+            )
+          )
+        ),
+      ].sort();
+      const itemUnitIds = [
+        ...new Set(
+          lockedItem.lines.flatMap((line) =>
+            line.receipts.flatMap((receipt) => (receipt.itemUnitId ? [receipt.itemUnitId] : []))
+          )
+        ),
+      ].sort();
+      const [lotRefs, itemUnitRefs] = await Promise.all([
+        tx.inventoryLot.findMany({
+          where: { id: { in: lotIds } },
+          select: { id: true, skuId: true },
+        }),
+        tx.itemUnit.findMany({
+          where: { id: { in: itemUnitIds } },
+          select: { id: true, skuId: true },
+        }),
+      ]);
+      const skuIds = [
+        ...new Set([...lotRefs.map((lot) => lot.skuId), ...itemUnitRefs.map((unit) => unit.skuId)]),
+      ].sort();
+
+      // Serialize with every other inventory mutation: SKU, then lot, then item.
+      for (const skuId of skuIds) {
+        await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+      }
+      for (const lotId of lotIds) {
+        await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+      }
+      for (const itemUnitId of itemUnitIds) {
+        await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+      }
+
+      const [lockedLots, lockedItemUnits] = await Promise.all([
+        tx.inventoryLot.findMany({ where: { id: { in: lotIds } } }),
+        tx.itemUnit.findMany({ where: { id: { in: itemUnitIds } } }),
+      ]);
+      if (lockedLots.length !== lotIds.length || lockedItemUnits.length !== itemUnitIds.length) {
+        throw new Error("退件库存发生变化，请刷新后重试");
+      }
+      if (lockedLots.some((lot) => lot.status !== "RETURN_CHECK")) {
+        throw new Error("退货批次已被其他流程处理，不能重复完成检查");
+      }
+      if (lockedItemUnits.some((unit) => unit.status !== "RETURN_CHECK")) {
+        throw new Error("退货单件已被其他流程处理，不能重复完成检查");
+      }
+      const lotById = new Map(lockedLots.map((lot) => [lot.id, lot]));
+      const itemUnitById = new Map(lockedItemUnits.map((unit) => [unit.id, unit]));
+
+      for (const line of lockedItem.lines) {
         await tx.afterSalesLine.update({
           where: { id: line.id },
           data: { resolution: data.resolution, conditionNote: data.note || null },
@@ -433,12 +504,20 @@ export async function resolveAfterSalesCaseAction(id: string, data: {
                     ? "DOWNGRADED"
                     : "QUARANTINED";
           if (receipt.itemUnitId) {
+            const unit = itemUnitById.get(receipt.itemUnitId);
+            if (!unit) throw new Error("退货单件不存在");
             await tx.itemUnit.update({
               where: { id: receipt.itemUnitId },
-              data: { status: data.resolution === "RESTOCK" ? "AVAILABLE" : data.resolution === "SCRAP" ? "CONSUMED" : "RETURN_CHECK" },
+              data: {
+                status:
+                  data.resolution === "RESTOCK"
+                    ? "AVAILABLE"
+                    : data.resolution === "SCRAP"
+                      ? "CONSUMED"
+                      : "RETURN_CHECK",
+              },
             });
             if (data.resolution === "SCRAP") {
-              const unit = await tx.itemUnit.findUniqueOrThrow({ where: { id: receipt.itemUnitId } });
               await tx.stockLedger.create({
                 data: {
                   storeId: unit.storeId,
@@ -449,14 +528,15 @@ export async function resolveAfterSalesCaseAction(id: string, data: {
                   deltaQty: new Decimal(receipt.quantity.toString()).negated(),
                   reason: "ADJUST",
                   refType: "AFTER_SALES_CASE",
-                  refId: item.id,
+                  refId: lockedItem.id,
                   meta: { resolution: "SCRAP" },
                 },
               });
             }
           }
           if (receipt.returnedLotId) {
-            const lot = await tx.inventoryLot.findUniqueOrThrow({ where: { id: receipt.returnedLotId } });
+            const lot = lotById.get(receipt.returnedLotId);
+            if (!lot) throw new Error("退货批次不存在");
             await tx.inventoryLot.update({
               where: { id: lot.id },
               data: { status: data.resolution === "RESTOCK" ? "ACTIVE" : "RETURN_CHECK" },
@@ -472,35 +552,41 @@ export async function resolveAfterSalesCaseAction(id: string, data: {
                   deltaQty: new Decimal(receipt.quantity.toString()).negated(),
                   reason: data.resolution === "SCRAP" ? "ADJUST" : "RETURN_OUT",
                   refType: "AFTER_SALES_CASE",
-                  refId: item.id,
+                  refId: lockedItem.id,
                 },
               });
             }
           }
-          await tx.afterSalesReceipt.update({ where: { id: receipt.id }, data: { status: receiptStatus } });
+          await tx.afterSalesReceipt.update({
+            where: { id: receipt.id },
+            data: { status: receiptStatus },
+          });
         }
       }
 
-      if (item.refundAmount?.gt(0)) {
+      if (lockedItem.refundAmount?.gt(0)) {
         const category = await tx.chargeCategory.findFirstOrThrow({
           where: { organizationId: null, code: "AFTER_SALES" },
         });
         const existingRefund = await tx.chargeEvent.findFirst({
-          where: { organizationId: item.organizationId, idempotencyKey: `after-sales-refund:${item.id}` },
+          where: {
+            organizationId: lockedItem.organizationId,
+            idempotencyKey: `after-sales-refund:${lockedItem.id}`,
+          },
         });
         if (!existingRefund) {
           await tx.chargeEvent.create({
             data: {
-              organizationId: item.organizationId,
+              organizationId: lockedItem.organizationId,
               categoryId: category.id,
               sourceType: "AFTER_SALES_CASE",
-              sourceId: item.id,
-              idempotencyKey: `after-sales-refund:${item.id}`,
+              sourceId: lockedItem.id,
+              idempotencyKey: `after-sales-refund:${lockedItem.id}`,
               amountKind: "ACTUAL",
-              amount: item.refundAmount,
-              currency: item.refundCurrency || item.customerOrder.currency,
+              amount: lockedItem.refundAmount,
+              currency: lockedItem.refundCurrency || lockedItem.customerOrder.currency,
               status: "CONFIRMED",
-              description: `售后退款 ${item.caseNo}`,
+              description: `售后退款 ${lockedItem.caseNo}`,
               createdById: context.userId,
               submittedById: context.userId,
               submittedAt: new Date(),
@@ -511,32 +597,39 @@ export async function resolveAfterSalesCaseAction(id: string, data: {
                   {
                     role: "PAYER",
                     partyType: "ORGANIZATION",
-                    partyId: item.organizationId,
-                    organizationId: item.organizationId,
+                    partyId: lockedItem.organizationId,
+                    organizationId: lockedItem.organizationId,
                     nameSnapshot: "销售主体",
                   },
                   {
                     role: "PAYEE",
                     partyType: "CUSTOMER",
-                    partyId: item.customerOrderId,
-                    nameSnapshot: item.customerOrder.customerName,
+                    partyId: lockedItem.customerOrderId,
+                    nameSnapshot: lockedItem.customerOrder.customerName,
                   },
                 ],
               },
               allocations: {
-                create: { targetType: "AFTER_SALES_CASE", targetId: item.id, amount: item.refundAmount },
+                create: {
+                  targetType: "AFTER_SALES_CASE",
+                  targetId: lockedItem.id,
+                  amount: lockedItem.refundAmount,
+                },
               },
             },
           });
         }
       }
       await tx.afterSalesCase.update({
-        where: { id: item.id },
+        where: { id: lockedItem.id },
         data: { status: "RESOLVED", resolvedById: context.userId, resolvedAt: new Date() },
       });
       await tx.inspectionEvent.updateMany({
-        where: { afterSalesCaseId: item.id },
-        data: { result: data.resolution === "RESTOCK" ? "PASSED" : "FAILED", failureReason: data.note || null },
+        where: { afterSalesCaseId: lockedItem.id },
+        data: {
+          result: data.resolution === "RESTOCK" ? "PASSED" : "FAILED",
+          failureReason: data.note || null,
+        },
       });
     });
     revalidateAfterSales(item.customerOrderId);

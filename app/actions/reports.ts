@@ -4,45 +4,37 @@ import { prisma } from "@/lib/prisma";
 import Decimal from "decimal.js";
 import { createStoreMoneyConverter } from "@/lib/fx";
 import { computeDashboardProfitMetrics } from "@/lib/application/report-metrics";
-import {
-  isValidSalesStatus,
-  VALID_SALES_STATUSES,
-} from "@/lib/application/sales-metrics";
+import { isValidSalesStatus, VALID_SALES_STATUSES } from "@/lib/application/sales-metrics";
 
 export interface DateRange {
   dateFrom?: Date;
   dateTo?: Date;
 }
 
-export async function getOperationalChargeSummary(
-  organizationId: string,
-  range?: DateRange,
-) {
+export async function getOperationalChargeSummary(organizationId: string, range?: DateRange) {
   const occurredAt =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
   const events = await prisma.chargeEvent.findMany({
     where: {
       occurredAt,
-      OR: [
-        { organizationId },
-        { parties: { some: { organizationId } } },
-      ],
+      OR: [{ organizationId }, { parties: { some: { organizationId } } }],
       status: { not: "VOID" },
     },
     include: { category: true, parties: true },
   });
 
-  const rows = new Map<string, {
-    currency: string;
-    estimatedPayable: Decimal;
-    estimatedReceivable: Decimal;
-    confirmedPayable: Decimal;
-    confirmedReceivable: Decimal;
-    settledPayable: Decimal;
-    settledReceivable: Decimal;
-  }>();
+  const rows = new Map<
+    string,
+    {
+      currency: string;
+      estimatedPayable: Decimal;
+      estimatedReceivable: Decimal;
+      confirmedPayable: Decimal;
+      confirmedReceivable: Decimal;
+      settledPayable: Decimal;
+      settledReceivable: Decimal;
+    }
+  >();
   const byGroup = new Map<string, Decimal>();
   for (const event of events) {
     const row = rows.get(event.currency) ?? {
@@ -54,8 +46,12 @@ export async function getOperationalChargeSummary(
       settledPayable: new Decimal(0),
       settledReceivable: new Decimal(0),
     };
-    const isPayer = event.parties.some((party) => party.role === "PAYER" && party.organizationId === organizationId);
-    const isPayee = event.parties.some((party) => party.role === "PAYEE" && party.organizationId === organizationId);
+    const isPayer = event.parties.some(
+      (party) => party.role === "PAYER" && party.organizationId === organizationId
+    );
+    const isPayee = event.parties.some(
+      (party) => party.role === "PAYEE" && party.organizationId === organizationId
+    );
     if (event.amountKind === "ESTIMATE") {
       if (isPayer) row.estimatedPayable = row.estimatedPayable.plus(event.amount);
       if (isPayee) row.estimatedReceivable = row.estimatedReceivable.plus(event.amount);
@@ -67,7 +63,10 @@ export async function getOperationalChargeSummary(
         if (isPayee) row.settledReceivable = row.settledReceivable.plus(event.amount);
       }
       const key = `${event.currency}:${event.category.groupCode}`;
-      byGroup.set(key, (byGroup.get(key) ?? new Decimal(0)).plus(isPayer ? event.amount : event.amount.negated()));
+      byGroup.set(
+        key,
+        (byGroup.get(key) ?? new Decimal(0)).plus(isPayer ? event.amount : event.amount.negated())
+      );
     }
     rows.set(event.currency, row);
   }
@@ -96,9 +95,7 @@ const VALID_SALES_STATUS_FILTER = [...VALID_SALES_STATUSES];
 export async function getBusinessOverview(storeId: string, range?: DateRange) {
   const converter = await createStoreMoneyConverter(storeId);
   const dateFilter =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
 
   const inventoryLots = await prisma.inventoryLot.findMany({
     where: { storeId, status: "ACTIVE" },
@@ -126,10 +123,7 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
         })
       : [];
   const lotQtyById = new Map(
-    lotLedgers.map((row) => [
-      row.entityId,
-      new Decimal(row._sum.deltaQty?.toString() ?? "0"),
-    ]),
+    lotLedgers.map((row) => [row.entityId, new Decimal(row._sum.deltaQty?.toString() ?? "0")])
   );
 
   const lotValues = await Promise.all(
@@ -140,18 +134,18 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
       return converter.convertToBase(rawValue, lot.costCurrency, {
         effectiveAt: lot.receivedAt,
       });
-    }),
+    })
   );
   const itemUnitValues = await Promise.all(
     itemUnits.map((item) =>
       converter.convertToBase(item.unitCost.toString(), item.costCurrency, {
         effectiveAt: item.createdAt,
-      }),
-    ),
+      })
+    )
   );
   const totalInventoryValue = [...lotValues, ...itemUnitValues].reduce(
     (sum, value) => sum.plus(value),
-    new Decimal(0),
+    new Decimal(0)
   );
 
   const purchaseOrders = await prisma.purchaseOrder.findMany({
@@ -174,17 +168,15 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
       converter.convertToBase(order.totalAmount.toString(), order.currency, {
         preferredRate: order.fxRate?.toString(),
         effectiveAt: order.orderedAt ?? order.createdAt,
-      }),
-    ),
+      })
+    )
   );
   const totalPurchaseAmount = purchaseAmounts.reduce(
     (sum, amount) => sum.plus(amount),
-    new Decimal(0),
+    new Decimal(0)
   );
 
-  const receivedOrders = purchaseOrders.filter(
-    (o) => o.status === "RECEIVED",
-  ).length;
+  const receivedOrders = purchaseOrders.filter((o) => o.status === "RECEIVED").length;
 
   const customerOrders = await prisma.customerOrder.findMany({
     where: {
@@ -194,20 +186,15 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
     select: { totalPaid: true, orderStatus: true, currency: true, orderDate: true },
   });
 
-  const validSalesOrders = customerOrders.filter((order) =>
-    isValidSalesStatus(order.orderStatus)
-  );
+  const validSalesOrders = customerOrders.filter((order) => isValidSalesStatus(order.orderStatus));
   const salesAmounts = await Promise.all(
     validSalesOrders.map((order) =>
       converter.convertToBase(order.totalPaid.toString(), order.currency, {
         effectiveAt: order.orderDate,
-      }),
-    ),
+      })
+    )
   );
-  const totalSalesAmount = salesAmounts.reduce(
-    (sum, amount) => sum.plus(amount),
-    new Decimal(0),
-  );
+  const totalSalesAmount = salesAmounts.reduce((sum, amount) => sum.plus(amount), new Decimal(0));
 
   const confirmedOrders = validSalesOrders.length;
 
@@ -257,6 +244,7 @@ export async function getDashboardMonthlyMetrics(storeId: string, range: Require
       totalPaid: true,
       platformFee: true,
       shippingFee: true,
+      shippingFeeStatus: true,
       lines: {
         select: {
           skuId: true,
@@ -358,47 +346,33 @@ export async function getDashboardMonthlyMetrics(storeId: string, range: Require
       .map((sku) => sku.id)
   );
 
-  const soldSkuIds = new Set(
-    salesOrders.flatMap((order) => order.lines.map((line) => line.skuId))
-  );
+  const soldSkuIds = new Set(salesOrders.flatMap((order) => order.lines.map((line) => line.skuId)));
 
   const convertedSalesOrders = await Promise.all(
     salesOrders.map(async (order) => ({
-      salesAmount: await converter.convertToBase(
-        order.totalPaid.toString(),
-        order.currency,
-        {
-          effectiveAt: order.orderDate,
-        },
-      ),
-      platformFee: await converter.convertToBase(
-        order.platformFee.toString(),
-        order.currency,
-        {
-          effectiveAt: order.orderDate,
-        },
-      ),
-      shippingFee: await converter.convertToBase(
-        order.shippingFee.toString(),
-        order.currency,
-        {
-          effectiveAt: order.orderDate,
-        },
-      ),
-    })),
+      salesAmount: await converter.convertToBase(order.totalPaid.toString(), order.currency, {
+        effectiveAt: order.orderDate,
+      }),
+      platformFee: await converter.convertToBase(order.platformFee.toString(), order.currency, {
+        effectiveAt: order.orderDate,
+      }),
+      shippingFee: await converter.convertToBase(order.shippingFee.toString(), order.currency, {
+        effectiveAt: order.orderDate,
+      }),
+    }))
   );
 
   const salesAmount = convertedSalesOrders.reduce(
     (sum, row) => sum.plus(row.salesAmount),
-    new Decimal(0),
+    new Decimal(0)
   );
   const platformFee = convertedSalesOrders.reduce(
     (sum, row) => sum.plus(row.platformFee),
-    new Decimal(0),
+    new Decimal(0)
   );
   const shippingFee = convertedSalesOrders.reduce(
     (sum, row) => sum.plus(row.shippingFee),
-    new Decimal(0),
+    new Decimal(0)
   );
 
   let inventoryCost = new Decimal(0);
@@ -410,13 +384,11 @@ export async function getDashboardMonthlyMetrics(storeId: string, range: Require
           allocation.itemUnit?.costCurrency ??
           order.currency;
         const effectiveAt =
-          allocation.inventoryLot?.receivedAt ??
-          allocation.itemUnit?.createdAt ??
-          order.orderDate;
+          allocation.inventoryLot?.receivedAt ?? allocation.itemUnit?.createdAt ?? order.orderDate;
         const convertedCost = await converter.convertToBase(
           allocation.costAmount.toString(),
           costCurrency,
-          { effectiveAt },
+          { effectiveAt }
         );
         inventoryCost = inventoryCost.plus(convertedCost);
       }
@@ -428,13 +400,10 @@ export async function getDashboardMonthlyMetrics(storeId: string, range: Require
       converter.convertToBase(order.totalAmount.toString(), order.currency, {
         preferredRate: order.fxRate?.toString(),
         effectiveAt: order.orderedAt ?? order.createdAt,
-      }),
-    ),
+      })
+    )
   );
-  const purchaseAmount = purchaseAmounts.reduce(
-    (sum, value) => sum.plus(value),
-    new Decimal(0),
-  );
+  const purchaseAmount = purchaseAmounts.reduce((sum, value) => sum.plus(value), new Decimal(0));
   const profitMetrics = computeDashboardProfitMetrics({
     salesAmount,
     platformFee,
@@ -458,6 +427,9 @@ export async function getDashboardMonthlyMetrics(storeId: string, range: Require
     platformFee: platformFee.toFixed(2),
     shippingFee: shippingFee.toFixed(2),
     inventoryCost: inventoryCost.toFixed(2),
+    unfinalizedShippingFeeOrderCount: salesOrders.filter(
+      (order) => order.shippingFeeStatus !== "ACTUAL"
+    ).length,
     movingSkuRatio: movingSkuRatio.toFixed(1),
     soldSkuCount: soldSkuIds.size,
     stockedSkuCount: stockedSkuIds.size,
@@ -467,9 +439,7 @@ export async function getDashboardMonthlyMetrics(storeId: string, range: Require
 export async function getInventoryReport(storeId: string, range?: DateRange) {
   const converter = await createStoreMoneyConverter(storeId);
   const dateFilter =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
 
   const lots = await prisma.inventoryLot.findMany({
     where: {
@@ -505,10 +475,7 @@ export async function getInventoryReport(storeId: string, range?: DateRange) {
         })
       : [];
   const lotQtyById = new Map(
-    lotLedgers.map((row) => [
-      row.entityId,
-      new Decimal(row._sum.deltaQty?.toString() ?? "0"),
-    ]),
+    lotLedgers.map((row) => [row.entityId, new Decimal(row._sum.deltaQty?.toString() ?? "0")])
   );
 
   const convertedLots = await Promise.all(
@@ -519,7 +486,7 @@ export async function getInventoryReport(storeId: string, range?: DateRange) {
       return converter.convertToBase(rawValue, lot.costCurrency, {
         effectiveAt: lot.receivedAt,
       });
-    }),
+    })
   );
   lots.forEach((lot, index) => {
     if (convertedLots[index].lte(0)) return;
@@ -536,8 +503,8 @@ export async function getInventoryReport(storeId: string, range?: DateRange) {
     items.map((item) =>
       converter.convertToBase(item.unitCost.toString(), item.costCurrency, {
         effectiveAt: item.createdAt,
-      }),
-    ),
+      })
+    )
   );
   items.forEach((item, index) => {
     const key = item.location.code;
@@ -567,9 +534,7 @@ export async function getInventoryReport(storeId: string, range?: DateRange) {
 export async function getSalesReport(storeId: string, range?: DateRange) {
   const converter = await createStoreMoneyConverter(storeId);
   const dateFilter =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
 
   const orders = await prisma.customerOrder.findMany({
     where: {
@@ -590,8 +555,8 @@ export async function getSalesReport(storeId: string, range?: DateRange) {
     orders.map((order) =>
       converter.convertToBase(order.totalPaid.toString(), order.currency, {
         effectiveAt: order.orderDate,
-      }),
-    ),
+      })
+    )
   );
   const byMonth = new Map<string, Decimal>();
   orders.forEach((order, index) => {
@@ -620,9 +585,7 @@ export async function getSalesReport(storeId: string, range?: DateRange) {
     totalAmount: orders
       .reduce(
         (sum, order, index) =>
-          isValidSalesStatus(order.orderStatus)
-            ? sum.plus(convertedOrderAmounts[index])
-            : sum,
+          isValidSalesStatus(order.orderStatus) ? sum.plus(convertedOrderAmounts[index]) : sum,
         new Decimal(0)
       )
       .toNumber(),
@@ -632,11 +595,7 @@ export async function getSalesReport(storeId: string, range?: DateRange) {
 export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
   const converter = await createStoreMoneyConverter(storeId);
   const now = new Date();
-  const startDate = new Date(
-    now.getFullYear(),
-    now.getMonth() - monthsBack + 1,
-    1,
-  );
+  const startDate = new Date(now.getFullYear(), now.getMonth() - monthsBack + 1, 1);
 
   const [orders, logisticsCosts] = await Promise.all([
     prisma.customerOrder.findMany({
@@ -651,6 +610,7 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
         totalPaid: true,
         platformFee: true,
         shippingFee: true,
+        shippingFeeStatus: true,
         lines: {
           select: {
             allocations: {
@@ -688,15 +648,12 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
       shippingFee: Decimal;
       logisticsFee: Decimal;
       purchaseCost: Decimal;
+      unfinalizedShippingFeeOrderCount: number;
     }
   >();
 
   for (let i = 0; i < monthsBack; i++) {
-    const d = new Date(
-      now.getFullYear(),
-      now.getMonth() - monthsBack + 1 + i,
-      1,
-    );
+    const d = new Date(now.getFullYear(), now.getMonth() - monthsBack + 1 + i, 1);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     monthlyData.set(key, {
       revenue: new Decimal(0),
@@ -704,6 +661,7 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
       shippingFee: new Decimal(0),
       logisticsFee: new Decimal(0),
       purchaseCost: new Decimal(0),
+      unfinalizedShippingFeeOrderCount: 0,
     });
   }
 
@@ -714,7 +672,7 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
     entry.logisticsFee = entry.logisticsFee.plus(
       await converter.convertToBase(cost.amount.toString(), cost.currency, {
         effectiveAt: cost.occurredAt,
-      }),
+      })
     );
   }
 
@@ -722,20 +680,23 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
     const key = order.orderDate.toISOString().slice(0, 7);
     const entry = monthlyData.get(key);
     if (entry) {
+      if (order.shippingFeeStatus !== "ACTUAL") {
+        entry.unfinalizedShippingFeeOrderCount += 1;
+      }
       entry.revenue = entry.revenue.plus(
         await converter.convertToBase(order.totalPaid.toString(), order.currency, {
           effectiveAt: order.orderDate,
-        }),
+        })
       );
       entry.platformFee = entry.platformFee.plus(
         await converter.convertToBase(order.platformFee.toString(), order.currency, {
           effectiveAt: order.orderDate,
-        }),
+        })
       );
       entry.shippingFee = entry.shippingFee.plus(
         await converter.convertToBase(order.shippingFee.toString(), order.currency, {
           effectiveAt: order.orderDate,
-        }),
+        })
       );
       for (const line of order.lines) {
         for (const allocation of line.allocations) {
@@ -750,7 +711,7 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
           entry.purchaseCost = entry.purchaseCost.plus(
             await converter.convertToBase(allocation.costAmount.toString(), costCurrency, {
               effectiveAt,
-            }),
+            })
           );
         }
       }
@@ -766,6 +727,7 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
       shippingFee: data.shippingFee.toNumber(),
       logisticsFee: data.logisticsFee.toNumber(),
       purchaseCost: data.purchaseCost.toNumber(),
+      unfinalizedShippingFeeOrderCount: data.unfinalizedShippingFeeOrderCount,
       profit: data.revenue
         .minus(data.platformFee)
         .minus(data.shippingFee)
@@ -775,15 +737,10 @@ export async function getMonthlyPnL(storeId: string, monthsBack = 6) {
     }));
 }
 
-export async function getPlatformBreakdown(
-  storeId: string,
-  range?: DateRange,
-) {
+export async function getPlatformBreakdown(storeId: string, range?: DateRange) {
   const converter = await createStoreMoneyConverter(storeId);
   const dateFilter =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
 
   const orders = await prisma.customerOrder.findMany({
     where: {
@@ -823,13 +780,13 @@ export async function getPlatformBreakdown(
     entry.totalSales = entry.totalSales.plus(
       await converter.convertToBase(order.totalPaid.toString(), order.currency, {
         effectiveAt: order.orderDate,
-      }),
+      })
     );
     entry.orderCount += 1;
     entry.totalPlatformFee = entry.totalPlatformFee.plus(
       await converter.convertToBase(order.platformFee.toString(), order.currency, {
         effectiveAt: order.orderDate,
-      }),
+      })
     );
     platformMap.set(key, entry);
   }
@@ -845,9 +802,7 @@ export async function getPlatformBreakdown(
 export async function getFeeDetails(storeId: string, range?: DateRange) {
   const converter = await createStoreMoneyConverter(storeId);
   const dateFilter =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
 
   const [orders, logisticsCosts] = await Promise.all([
     prisma.customerOrder.findMany({
@@ -859,6 +814,7 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
       select: {
         platformFee: true,
         shippingFee: true,
+        shippingFeeStatus: true,
         shippingProviderFeeRate: true,
         totalPaid: true,
         currency: true,
@@ -887,21 +843,21 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
     totalPlatformFee = totalPlatformFee.plus(
       await converter.convertToBase(order.platformFee.toString(), order.currency, {
         effectiveAt: order.orderDate,
-      }),
+      })
     );
     totalShippingFee = totalShippingFee.plus(
       await converter.convertToBase(order.shippingFee.toString(), order.currency, {
         effectiveAt: order.orderDate,
-      }),
+      })
     );
     if (order.shippingProviderFeeRate) {
       const rawAgentFee = new Decimal(order.totalPaid.toString()).times(
-        new Decimal(order.shippingProviderFeeRate.toString()),
+        new Decimal(order.shippingProviderFeeRate.toString())
       );
       totalAgentFee = totalAgentFee.plus(
         await converter.convertToBase(rawAgentFee, order.currency, {
           effectiveAt: order.orderDate,
-        }),
+        })
       );
     }
   }
@@ -911,11 +867,9 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
       effectiveAt: cost.occurredAt,
     });
     if (cost.sourceType === "PURCHASE_ORDER") {
-      logisticsBySource.purchaseShippingFee =
-        logisticsBySource.purchaseShippingFee.plus(amount);
+      logisticsBySource.purchaseShippingFee = logisticsBySource.purchaseShippingFee.plus(amount);
     } else if (cost.sourceType === "INBOUND_SHIPMENT") {
-      logisticsBySource.transferShippingFee =
-        logisticsBySource.transferShippingFee.plus(amount);
+      logisticsBySource.transferShippingFee = logisticsBySource.transferShippingFee.plus(amount);
     } else if (cost.sourceType === "CONSOLIDATION_BATCH") {
       logisticsBySource.consolidationShippingFee =
         logisticsBySource.consolidationShippingFee.plus(amount);
@@ -929,15 +883,16 @@ export async function getFeeDetails(storeId: string, range?: DateRange) {
     transferShippingFee: logisticsBySource.transferShippingFee.toFixed(2),
     consolidationShippingFee: logisticsBySource.consolidationShippingFee.toFixed(2),
     agentFee: totalAgentFee.toFixed(2),
+    unfinalizedShippingFeeOrderCount: orders.filter(
+      (order) => order.shippingFeeStatus !== "ACTUAL"
+    ).length,
   };
 }
 
 export async function getSettlementSummary(storeId: string, range?: DateRange) {
   const converter = await createStoreMoneyConverter(storeId);
   const dateFilter =
-    range?.dateFrom && range?.dateTo
-      ? { gte: range.dateFrom, lte: range.dateTo }
-      : undefined;
+    range?.dateFrom && range?.dateTo ? { gte: range.dateFrom, lte: range.dateTo } : undefined;
 
   const settlements = await prisma.settlement.findMany({
     where: {
@@ -990,7 +945,7 @@ export async function getSettlementSummary(storeId: string, range?: DateRange) {
 
       lineBreakdown.set(
         line.lineType,
-        (lineBreakdown.get(line.lineType) ?? new Decimal(0)).plus(baseAmount),
+        (lineBreakdown.get(line.lineType) ?? new Decimal(0)).plus(baseAmount)
       );
 
       // Informational lines explain how the agreement was calculated, but they

@@ -71,6 +71,8 @@ const WIZARD_STEPS = [
   { label: "确认提交", description: "预览并提交" },
 ];
 
+const BASE_CURRENCY = "CNY";
+
 function generateOrderNo(): string {
   const now = new Date();
   const y = now.getFullYear();
@@ -516,6 +518,7 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
                 </p>
               </div>
               <Select
+                className="max-w-2xl"
                 value={basicInfo.costMode}
                 onChange={(e) => setBasicInfo({
                   ...basicInfo,
@@ -527,7 +530,7 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
                 <option value="BATCH_LATER">只知道整批总价，稍后再决定怎么分摊</option>
               </Select>
               {basicInfo.costMode !== "ITEM_PRICES" ? (
-                <div className="space-y-2">
+                <div className="max-w-sm space-y-2">
                   <Label htmlFor="declaredTotalAmount">整批商品总价（{basicInfo.currency}）</Label>
                   <Input
                     id="declaredTotalAmount"
@@ -548,7 +551,14 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
                 <Select
                   id="currency"
                   value={basicInfo.currency}
-                  onChange={(e) => setBasicInfo({ ...basicInfo, currency: e.target.value })}
+                  onChange={(e) => {
+                    const currency = e.target.value;
+                    setBasicInfo({
+                      ...basicInfo,
+                      currency,
+                      fxRate: currency === BASE_CURRENCY ? "" : basicInfo.fxRate,
+                    });
+                  }}
                 >
                   {CURRENCIES.map((c) => (
                     <option key={c.value} value={c.value}>
@@ -559,12 +569,21 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="fxRate">{t("purchase.fx_rate")}</Label>
+                <Label htmlFor="fxRate">
+                  折算汇率（{basicInfo.currency} → {BASE_CURRENCY}
+                  {basicInfo.currency === BASE_CURRENCY ? "" : "，选填"}）
+                </Label>
                 <Input
                   id="fxRate"
+                  inputMode="decimal"
                   value={basicInfo.fxRate}
                   onChange={(e) => setBasicInfo({ ...basicInfo, fxRate: e.target.value })}
-                  placeholder={t("purchase.fx_rate_placeholder")}
+                  placeholder={
+                    basicInfo.currency === BASE_CURRENCY
+                      ? "本位币无需换算"
+                      : `请输入 1 ${basicInfo.currency} 对应的 ${BASE_CURRENCY} 金额`
+                  }
+                  disabled={basicInfo.currency === BASE_CURRENCY}
                 />
                 {basicErrors.fxRate && (
                   <p className="flex items-center gap-1 text-xs text-destructive">
@@ -572,6 +591,11 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
                     {basicErrors.fxRate}
                   </p>
                 )}
+                <p className="text-xs text-muted-foreground">
+                  {basicInfo.currency === BASE_CURRENCY
+                    ? `订单币种就是本位币 ${BASE_CURRENCY}，无需填写汇率。`
+                    : `输入 1 ${basicInfo.currency} 可兑换的 ${BASE_CURRENCY} 金额。`}
+                </p>
               </div>
             </div>
 
@@ -931,8 +955,16 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">汇率</p>
-                  <p className="font-medium">{basicInfo.fxRate || "—"}</p>
+                  <p className="text-sm text-muted-foreground">
+                    折算汇率（{basicInfo.currency} → {BASE_CURRENCY}）
+                  </p>
+                  <p className="font-medium">
+                    {basicInfo.currency === BASE_CURRENCY
+                      ? "无需换算"
+                      : basicInfo.fxRate
+                        ? `1 ${basicInfo.currency} = ${basicInfo.fxRate} ${BASE_CURRENCY}`
+                        : "—"}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">采购日期</p>
@@ -991,7 +1023,7 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
                     basicInfo.costMode === "ITEM_PRICES"
                       ? grandTotal.toFixed(2)
                       : basicInfo.declaredTotalAmount || "0",
-                    basicInfo.currency,
+                    basicInfo.currency
                   )}
                 </span>
               </div>

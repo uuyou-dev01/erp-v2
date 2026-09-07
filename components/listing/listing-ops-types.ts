@@ -17,6 +17,8 @@ export interface ListingOpsRisk {
 
 export interface ListingOpsItem {
   id: string;
+  salesChannelAccountId: string | null;
+  hasResaleSource: boolean;
   listingType: "SKU" | "ITEM_UNIT";
   status: ListingStatus;
   skuId: string | null;

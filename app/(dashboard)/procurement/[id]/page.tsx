@@ -206,14 +206,19 @@ export default async function PurchaseOrderDetailPage({
             </div>
             {order.fxRate && (
               <div>
-                <p className="text-sm font-medium text-muted-foreground">汇率</p>
-                <p className="text-lg">{order.fxRate.toString()}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  折算汇率（{order.currency} → CNY）
+                </p>
+                <p className="text-lg">
+                  1 {order.currency} = {order.fxRate.toString()} CNY
+                </p>
               </div>
             )}
           </div>
           {order.currency.toUpperCase() !== "CNY" ? (
             <PurchaseOrderFxForm
               orderId={order.id}
+              currency={order.currency}
               currentRate={order.fxRate}
               suggestedRate={suggestedFxRate?.toFixed(8) ?? null}
             />

@@ -60,6 +60,9 @@ export interface ListingRecord {
   skuName: string;
   imageUrl: string | null;
   listingId: string;
+  salesChannelAccountId: string | null;
+  /** Linked to the resale workflow and therefore needs per-line resale settlement. */
+  hasResaleSource: boolean;
   platformId: string;
   platformName: string;
   platformCode: string;
@@ -536,8 +539,12 @@ async function getListingRows(storeId: string) {
           },
           location: {
             select: {
+              id: true,
+              code: true,
               name: true,
               region: true,
+              type: true,
+              isSellableDefault: true,
               capabilities: { where: { enabled: true }, select: { code: true, enabled: true } },
               shippingLanesFrom: {
                 where: { active: true, laneType: "CUSTOMER_DELIVERY" },
@@ -547,6 +554,7 @@ async function getListingRows(storeId: string) {
           },
         },
       },
+      resaleListings: { select: { id: true } },
     },
     orderBy: { listedAt: "desc" },
   });
@@ -579,6 +587,8 @@ function listingRowToRecord(
     skuName: listingSku?.name ?? "",
     imageUrl: listingSku?.imageUrl ?? null,
     listingId: listing.id,
+    salesChannelAccountId: listing.salesChannelAccountId,
+    hasResaleSource: listing.resaleListings.length > 0,
     platformId: listing.platformId,
     platformName: listing.platform.name,
     platformCode: listing.platform.code,
@@ -670,81 +680,97 @@ export async function getListingCoverageProducts(storeId: string) {
   const ninetyDaysAgo = new Date(now);
   ninetyDaysAgo.setDate(now.getDate() - 90);
 
-  const [platforms, listings, skus, itemUnits, stockBreakdown, recentSalesLines, activeLots] =
-    await Promise.all([
-      prisma.platform.findMany({
-        where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
-        select: { id: true, name: true, code: true, country: true },
-      }),
-      getListingRows(storeId),
-      prisma.sKU.findMany({
-        where: { storeId },
-        select: {
-          id: true,
-          parentSkuId: true,
-          catalogRole: true,
-          code: true,
-          name: true,
-          imageUrl: true,
-          brand: true,
-          categoryId: true,
-          category: true,
-          attributes: true,
+  const [
+    platforms,
+    listings,
+    skus,
+    itemUnits,
+    stockBreakdown,
+    recentSalesLines,
+    activeLots,
+    activeFulfillmentItemAllocations,
+  ] = await Promise.all([
+    prisma.platform.findMany({
+      where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
+      select: { id: true, name: true, code: true, country: true },
+    }),
+    getListingRows(storeId),
+    prisma.sKU.findMany({
+      where: { storeId },
+      select: {
+        id: true,
+        parentSkuId: true,
+        catalogRole: true,
+        code: true,
+        name: true,
+        imageUrl: true,
+        brand: true,
+        categoryId: true,
+        category: true,
+        attributes: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.itemUnit.findMany({
+      where: { storeId, status: { in: ["AVAILABLE", "CONSUMED"] } },
+      include: {
+        sku: {
+          select: { id: true, code: true, name: true, imageUrl: true },
         },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.itemUnit.findMany({
-        where: { storeId, status: { in: ["AVAILABLE", "CONSUMED"] } },
-        include: {
-          sku: {
-            select: { id: true, code: true, name: true, imageUrl: true },
-          },
-          location: {
-            select: {
-              name: true,
-              region: true,
-              isSellableDefault: true,
-              capabilities: { where: { enabled: true }, select: { code: true, enabled: true } },
-              shippingLanesFrom: {
-                where: { active: true, laneType: "CUSTOMER_DELIVERY" },
-                select: { laneType: true, destinationCountry: true, active: true },
-              },
-            },
-          },
-          allocations: {
-            where: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
-            select: { id: true },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-      getStoreStockBreakdown(storeId),
-      prisma.orderLine.findMany({
-        where: {
-          sku: { storeId },
-          order: {
-            orderStatus: { in: [...VALID_SALES_STATUSES] },
-            orderDate: { gte: ninetyDaysAgo },
-          },
-        },
-        select: {
-          skuId: true,
-          quantity: true,
-          order: {
-            select: {
-              orderDate: true,
+        location: {
+          select: {
+            name: true,
+            region: true,
+            isSellableDefault: true,
+            capabilities: { where: { enabled: true }, select: { code: true, enabled: true } },
+            shippingLanesFrom: {
+              where: { active: true, laneType: "CUSTOMER_DELIVERY" },
+              select: { laneType: true, destinationCountry: true, active: true },
             },
           },
         },
-      }),
-      prisma.inventoryLot.findMany({
-        where: { storeId, status: "ACTIVE" },
-        select: {
-          skuId: true,
-          receivedAt: true,
+        allocations: {
+          where: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+          select: { id: true },
         },
-      }),
-    ]);
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    getStoreStockBreakdown(storeId),
+    prisma.orderLine.findMany({
+      where: {
+        sku: { storeId },
+        order: {
+          orderStatus: { in: [...VALID_SALES_STATUSES] },
+          orderDate: { gte: ninetyDaysAgo },
+        },
+      },
+      select: {
+        skuId: true,
+        quantity: true,
+        order: {
+          select: {
+            orderDate: true,
+          },
+        },
+      },
+    }),
+    prisma.inventoryLot.findMany({
+      where: { storeId, status: "ACTIVE" },
+      select: {
+        skuId: true,
+        receivedAt: true,
+      },
+    }),
+    prisma.fulfillmentInventoryAllocation.findMany({
+      where: {
+        status: "ALLOCATED",
+        itemUnitId: { not: null },
+        fulfillmentRequest: { storeId },
+      },
+      select: { itemUnitId: true },
+    }),
+  ]);
 
   const corePlatforms = sortCoreSellingPlatforms(platforms);
   const drafts = new Map<string, ProductDraft>();
@@ -989,8 +1015,14 @@ export async function getListingCoverageProducts(storeId: string) {
     addStockBreakdown(draft, sku.id, breakdown);
   }
 
+  const fulfillmentReservedItemUnitIds = new Set(
+    activeFulfillmentItemAllocations.flatMap((allocation) =>
+      allocation.itemUnitId ? [allocation.itemUnitId] : []
+    )
+  );
+
   for (const item of itemUnits) {
-    const isReserved = item.allocations.length > 0;
+    const isReserved = item.allocations.length > 0 || fulfillmentReservedItemUnitIds.has(item.id);
     const isSellable =
       item.status === "AVAILABLE" && !isReserved && item.location.isSellableDefault;
     const inTransit =
@@ -1079,7 +1111,20 @@ export async function getListingCoverageProducts(storeId: string) {
           );
         return {
           sellableQty: itemUnitSellable ? 1 : 0,
-          sellableLocations: [],
+          sellableLocations:
+            itemUnitSellable && listing.itemUnit?.location
+              ? [
+                  {
+                    locationId: listing.itemUnit.location.id,
+                    code: listing.itemUnit.location.code,
+                    name: listing.itemUnit.location.name,
+                    region: listing.itemUnit.location.region,
+                    type: listing.itemUnit.location.type,
+                    fulfillableMarkets: fulfillmentMarketsForLocation(listing.itemUnit.location),
+                    qty: 1,
+                  },
+                ]
+              : [],
         };
       }
 

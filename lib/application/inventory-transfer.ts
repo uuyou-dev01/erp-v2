@@ -21,17 +21,42 @@ export async function lockInventoryForShipment(
     storeId: string;
     fromLocationId: string;
     lines: InventoryTransferLineInput[];
-  },
+  }
 ) {
   if (input.lines.length === 0) throw new Error("调拨单没有库存明细");
   const lotLines = input.lines.filter(
     (line): line is Extract<InventoryTransferLineInput, { entityType: "LOT" }> =>
-      line.entityType === "LOT",
+      line.entityType === "LOT"
   );
   const unitLines = input.lines.filter(
     (line): line is Extract<InventoryTransferLineInput, { entityType: "ITEM_UNIT" }> =>
-      line.entityType === "ITEM_UNIT",
+      line.entityType === "ITEM_UNIT"
   );
+  const [candidateLots, candidateUnits] = await Promise.all([
+    tx.inventoryLot.findMany({
+      where: { id: { in: lotLines.map((line) => line.entityId) } },
+      select: { id: true, skuId: true },
+    }),
+    tx.itemUnit.findMany({
+      where: { id: { in: unitLines.map((line) => line.entityId) } },
+      select: { id: true, skuId: true },
+    }),
+  ]);
+  if (candidateLots.length !== lotLines.length || candidateUnits.length !== unitLines.length) {
+    throw new Error("部分调拨库存不存在或明细重复");
+  }
+  const skuIds = [
+    ...new Set([...candidateLots, ...candidateUnits].map((item) => item.skuId)),
+  ].sort();
+  for (const skuId of skuIds) {
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+  }
+  for (const lotId of candidateLots.map((lot) => lot.id).sort()) {
+    await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+  }
+  for (const itemUnitId of candidateUnits.map((unit) => unit.id).sort()) {
+    await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+  }
   const [lots, units] = await Promise.all([
     tx.inventoryLot.findMany({
       where: {
@@ -54,16 +79,24 @@ export async function lockInventoryForShipment(
     throw new Error("部分调拨库存不在起运仓、已锁定或不可用");
   }
 
-  const reservations = await tx.orderAllocation.count({
-    where: {
-      status: { in: [...RESERVING_ALLOCATION_STATUSES] },
-      OR: [
-        ...(lots.length ? [{ lotId: { in: lots.map((lot) => lot.id) } }] : []),
-        ...(units.length ? [{ itemUnitId: { in: units.map((unit) => unit.id) } }] : []),
-      ],
-    },
-  });
-  if (reservations > 0) throw new Error("调拨库存已被销售单占用");
+  const reservationTargets = [
+    ...(lots.length ? [{ lotId: { in: lots.map((lot) => lot.id) } }] : []),
+    ...(units.length ? [{ itemUnitId: { in: units.map((unit) => unit.id) } }] : []),
+  ];
+  const [orderReservations, fulfillmentReservations] = await Promise.all([
+    tx.orderAllocation.count({
+      where: {
+        status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+        OR: reservationTargets,
+      },
+    }),
+    tx.fulfillmentInventoryAllocation.count({
+      where: { status: "ALLOCATED", OR: reservationTargets },
+    }),
+  ]);
+  if (orderReservations > 0 || fulfillmentReservations > 0) {
+    throw new Error("调拨库存已被销售单或代发履约占用");
+  }
 
   const lotById = new Map(lots.map((lot) => [lot.id, lot]));
   const resolvedLotLines: InventoryTransferLineInput[] = [];
@@ -163,13 +196,64 @@ export async function receiveInventoryFromShipment(
     fromLocationId: string;
     toLocationId: string;
     receivedAt: Date;
-  },
+  }
 ) {
+  const lockPlanLines = await tx.inboundShipmentInventoryLine.findMany({
+    where: { shipmentId: input.shipmentId, status: "IN_TRANSIT" },
+    orderBy: { createdAt: "asc" },
+  });
+  if (lockPlanLines.length === 0) throw new Error("物流段没有待接收的库存明细");
+
+  const unsupportedLine = lockPlanLines.find(
+    (line) =>
+      (line.entityType !== "LOT" && line.entityType !== "ITEM_UNIT") ||
+      (line.entityType === "ITEM_UNIT" && !new Decimal(line.quantity.toString()).eq(1))
+  );
+  if (unsupportedLine) throw new Error("物流段包含不支持的库存明细");
+
+  const lotIds = [
+    ...new Set(lockPlanLines.flatMap((line) => (line.entityType === "LOT" ? [line.entityId] : []))),
+  ].sort();
+  const itemUnitIds = [
+    ...new Set(
+      lockPlanLines.flatMap((line) => (line.entityType === "ITEM_UNIT" ? [line.entityId] : []))
+    ),
+  ].sort();
+  const [candidateLots, candidateUnits] = await Promise.all([
+    tx.inventoryLot.findMany({
+      where: { id: { in: lotIds } },
+      select: { id: true, skuId: true },
+    }),
+    tx.itemUnit.findMany({
+      where: { id: { in: itemUnitIds } },
+      select: { id: true, skuId: true },
+    }),
+  ]);
+  if (candidateLots.length !== lotIds.length || candidateUnits.length !== itemUnitIds.length) {
+    throw new Error("物流段的部分库存已不存在");
+  }
+
+  const skuIds = [
+    ...new Set([...candidateLots, ...candidateUnits].map((item) => item.skuId)),
+  ].sort();
+  for (const skuId of skuIds) {
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId} FOR UPDATE`;
+  }
+  for (const lotId of lotIds) {
+    await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+  }
+  for (const itemUnitId of itemUnitIds) {
+    await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
+  }
+
   const lines = await tx.inboundShipmentInventoryLine.findMany({
     where: { shipmentId: input.shipmentId, status: "IN_TRANSIT" },
     orderBy: { createdAt: "asc" },
   });
-  if (lines.length === 0) throw new Error("物流段没有待接收的库存明细");
+  const plannedLineIds = new Set(lockPlanLines.map((line) => line.id));
+  if (lines.length !== lockPlanLines.length || lines.some((line) => !plannedLineIds.has(line.id))) {
+    throw new Error("物流段库存明细已由其他人处理，请刷新后查看");
+  }
 
   for (const line of lines) {
     if (line.entityType === "LOT") {
@@ -183,6 +267,7 @@ export async function receiveInventoryFromShipment(
       });
       if (!lot) throw new Error("批次库存已变化，无法确认调拨到货");
       const quantity = new Decimal(line.quantity.toString());
+      if (!quantity.isFinite() || quantity.lte(0)) throw new Error("调拨批次数量无效");
       const onHand = await getLotOnHand(tx, lot.id);
       if (!quantity.eq(onHand)) throw new Error("批次库存数量已变化，无法确认调拨到货");
 
@@ -238,19 +323,27 @@ export async function receiveInventoryFromShipment(
           },
         ],
       });
-      await Promise.all([
-        tx.inventoryLot.update({ where: { id: lot.id }, data: { status: "CONSUMED" } }),
-        tx.inboundShipmentInventoryLine.update({
-          where: { id: line.id },
+      const [consumed, received] = await Promise.all([
+        tx.inventoryLot.updateMany({
+          where: {
+            id: lot.id,
+            storeId: input.storeId,
+            locationId: input.fromLocationId,
+            status: "CONSOLIDATING",
+          },
+          data: { status: "CONSUMED" },
+        }),
+        tx.inboundShipmentInventoryLine.updateMany({
+          where: { id: line.id, shipmentId: input.shipmentId, status: "IN_TRANSIT" },
           data: { status: "RECEIVED", destinationEntityId: destinationLot.id },
         }),
       ]);
+      if (consumed.count !== 1 || received.count !== 1) {
+        throw new Error("批次库存已由其他人处理，请刷新后查看");
+      }
       continue;
     }
 
-    if (line.entityType !== "ITEM_UNIT" || !new Decimal(line.quantity.toString()).eq(1)) {
-      throw new Error("物流段包含不支持的库存明细");
-    }
     const unit = await tx.itemUnit.findFirst({
       where: {
         id: line.entityId,
@@ -260,10 +353,22 @@ export async function receiveInventoryFromShipment(
       },
     });
     if (!unit) throw new Error("单品库存已变化，无法确认调拨到货");
+    const itemOnHand = await tx.stockLedger.aggregate({
+      where: { entityType: "ITEM_UNIT", entityId: unit.id },
+      _sum: { deltaQty: true },
+    });
+    if (!new Decimal(itemOnHand._sum.deltaQty?.toString() ?? "0").eq(1)) {
+      throw new Error("单品库存数量已变化，无法确认调拨到货");
+    }
     const meta = { shipmentId: input.shipmentId, shipmentInventoryLineId: line.id };
-    await Promise.all([
-      tx.itemUnit.update({
-        where: { id: unit.id },
+    const [moved, , received] = await Promise.all([
+      tx.itemUnit.updateMany({
+        where: {
+          id: unit.id,
+          storeId: input.storeId,
+          locationId: input.fromLocationId,
+          status: "CONSOLIDATING",
+        },
         data: { locationId: input.toLocationId, status: "AVAILABLE" },
       }),
       tx.stockLedger.createMany({
@@ -296,10 +401,13 @@ export async function receiveInventoryFromShipment(
           },
         ],
       }),
-      tx.inboundShipmentInventoryLine.update({
-        where: { id: line.id },
+      tx.inboundShipmentInventoryLine.updateMany({
+        where: { id: line.id, shipmentId: input.shipmentId, status: "IN_TRANSIT" },
         data: { status: "RECEIVED", destinationEntityId: unit.id },
       }),
     ]);
+    if (moved.count !== 1 || received.count !== 1) {
+      throw new Error("单品库存已由其他人处理，请刷新后查看");
+    }
   }
 }

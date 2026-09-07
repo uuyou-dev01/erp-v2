@@ -20,6 +20,7 @@ interface MonthlyPnLData {
   logisticsFee: number;
   purchaseCost: number;
   profit: number;
+  unfinalizedShippingFeeOrderCount: number;
 }
 
 interface MonthlyPnLChartProps {
@@ -35,36 +36,52 @@ export function MonthlyPnLChart({ data }: MonthlyPnLChartProps) {
     );
   }
 
+  const unfinalizedShippingFeeOrderCount = data.reduce(
+    (sum, row) => sum + row.unfinalizedShippingFeeOrderCount,
+    0
+  );
+
   return (
-    <ResponsiveContainer width="100%" height={350}>
-      <BarChart data={data} barCategoryGap="20%">
-        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-        <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} />
-        <Tooltip
-          formatter={((value: unknown, name: unknown) => [
-            `¥${Number(value ?? 0).toFixed(2)}`,
-            name ?? "",
-          ]) as never}
-          contentStyle={{
-            borderRadius: 8,
-            border: "1px solid hsl(var(--border))",
-          }}
-        />
-        <Legend />
-        <Bar dataKey="revenue" name="收入" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="platformFee" name="平台费" fill="#EC4899" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="shippingFee" name="销售履约运费" fill="#9CA3AF" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="logisticsFee" name="采购/转仓/集运费" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-        <Bar dataKey="profit" name="利润" radius={[4, 4, 0, 0]}>
-          {data.map((entry, index) => (
-            <Cell
-              key={`profit-${index}`}
-              fill={entry.profit >= 0 ? "#22C55E" : "#EF4444"}
-            />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="space-y-3">
+      {unfinalizedShippingFeeOrderCount > 0 ? (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
+          有 {unfinalizedShippingFeeOrderCount} 张订单的邮费尚未确认实际值（待核算或预估），当前利润仅供参考。
+        </p>
+      ) : null}
+      <ResponsiveContainer width="100%" height={350}>
+        <BarChart data={data} barCategoryGap="20%">
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+          <YAxis tick={{ fontSize: 12 }} />
+          <Tooltip
+            formatter={
+              ((value: unknown, name: unknown) => [
+                `¥${Number(value ?? 0).toFixed(2)}`,
+                name ?? "",
+              ]) as never
+            }
+            contentStyle={{
+              borderRadius: 8,
+              border: "1px solid hsl(var(--border))",
+            }}
+          />
+          <Legend />
+          <Bar dataKey="revenue" name="收入" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="platformFee" name="平台费" fill="#EC4899" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="shippingFee" name="销售履约运费" fill="#9CA3AF" radius={[4, 4, 0, 0]} />
+          <Bar
+            dataKey="logisticsFee"
+            name="采购/转仓/集运费"
+            fill="#F59E0B"
+            radius={[4, 4, 0, 0]}
+          />
+          <Bar dataKey="profit" name="利润" radius={[4, 4, 0, 0]}>
+            {data.map((entry, index) => (
+              <Cell key={`profit-${index}`} fill={entry.profit >= 0 ? "#22C55E" : "#EF4444"} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

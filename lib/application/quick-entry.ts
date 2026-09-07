@@ -22,6 +22,7 @@ import {
   normalizeUsedItemGrade,
   validateItemCondition,
 } from "@/lib/inventory/item-condition";
+import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 
 export type WorkflowStage =
   | "PURCHASE"
@@ -412,8 +413,16 @@ async function findOrCreatePurchaseOrder(
 }
 
 async function resolvePlatforms(tx: Prisma.TransactionClient, storeId: string, labels: string[]) {
-  const platforms = await tx.platform.findMany({ where: { storeId } });
-  const resolved: Array<{ id: string; code: string; name: string }> = [];
+  const platforms = await tx.platform.findMany({
+    where: { storeId },
+    include: { salesChannelAccount: { select: { id: true } } },
+  });
+  const resolved: Array<{
+    id: string;
+    code: string;
+    name: string;
+    salesChannelAccountId: string | null;
+  }> = [];
 
   for (const label of labels) {
     const code = matchPlatformCode(label);
@@ -424,7 +433,14 @@ async function resolvePlatforms(tx: Prisma.TransactionClient, storeId: string, l
           p.name.includes(label) ||
           label.includes(p.name)
       ) ?? null;
-    if (hit) resolved.push({ id: hit.id, code: hit.code, name: hit.name });
+    if (hit) {
+      resolved.push({
+        id: hit.id,
+        code: hit.code,
+        name: hit.name,
+        salesChannelAccountId: hit.salesChannelAccount?.id ?? null,
+      });
+    }
   }
 
   return resolved;
@@ -462,7 +478,7 @@ function resolveWorkflowStage(entry: QuickEntry): WorkflowStage {
 }
 
 export async function processQuickEntry(entryId: string) {
-  const entry = await prisma.quickEntry.findUnique({ where: { id: entryId } });
+  let entry = await prisma.quickEntry.findUnique({ where: { id: entryId } });
   if (!entry) throw new Error("快速录入记录不存在");
   if (entry.processedStatus === "COMPLETED" && entry.workflowStage === "SETTLED") {
     return { entryId, status: "COMPLETED" as const };
@@ -475,6 +491,8 @@ export async function processQuickEntry(entryId: string) {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "quick_entries" WHERE "id" = ${entryId} FOR UPDATE`;
+      entry = await tx.quickEntry.findUniqueOrThrow({ where: { id: entryId } });
       const input = entryToInput(entry);
       const qty = parseQuantity(entry.quantity);
       const unitCost = entry.purchasePrice
@@ -746,6 +764,7 @@ export async function processQuickEntry(entryId: string) {
           const listing = await tx.listing.create({
             data: {
               storeId: entry.storeId,
+              salesChannelAccountId: platform.salesChannelAccountId,
               platformId: platform.id,
               listingType: used && itemUnitIds[0] ? "ITEM_UNIT" : "SKU",
               skuId: used && itemUnitIds[0] ? undefined : skuId!,
@@ -777,7 +796,10 @@ export async function processQuickEntry(entryId: string) {
         const salePlatformId = await resolvePlatformId(tx, entry.storeId, entry.salePlatformText);
 
         const platform = salePlatformId
-          ? await tx.platform.findUnique({ where: { id: salePlatformId } })
+          ? await tx.platform.findUnique({
+              where: { id: salePlatformId },
+              include: { salesChannelAccount: { select: { id: true } } },
+            })
           : null;
         const feeRate = platform?.defaultFeeRate
           ? new Decimal(platform.defaultFeeRate.toString())
@@ -790,14 +812,75 @@ export async function processQuickEntry(entryId: string) {
           ? new Decimal(entry.saleMiscFee.toString())
           : new Decimal(0);
 
+        // A quick-entry sale shares the same physical stock with normal,
+        // bundle and fulfillment reservations. Use the same SKU-first lock
+        // order and re-check both allocation tables before writing a sale.
+        await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${skuId!} FOR UPDATE`;
         let inventoryCost = new Decimal(0);
         if (used && itemUnitIds[0]) {
+          await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitIds[0]} FOR UPDATE`;
           const item = await tx.itemUnit.findUniqueOrThrow({
             where: { id: itemUnitIds[0] },
           });
+          if (
+            item.storeId !== entry.storeId ||
+            item.skuId !== skuId ||
+            item.status !== "AVAILABLE" ||
+            item.costStatus !== "CONFIRMED"
+          ) {
+            throw new Error("快速录入关联的单件库存已不可售");
+          }
+          const [orderReservation, fulfillmentReservation] = await Promise.all([
+            tx.orderAllocation.findFirst({
+              where: {
+                itemUnitId: item.id,
+                status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+              },
+              select: { id: true },
+            }),
+            tx.fulfillmentInventoryAllocation.findFirst({
+              where: { itemUnitId: item.id, status: "ALLOCATED" },
+              select: { id: true },
+            }),
+          ]);
+          if (orderReservation || fulfillmentReservation) {
+            throw new Error("快速录入关联的单件库存已被其他订单预留");
+          }
           inventoryCost = new Decimal(item.unitCost.toString());
         } else if (lotId) {
+          await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
           const lot = await tx.inventoryLot.findUniqueOrThrow({ where: { id: lotId } });
+          if (
+            lot.storeId !== entry.storeId ||
+            lot.skuId !== skuId ||
+            lot.status !== "ACTIVE" ||
+            lot.costStatus !== "CONFIRMED"
+          ) {
+            throw new Error("快速录入关联的批次库存已不可售");
+          }
+          const [ledger, orderReservations, fulfillmentReservations] = await Promise.all([
+            tx.stockLedger.aggregate({
+              where: { entityType: "LOT", entityId: lot.id, locationId: lot.locationId },
+              _sum: { deltaQty: true },
+            }),
+            tx.orderAllocation.aggregate({
+              where: {
+                lotId: lot.id,
+                status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+              },
+              _sum: { quantity: true },
+            }),
+            tx.fulfillmentInventoryAllocation.aggregate({
+              where: { lotId: lot.id, status: "ALLOCATED" },
+              _sum: { quantity: true },
+            }),
+          ]);
+          const available = new Decimal(ledger._sum.deltaQty?.toString() ?? 0)
+            .minus(orderReservations._sum.quantity?.toString() ?? 0)
+            .minus(fulfillmentReservations._sum.quantity?.toString() ?? 0);
+          if (available.lt(saleQty)) {
+            throw new Error("快速录入关联的批次库存已被占用或数量不足");
+          }
           inventoryCost = new Decimal(lot.unitCost.toString()).times(saleQty);
         }
 
@@ -814,6 +897,7 @@ export async function processQuickEntry(entryId: string) {
         const order = await tx.customerOrder.create({
           data: {
             storeId: entry.storeId,
+            salesChannelAccountId: platform?.salesChannelAccount?.id,
             orderNumber: `QE-SALE-${entryId.slice(-8).toUpperCase()}-${Date.now().toString(36)}`,
             platformId: salePlatformId,
             customerName: "快速录入客户",
@@ -823,6 +907,7 @@ export async function processQuickEntry(entryId: string) {
             totalPaid: lineAmount.toFixed(4),
             platformFee: feeStrings.platformFee,
             shippingFee: feeStrings.shippingFee,
+            shippingFeeStatus: entry.saleShippingFee !== null ? "ESTIMATED" : "PENDING",
             netRevenue: feeStrings.netRevenue,
             orderStatus: "CONFIRMED",
             confirmedAt: new Date(),

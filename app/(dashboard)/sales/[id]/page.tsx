@@ -54,6 +54,12 @@ const statusLabels: Record<string, string> = {
   CANCELLED: "已取消",
 };
 
+const shippingFeeStatusLabels: Record<string, string> = {
+  PENDING: "待打包核算",
+  ESTIMATED: "预估",
+  ACTUAL: "实际",
+};
+
 export default async function CustomerOrderDetailPage({
   params,
 }: {
@@ -85,7 +91,12 @@ export default async function CustomerOrderDetailPage({
   const canConfirm =
     order.orderStatus === "DRAFT" &&
     order.lines.length > 0 &&
-    order.lines.every((line) => line.allocations.length > 0);
+    order.lines.every((line) => {
+      const allocatedQuantity = line.allocations
+        .filter((allocation) => ["PENDING", "ALLOCATED"].includes(allocation.status))
+        .reduce((sum, allocation) => sum.plus(allocation.quantity.toString()), new Decimal(0));
+      return allocatedQuantity.eq(line.quantity.toString());
+    });
 
   // --- Profit breakdown ---
   const totalPaid = new Decimal(order.totalPaid.toString());
@@ -163,8 +174,11 @@ export default async function CustomerOrderDetailPage({
               currency={order.currency}
               defaultSalePrice={order.totalPaid.toString()}
               defaultPlatformFee={order.platformFee.toString()}
-              defaultShippingFee={order.shippingFee.toString()}
+              defaultShippingFee={
+                order.shippingFeeStatus === "PENDING" ? "" : order.shippingFee.toString()
+              }
               defaultFeeRate={order.platform?.defaultFeeRate?.toString()}
+              requireActualShippingFee={order.shippingFeeStatus === "PENDING"}
             />
           )}
         </div>
@@ -237,7 +251,10 @@ export default async function CustomerOrderDetailPage({
             <div className="grid gap-4 text-sm md:grid-cols-2 xl:grid-cols-4">
               <div>
                 <p className="text-xs text-muted-foreground">来源货盘</p>
-                <Link href={`/marketplace/${resale.supplyOffer.id}`} className="mt-1 inline-flex items-center gap-1 font-medium hover:underline">
+                <Link
+                  href={`/marketplace/${resale.supplyOffer.id}`}
+                  className="mt-1 inline-flex items-center gap-1 font-medium hover:underline"
+                >
                   {resale.supplyOffer.title}
                   <ExternalLink className="h-3.5 w-3.5" />
                 </Link>
@@ -249,7 +266,10 @@ export default async function CustomerOrderDetailPage({
               <div>
                 <p className="text-xs text-muted-foreground">履约协作</p>
                 {fulfillmentRequest ? (
-                  <Link href={`/fulfillment/requests/${fulfillmentRequest.id}`} className="mt-1 inline-flex items-center gap-1 font-medium hover:underline">
+                  <Link
+                    href={`/fulfillment/requests/${fulfillmentRequest.id}`}
+                    className="mt-1 inline-flex items-center gap-1 font-medium hover:underline"
+                  >
                     {fulfillmentRequest.requestNo} · {fulfillmentRequest.status}
                     <ExternalLink className="h-3.5 w-3.5" />
                   </Link>
@@ -260,7 +280,10 @@ export default async function CustomerOrderDetailPage({
               <div>
                 <p className="text-xs text-muted-foreground">合作结算</p>
                 {resaleSettlement ? (
-                  <Link href={`/finance/settlements/${resaleSettlement.id}`} className="mt-1 inline-flex items-center gap-1 font-medium hover:underline">
+                  <Link
+                    href={`/finance/settlements/${resaleSettlement.id}`}
+                    className="mt-1 inline-flex items-center gap-1 font-medium hover:underline"
+                  >
                     {resaleSettlement.settlementNo} · {resaleSettlement.status}
                     <ExternalLink className="h-3.5 w-3.5" />
                   </Link>
@@ -276,17 +299,24 @@ export default async function CustomerOrderDetailPage({
             <div className="grid gap-3 border-t pt-4 text-sm sm:grid-cols-3">
               <div className="flex items-center justify-between gap-4 sm:block">
                 <span className="text-muted-foreground">销售收入</span>
-                <p className="font-semibold tabular-nums">{formatCurrency(order.totalPaid, order.currency)}</p>
+                <p className="font-semibold tabular-nums">
+                  {formatCurrency(order.totalPaid, order.currency)}
+                </p>
               </div>
               <div className="flex items-center justify-between gap-4 sm:block">
                 <span className="text-muted-foreground">平台费</span>
-                <p className="font-semibold tabular-nums">{formatCurrency(order.platformFee, order.currency)}</p>
+                <p className="font-semibold tabular-nums">
+                  {formatCurrency(order.platformFee, order.currency)}
+                </p>
               </div>
               <div className="flex items-center justify-between gap-4 sm:block">
                 <span className="text-muted-foreground">约定供货价</span>
                 <p className="font-semibold tabular-nums">
                   {resale.supplyUnitPrice
-                    ? formatCurrency(resale.supplyUnitPrice, resale.supplyCurrency || order.currency)
+                    ? formatCurrency(
+                        resale.supplyUnitPrice,
+                        resale.supplyCurrency || order.currency
+                      )
                     : "按结算单确认"}
                 </p>
               </div>
@@ -312,7 +342,15 @@ export default async function CustomerOrderDetailPage({
             <div className="space-y-3">
               {profitItems.map((item) => (
                 <div key={item.label} className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{item.label}</span>
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    {item.label}
+                    {item.label === "运费" ? (
+                      <Badge variant="outline" className="font-normal">
+                        {shippingFeeStatusLabels[order.shippingFeeStatus] ||
+                          order.shippingFeeStatus}
+                      </Badge>
+                    ) : null}
+                  </span>
                   <span className={item.color}>
                     {item.value.lt(0) ? "- " : ""}
                     {formatCurrency(item.value.abs(), order.currency)}
@@ -353,11 +391,18 @@ export default async function CustomerOrderDetailPage({
                     <Badge variant="outline">货盘商品</Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {resale.supplyOfferItem.variantCode || resale.supplyOfferItem.sku?.code || "未设置规格编码"}
+                    {resale.supplyOfferItem.variantCode ||
+                      resale.supplyOfferItem.sku?.code ||
+                      "未设置规格编码"}
                   </p>
                 </div>
                 <div className="text-right text-sm">
-                  <p>数量：<strong>{fulfillmentRequest ? formatQuantity(fulfillmentRequest.quantity) : "-"}</strong></p>
+                  <p>
+                    数量：
+                    <strong>
+                      {fulfillmentRequest ? formatQuantity(fulfillmentRequest.quantity) : "-"}
+                    </strong>
+                  </p>
                   <p className="mt-1 text-muted-foreground">
                     金额：{formatCurrency(order.subtotal, order.currency)}
                   </p>
@@ -479,7 +524,8 @@ export default async function CustomerOrderDetailPage({
                 <p className="text-muted-foreground">
                   {resale
                     ? "货盘数量已预留，发货进度由协作履约同步。"
-                    : "库存已预留，确认发货后将扣减库存。"} 确认时间：
+                    : "库存已预留，确认发货后将扣减库存。"}{" "}
+                  确认时间：
                   {order.confirmedAt && new Date(order.confirmedAt).toLocaleDateString("zh-CN")}
                 </p>
               </div>

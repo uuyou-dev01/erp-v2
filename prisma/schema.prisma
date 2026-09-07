@@ -1571,6 +1571,7 @@ model CustomerOrder {
   id                      String    @id @default(cuid())
   storeId                 String
   salesChannelAccountId   String?
+  requestPayloadHash      String? // Canonical hash used to reject idempotency-key payload drift
   orderNumber             String    @unique
   platformId              String?
   resaleListingId         String?
@@ -1588,6 +1589,7 @@ model CustomerOrder {
   totalPaid               Decimal   @db.Decimal(19, 4)
   platformFee             Decimal   @default(0) @db.Decimal(19, 4)
   shippingFee             Decimal   @default(0) @db.Decimal(19, 4)
+  shippingFeeStatus       String    @default("PENDING") // PENDING, ESTIMATED, ACTUAL
   shippingProvider        String?
   shippingProviderFeeRate Decimal?  @db.Decimal(8, 4)
   netRevenue              Decimal?  @db.Decimal(19, 4)

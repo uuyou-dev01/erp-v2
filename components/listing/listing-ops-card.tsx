@@ -9,12 +9,16 @@ import type { ListingOpsItem, ListingOpsRisk } from "@/components/listing/listin
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ProductImage } from "@/components/ui/product-image";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { AlertCircle, AlertTriangle, PowerOff } from "lucide-react";
 
 interface ListingOpsCardProps {
   listing: ListingOpsItem;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelection?: () => void;
 }
 
 function statusLabel(status: string) {
@@ -41,7 +45,12 @@ function formatDate(value: string) {
   return new Date(value).toLocaleDateString("zh-CN");
 }
 
-export function ListingOpsCard({ listing }: ListingOpsCardProps) {
+export function ListingOpsCard({
+  listing,
+  selectionMode = false,
+  selected = false,
+  onToggleSelection,
+}: ListingOpsCardProps) {
   const router = useRouter();
   const [delisting, setDelisting] = useState(false);
   const [confirmDelistOpen, setConfirmDelistOpen] = useState(false);
@@ -83,6 +92,21 @@ export function ListingOpsCard({ listing }: ListingOpsCardProps) {
       <TableRow className={listing.status === "ACTIVE" ? undefined : "bg-muted/20"}>
         <TableCell>
           <div className="flex min-w-0 items-center gap-3">
+            {selectionMode ? (
+              <Checkbox
+                aria-label={`选择 ${listing.skuName}`}
+                checked={selected}
+                disabled={
+                  listing.status !== "ACTIVE" ||
+                  listing.sellableQty <= 0 ||
+                  listing.hasResaleSource ||
+                  !listing.salesChannelAccountId ||
+                  !listing.currency
+                }
+                onChange={onToggleSelection}
+                className="shrink-0"
+              />
+            ) : null}
             <ProductImage
               src={listing.imageUrl}
               alt={listing.skuName}
@@ -143,20 +167,22 @@ export function ListingOpsCard({ listing }: ListingOpsCardProps) {
         <TableCell>
           <div className="flex flex-col items-end gap-2">
             <div className="flex justify-end gap-1.5">
-              <QuickSellButton
-                listingId={listing.id}
-                listingType={listing.listingType}
-                status={listing.status}
-                productLabel={productLabel}
-                listedPrice={listing.listedPrice}
-                currency={listing.currency}
-                platformName={listing.platform.name}
-                platformCountry={listing.platform.country}
-                platformFeeRate={listing.platformFeeRate}
-                defaultShippingFee={listing.defaultShippingFee}
-                sellableLocations={listing.listingType === "SKU" ? listing.sellableLocations : []}
-              />
-              {listing.status === "ACTIVE" ? (
+              {!selectionMode ? (
+                <QuickSellButton
+                  listingId={listing.id}
+                  listingType={listing.listingType}
+                  status={listing.status}
+                  productLabel={productLabel}
+                  listedPrice={listing.listedPrice}
+                  currency={listing.currency}
+                  platformName={listing.platform.name}
+                  platformCountry={listing.platform.country}
+                  platformFeeRate={listing.platformFeeRate}
+                  defaultShippingFee={listing.defaultShippingFee}
+                  sellableLocations={listing.listingType === "SKU" ? listing.sellableLocations : []}
+                />
+              ) : null}
+              {listing.status === "ACTIVE" && !selectionMode ? (
                 <Button
                   type="button"
                   variant="outline"

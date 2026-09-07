@@ -53,7 +53,7 @@ export async function dispatchInventoryTransfer(input: DispatchInventoryTransfer
   if (!store) throw new Error("店铺不存在");
   const shippingCost = normalizeLogisticsCostInput(
     { amount: input.shippingCost, currency: input.shippingCurrency },
-    store.currency,
+    store.currency
   );
 
   const shipment = await prisma.$transaction(async (tx) => {
@@ -111,7 +111,7 @@ async function resolvePurchaseTransferLines(
   purchaseOrderId: string,
   storeId: string,
   locationId: string,
-  purchaseLineIds: string[],
+  purchaseLineIds: string[]
 ): Promise<InventoryTransferLineInput[]> {
   const previousDestinationIds = await prisma.inboundShipmentInventoryLine.findMany({
     where: {
@@ -161,7 +161,7 @@ async function resolvePurchaseTransferLines(
       })
     : [];
   const quantityByLotId = new Map(
-    quantities.map((row) => [row.entityId, row._sum.deltaQty?.toString() ?? "0"]),
+    quantities.map((row) => [row.entityId, row._sum.deltaQty?.toString() ?? "0"])
   );
   return [
     ...lots.map((lot) => ({
@@ -206,7 +206,7 @@ export async function dispatchPurchaseTransfer(input: {
         shipment.legIndex > 1 &&
         (shipment.status === "PENDING" ||
           shipment.status === "IN_TRANSIT" ||
-          (shipment.status === "DELIVERED" && !shipment.receivedAt)),
+          (shipment.status === "DELIVERED" && !shipment.receivedAt))
     )
   ) {
     throw new Error("采购单已有未完成的转运物流，请先确认到货");
@@ -221,11 +221,11 @@ export async function dispatchPurchaseTransfer(input: {
     order.id,
     order.storeId,
     order.destinationLocationId,
-    order.lines.map((line) => line.id),
+    order.lines.map((line) => line.id)
   );
   const maxLegIndex = order.inboundShipments.reduce(
     (max, shipment) => Math.max(max, shipment.legIndex),
-    1,
+    1
   );
   return dispatchInventoryTransfer({
     storeId: order.storeId,
@@ -254,7 +254,7 @@ export async function confirmInboundShipmentDelivered(
   shipmentId: string,
   receivedAt = new Date(),
   note?: string,
-  destinationLocationId?: string,
+  destinationLocationId?: string
 ) {
   const shipment = await prisma.inboundShipment.findUnique({
     where: { id: shipmentId },
@@ -268,14 +268,6 @@ export async function confirmInboundShipmentDelivered(
   if (shipment.status !== "IN_TRANSIT" && shipment.status !== "PENDING") {
     throw new Error("只有待发出或运输中的物流段可以确认到货");
   }
-
-  const actualDestinationLocationId = destinationLocationId ?? shipment.toLocationId;
-  if (!actualDestinationLocationId) throw new Error("物流段没有目标位置");
-  const destination = await prisma.location.findFirst({
-    where: { id: actualDestinationLocationId, storeId: shipment.storeId },
-    select: { id: true },
-  });
-  if (!destination) throw new Error("实际到货位置不存在，请重新选择");
 
   // Compatibility adapter for transfer legs created before shipment inventory
   // lines existed. New transfer flows never infer stock from the business source.
@@ -295,45 +287,91 @@ export async function confirmInboundShipmentDelivered(
       shipment.purchaseOrderId,
       shipment.storeId,
       shipment.fromLocationId,
-      shipment.purchaseOrder.lines.map((line) => line.id),
+      shipment.purchaseOrder.lines.map((line) => line.id)
     );
-    await prisma.$transaction((tx) =>
-      lockInventoryForShipment(tx, {
-        shipmentId: shipment.id,
-        storeId: shipment.storeId,
-        fromLocationId: shipment.fromLocationId!,
+    await prisma.$transaction(async (tx) => {
+      if (shipment.purchaseOrderId) {
+        await tx.$queryRaw`SELECT "id" FROM "purchase_orders" WHERE "id" = ${shipment.purchaseOrderId} FOR UPDATE`;
+      }
+      await tx.$queryRaw`SELECT "id" FROM "inbound_shipments" WHERE "id" = ${shipmentId} FOR UPDATE`;
+      const currentShipment = await tx.inboundShipment.findUnique({
+        where: { id: shipmentId },
+        select: {
+          storeId: true,
+          fromLocationId: true,
+          status: true,
+          _count: { select: { inventoryLines: true } },
+        },
+      });
+      if (!currentShipment) throw new Error("物流段不存在");
+      if (currentShipment.status !== "IN_TRANSIT" && currentShipment.status !== "PENDING") {
+        throw new Error("只有待发出或运输中的物流段可以确认到货");
+      }
+      if (currentShipment._count.inventoryLines > 0) return;
+      if (!currentShipment.fromLocationId) throw new Error("物流段没有起运位置");
+      await lockInventoryForShipment(tx, {
+        shipmentId,
+        storeId: currentShipment.storeId,
+        fromLocationId: currentShipment.fromLocationId,
         lines: legacyLines,
-      }),
-    );
+      });
+    });
   }
 
   await prisma.$transaction(async (tx) => {
-    if (shipment.inventoryLines.length > 0 || shipment.legIndex > 1) {
-      if (!shipment.fromLocationId) throw new Error("物流段没有起运位置");
+    if (shipment.purchaseOrderId) {
+      await tx.$queryRaw`SELECT "id" FROM "purchase_orders" WHERE "id" = ${shipment.purchaseOrderId} FOR UPDATE`;
+    }
+    await tx.$queryRaw`SELECT "id" FROM "inbound_shipments" WHERE "id" = ${shipmentId} FOR UPDATE`;
+    const lockedShipment = await tx.inboundShipment.findUnique({
+      where: { id: shipmentId },
+      include: {
+        inventoryLines: { select: { id: true } },
+        purchaseOrder: { select: { status: true } },
+      },
+    });
+    if (!lockedShipment) throw new Error("物流段不存在");
+    if (lockedShipment.status !== "IN_TRANSIT" && lockedShipment.status !== "PENDING") {
+      throw new Error("该物流段已由其他人处理，请刷新后查看");
+    }
+
+    const actualDestinationLocationId = destinationLocationId ?? lockedShipment.toLocationId;
+    if (!actualDestinationLocationId) throw new Error("物流段没有目标位置");
+    const destination = await tx.location.findFirst({
+      where: { id: actualDestinationLocationId, storeId: lockedShipment.storeId },
+      select: { id: true },
+    });
+    if (!destination) throw new Error("实际到货位置不存在，请重新选择");
+
+    if (lockedShipment.inventoryLines.length > 0 || lockedShipment.legIndex > 1) {
+      if (!lockedShipment.fromLocationId) throw new Error("物流段没有起运位置");
       await receiveInventoryFromShipment(tx, {
-        shipmentId: shipment.id,
-        storeId: shipment.storeId,
-        fromLocationId: shipment.fromLocationId,
+        shipmentId: lockedShipment.id,
+        storeId: lockedShipment.storeId,
+        fromLocationId: lockedShipment.fromLocationId,
         toLocationId: destination.id,
         receivedAt,
       });
     }
-    await tx.inboundShipment.update({
-      where: { id: shipmentId },
+    const delivered = await tx.inboundShipment.updateMany({
+      where: { id: shipmentId, status: lockedShipment.status },
       data: {
         status: "DELIVERED",
         receivedAt,
         toLocationId: destination.id,
-        shipmentNote: note?.trim() || shipment.shipmentNote,
+        shipmentNote: note?.trim() || lockedShipment.shipmentNote,
       },
     });
+    if (delivered.count !== 1) {
+      throw new Error("该物流段已由其他人处理，请刷新后查看");
+    }
 
-    if (shipment.purchaseOrderId) {
+    if (lockedShipment.purchaseOrderId) {
       await tx.purchaseOrder.update({
-        where: { id: shipment.purchaseOrderId },
+        where: { id: lockedShipment.purchaseOrderId },
         data: {
           receivedAt,
-          status: shipment.purchaseOrder?.status === "SHIPPED" ? "RECEIVED" : undefined,
+          status: lockedShipment.purchaseOrder?.status === "SHIPPED" ? "RECEIVED" : undefined,
           destinationLocationId: destination.id,
         },
       });

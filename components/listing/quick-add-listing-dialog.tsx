@@ -17,6 +17,13 @@ import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
 
 const FALLBACK_CURRENCY_OPTIONS = ["CNY", "JPY", "USD"] as const;
 
+function todayDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 interface QuickAddListingDialogProps {
   open: boolean;
   onClose: () => void;
@@ -41,6 +48,7 @@ export function QuickAddListingDialog({
   const [loading, setLoading] = useState(false);
   const [platformId, setPlatformId] = useState(initialPlatformId ?? "");
   const [listedPrice, setListedPrice] = useState(product.referencePrice ?? "");
+  const [listedAt, setListedAt] = useState(() => todayDateInputValue());
   const [listingScope, setListingScope] = useState<"SKU" | "ITEM_UNIT">(
     product.hasItemUnits && !product.hasLotStock ? "ITEM_UNIT" : "SKU"
   );
@@ -99,6 +107,7 @@ export function QuickAddListingDialog({
 
     setPlatformId(initialPlatformId ?? firstMissing ?? "");
     setListedPrice(product.referencePrice ?? "");
+    setListedAt(todayDateInputValue());
     setListingScope(nextScope);
     setItemUnitId(nextItemUnitId);
     setCurrency(product.referenceCurrency ?? "CNY");
@@ -174,6 +183,7 @@ export function QuickAddListingDialog({
         skuId: product.skuId,
         itemUnitId: listingScope === "ITEM_UNIT" ? itemUnitId || undefined : undefined,
         listedPrice: listedPrice || undefined,
+        listedAt: listedAt || undefined,
         currency: currency || undefined,
       });
       if (!result.success) {
@@ -322,6 +332,20 @@ export function QuickAddListingDialog({
                 ))}
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="quick-listed-at" className="text-xs">
+              上架时间（选填）
+            </Label>
+            <Input
+              id="quick-listed-at"
+              type="date"
+              value={listedAt}
+              onChange={(e) => setListedAt(e.target.value)}
+              disabled={loading}
+              className="h-9"
+            />
           </div>
 
           {selectedPlatform ? (

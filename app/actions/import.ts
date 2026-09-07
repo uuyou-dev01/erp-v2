@@ -399,12 +399,15 @@ async function importCustomerOrder(
   }
 
   let platformId: string | undefined;
+  let salesChannelAccountId: string | undefined;
   if (platformCode) {
     const platform = await prisma.platform.findUnique({
       where: { storeId_code: { storeId, code: platformCode } },
+      include: { salesChannelAccount: { select: { id: true } } },
     });
     if (!platform) throw new Error(`平台 ${platformCode} 不存在`);
     platformId = platform.id;
+    salesChannelAccountId = platform.salesChannelAccount?.id;
   }
 
   const orderNumber = `ORD-${Date.now()}-${_rowNum}`;
@@ -412,6 +415,7 @@ async function importCustomerOrder(
   await prisma.customerOrder.create({
     data: {
       storeId,
+      salesChannelAccountId,
       orderNumber,
       platformId,
       externalOrderNo: row.external_order_no?.trim() || undefined,

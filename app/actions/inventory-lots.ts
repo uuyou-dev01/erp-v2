@@ -13,6 +13,7 @@ import { actionSuccess, toActionFailure } from "@/lib/application/action-result"
 import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 
 /**
  * 获取 store 内每个 SKU 的可售/转运/暂存库存细分（plain object 版，可跨 server action 边界传输）
@@ -210,24 +211,57 @@ export interface ConvertLotToItemUnitInput {
 
 export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
   const { lotId, storeId, quantity, conditionGrade, notes } = data;
+  const requestedQuantity = new Decimal(quantity);
+  if (!requestedQuantity.isFinite() || requestedQuantity.lte(0)) {
+    throw new Error("拆分数量必须大于 0");
+  }
 
   const result = await prisma.$transaction(async (tx) => {
+    const lotForLock = await tx.inventoryLot.findUnique({
+      where: { id: lotId },
+      select: { skuId: true },
+    });
+    if (!lotForLock) throw new Error("入库库存不存在");
+
+    // Inventory mutations share one global order: SKU, then lot/item row.
+    await tx.$queryRaw`SELECT "id" FROM "skus" WHERE "id" = ${lotForLock.skuId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${lotId} FOR UPDATE`;
+
     const lot = await tx.inventoryLot.findUnique({
       where: { id: lotId },
       include: { sku: true, location: true },
     });
 
     if (!lot) throw new Error("入库库存不存在");
+    if (lot.storeId !== storeId) throw new Error("入库库存不属于当前店铺");
     if (lot.status !== "ACTIVE") throw new Error("入库库存状态不是活跃，无法拆分");
 
-    const ledgers = await tx.stockLedger.findMany({
-      where: { entityType: "LOT", entityId: lotId },
-    });
-    const availableQty = ledgers.reduce(
+    const [ledgers, orderReservations, fulfillmentReservations] = await Promise.all([
+      tx.stockLedger.findMany({
+        where: { entityType: "LOT", entityId: lotId },
+        select: { deltaQty: true },
+      }),
+      tx.orderAllocation.aggregate({
+        where: {
+          lotId,
+          status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+        },
+        _sum: { quantity: true },
+      }),
+      tx.fulfillmentInventoryAllocation.aggregate({
+        where: { lotId, status: "ALLOCATED" },
+        _sum: { quantity: true },
+      }),
+    ]);
+    const onHandQuantity = ledgers.reduce(
       (sum, l) => sum.plus(new Decimal(l.deltaQty.toString())),
       new Decimal(0)
     );
-    if (availableQty.lessThan(quantity)) {
+    const reservedQuantity = new Decimal(orderReservations._sum.quantity?.toString() ?? "0").plus(
+      fulfillmentReservations._sum.quantity?.toString() ?? "0"
+    );
+    const availableQty = onHandQuantity.minus(reservedQuantity);
+    if (availableQty.lt(requestedQuantity)) {
       throw new Error(`可用数量不足，当前可用: ${availableQty.toString()}`);
     }
 
@@ -237,7 +271,7 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
         splitType: "UNBOX",
         sourceType: "LOT",
         sourceId: lotId,
-        totalSourceCost: new Decimal(lot.unitCost.toString()).mul(quantity).toFixed(4),
+        totalSourceCost: new Decimal(lot.unitCost.toString()).mul(requestedQuantity).toFixed(4),
         allocationMethod: "PROPORTIONAL_BY_QTY",
       },
     });
@@ -263,8 +297,8 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
         splitId: split.id,
         targetType: "ITEM_UNIT",
         targetId: itemUnit.id,
-        quantity: new Decimal(quantity).toFixed(4),
-        allocatedCost: new Decimal(lot.unitCost.toString()).mul(quantity).toFixed(4),
+        quantity: requestedQuantity.toFixed(4),
+        allocatedCost: new Decimal(lot.unitCost.toString()).mul(requestedQuantity).toFixed(4),
       },
     });
 
@@ -274,7 +308,7 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
         entityType: "LOT",
         entityId: lotId,
         locationId: lot.locationId,
-        deltaQty: new Decimal(quantity).neg().toFixed(4),
+        deltaQty: requestedQuantity.negated().toFixed(4),
         reason: "SPLIT_OUT",
         refType: "SPLIT",
         refId: split.id,
@@ -287,7 +321,7 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
         entityType: "ITEM_UNIT",
         entityId: itemUnit.id,
         locationId: lot.locationId,
-        deltaQty: new Decimal(quantity).toFixed(4),
+        deltaQty: requestedQuantity.toFixed(4),
         reason: "SPLIT_IN",
         refType: "SPLIT",
         refId: split.id,

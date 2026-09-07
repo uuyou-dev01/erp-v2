@@ -16,6 +16,7 @@ interface SettleOrderDialogProps {
   defaultPlatformFee?: string;
   defaultShippingFee?: string;
   defaultFeeRate?: string;
+  requireActualShippingFee?: boolean;
 }
 
 export function SettleOrderDialog({
@@ -25,6 +26,7 @@ export function SettleOrderDialog({
   defaultPlatformFee,
   defaultShippingFee,
   defaultFeeRate,
+  requireActualShippingFee = false,
 }: SettleOrderDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -133,15 +135,21 @@ export function SettleOrderDialog({
                 />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>邮费 ({currency})</Label>
+                <Label>实际邮费 ({currency})</Label>
                 <Input
                   type="number"
                   min="0"
                   step="0.01"
+                  required={requireActualShippingFee}
                   value={form.shippingFee}
                   onChange={(e) => updateForm({ shippingFee: e.target.value })}
                   placeholder="实际邮费"
                 />
+                {requireActualShippingFee ? (
+                  <p className="text-xs text-amber-700">
+                    该订单邮费仍待打包核算；结算时必须填写，实际为 0 也请明确输入 0。
+                  </p>
+                ) : null}
               </div>
             </div>
             {submitError ? (
@@ -154,7 +162,12 @@ export function SettleOrderDialog({
               </div>
             ) : null}
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={loading}
+              >
                 取消
               </Button>
               <Button type="submit" disabled={loading}>

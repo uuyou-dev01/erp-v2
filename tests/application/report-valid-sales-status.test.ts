@@ -101,6 +101,7 @@ describe("report valid sales status filters", () => {
         logisticsFee: 9,
         purchaseCost: 0,
         profit: 76,
+        unfinalizedShippingFeeOrderCount: 1,
       },
     ]);
   });
@@ -126,6 +127,7 @@ describe("report valid sales status filters", () => {
       transferShippingFee: "3.00",
       consolidationShippingFee: "4.00",
       agentFee: "0.00",
+      unfinalizedShippingFeeOrderCount: 1,
     });
   });
 });

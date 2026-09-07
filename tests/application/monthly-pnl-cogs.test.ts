@@ -125,6 +125,7 @@ describe("monthly P&L inventory cost", () => {
         logisticsFee: 0,
         purchaseCost: 40,
         profit: 45,
+        unfinalizedShippingFeeOrderCount: 1,
       },
     ]);
   });
@@ -212,6 +213,7 @@ describe("monthly P&L inventory cost", () => {
       logisticsFee: 0,
       purchaseCost: 80,
       profit: 90,
+      unfinalizedShippingFeeOrderCount: 1,
     });
   });
 });
