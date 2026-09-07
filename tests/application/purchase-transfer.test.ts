@@ -137,7 +137,7 @@ describe("purchase disposition transfer inventory", () => {
       shipment.id,
       new Date(),
       "转运仓签收",
-      destinationLocationId,
+      destinationLocationId
     );
 
     const shipmentLine = await prisma.inboundShipmentInventoryLine.findFirstOrThrow({
@@ -164,9 +164,7 @@ describe("purchase disposition transfer inventory", () => {
     expect(consumedSource.status).toBe("CONSUMED");
     expect(destinationLot.status).toBe("ACTIVE");
     expect(transferLedgers).toHaveLength(2);
-    expect(
-      transferLedgers.reduce((sum, row) => sum + Number(row.deltaQty.toString()), 0)
-    ).toBe(0);
+    expect(transferLedgers.reduce((sum, row) => sum + Number(row.deltaQty.toString()), 0)).toBe(0);
     expect(
       transferLedgers.map((row) => ({
         reason: row.reason,
@@ -185,8 +183,8 @@ describe("purchase disposition transfer inventory", () => {
           item.entityType === "purchaseOrder" &&
           item.entityId === orderId &&
           item.queue === "pendingDisposition" &&
-          item.currentStatusLabel === "转运仓待分流",
-      ),
+          item.currentStatusLabel === "转运仓待分流"
+      )
     ).toBe(true);
 
     const nextShipment = await dispatchPurchaseTransfer({
@@ -200,7 +198,7 @@ describe("purchase disposition transfer inventory", () => {
     expect(nextLine.entityId).toBe(destinationLot.id);
     await confirmInboundShipmentDelivered(nextShipment.id);
     await expect(
-      prisma.purchaseOrder.findUniqueOrThrow({ where: { id: orderId } }),
+      prisma.purchaseOrder.findUniqueOrThrow({ where: { id: orderId } })
     ).resolves.toMatchObject({ destinationLocationId: sourceLocationId });
 
     await expect(
@@ -208,10 +206,10 @@ describe("purchase disposition transfer inventory", () => {
         purchaseOrderId: orderId,
         locationId: destinationLocationId,
         receivedAt: new Date(),
-      }),
+      })
     ).rejects.toThrow("如需移动商品，请发起转仓物流");
     await expect(
-      prisma.purchaseOrder.findUniqueOrThrow({ where: { id: orderId } }),
+      prisma.purchaseOrder.findUniqueOrThrow({ where: { id: orderId } })
     ).resolves.toMatchObject({ destinationLocationId: sourceLocationId });
   });
 
@@ -295,8 +293,8 @@ describe("purchase disposition transfer inventory", () => {
     expect(inTransitStock.inTransitQty).toBeGreaterThanOrEqual(4);
     expect(
       inTransitStock.inTransitLocations.some((location) =>
-        location.name.includes("上海仓库 → 转运仓库（转运中）"),
-      ),
+        location.name.includes("上海仓库 → 转运仓库（转运中）")
+      )
     ).toBe(true);
 
     await confirmInboundShipmentDelivered(shipment.id);
@@ -319,8 +317,8 @@ describe("purchase disposition transfer inventory", () => {
     expect(arrivedStock.heldQty).toBeGreaterThanOrEqual(4);
     expect(
       arrivedStock.heldLocations.some(
-        (location) => location.locationId === destinationLocationId && location.qty >= 4,
-      ),
+        (location) => location.locationId === destinationLocationId && location.qty >= 4
+      )
     ).toBe(true);
   });
 
@@ -384,5 +382,99 @@ describe("purchase disposition transfer inventory", () => {
       _sum: { deltaQty: true },
     });
     expect(destinationBalance._sum.deltaQty?.toString()).toBe("2");
+  });
+
+  it("moves only the unreserved part of a lot and keeps reserved stock at the source", async () => {
+    const sku = await prisma.sKU.create({
+      data: { storeId, code: `MIXED_${runId}`, name: "部分混装测试商品" },
+    });
+    const lot = await prisma.inventoryLot.create({
+      data: {
+        storeId,
+        skuId: sku.id,
+        locationId: sourceLocationId,
+        unitCost: "60",
+        costCurrency: "CNY",
+        sourceType: "OPENING_STOCK",
+        sourceId: `MIXED_OPENING_${runId}`,
+        receivedAt: new Date(),
+      },
+    });
+    await prisma.stockLedger.create({
+      data: {
+        storeId,
+        entityType: "LOT",
+        entityId: lot.id,
+        locationId: sourceLocationId,
+        deltaQty: "10",
+        reason: "OPENING_BALANCE",
+      },
+    });
+    const customerOrder = await prisma.customerOrder.create({
+      data: {
+        storeId,
+        orderNumber: `SO_RESERVED_${runId}`,
+        customerName: "预留库存测试客户",
+        orderDate: new Date(),
+        currency: "CNY",
+        subtotal: "120",
+        totalPaid: "120",
+        lines: {
+          create: {
+            skuId: sku.id,
+            quantity: "2",
+            unitPrice: "60",
+            lineAmount: "120",
+          },
+        },
+      },
+      include: { lines: true },
+    });
+    await prisma.orderAllocation.create({
+      data: {
+        orderLineId: customerOrder.lines[0].id,
+        allocationType: "LOT",
+        lotId: lot.id,
+        quantity: "2",
+        unitCost: "60",
+        costAmount: "120",
+        costCurrency: "CNY",
+        status: "ALLOCATED",
+      },
+    });
+
+    const shipment = await dispatchInventoryTransfer({
+      storeId,
+      fromLocationId: sourceLocationId,
+      toLocationId: destinationLocationId,
+      lines: [{ entityType: "LOT", entityId: lot.id, quantity: "6" }],
+      trackingNo: `MIXED_TRACK_${runId}`,
+    });
+    const shipmentLine = await prisma.inboundShipmentInventoryLine.findFirstOrThrow({
+      where: { shipmentId: shipment.id },
+    });
+    expect(shipmentLine.entityId).not.toBe(lot.id);
+    expect(shipmentLine.quantity.toString()).toBe("6");
+
+    const sourceBalance = await prisma.stockLedger.aggregate({
+      where: { entityType: "LOT", entityId: lot.id },
+      _sum: { deltaQty: true },
+    });
+    expect(sourceBalance._sum.deltaQty?.toString()).toBe("4");
+    await expect(
+      prisma.inventoryLot.findUniqueOrThrow({ where: { id: lot.id } })
+    ).resolves.toMatchObject({
+      status: "ACTIVE",
+    });
+
+    await confirmInboundShipmentDelivered(shipment.id);
+    const receivedLine = await prisma.inboundShipmentInventoryLine.findUniqueOrThrow({
+      where: { id: shipmentLine.id },
+    });
+    const destinationBalance = await prisma.stockLedger.aggregate({
+      where: { entityType: "LOT", entityId: receivedLine.destinationEntityId! },
+      _sum: { deltaQty: true },
+    });
+    expect(destinationBalance._sum.deltaQty?.toString()).toBe("6");
   });
 });

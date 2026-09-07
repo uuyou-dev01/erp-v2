@@ -10,6 +10,22 @@ All notable changes to this project are documented here. The format follows
 
 - Future release changes are recorded here before they move into a versioned section.
 
+## [0.9.0-rc.6] - 2026-09-07
+
+### Added
+
+- Added direction-neutral transfer packages with independent dispatch and receipt confirmation.
+- Added exact lot and item-unit picking so one package can contain partial quantities from multiple
+  purchases.
+- Added inventory-based packing to open consolidation batches, including safe removal before sealing.
+
+### Changed
+
+- Transfer and consolidation now split only the selected unreserved quantity while leaving the
+  remainder available at the origin.
+- Procurement and workbench flows now route partial or mixed transfers through the transfer-package
+  workspace while preserving the existing whole-order shortcut.
+
 ## [0.9.0-rc.2] - 2026-09-01
 
 ### Added

@@ -519,8 +519,10 @@ export default async function PurchaseOrderDetailPage({
               <Link href="/workbench?queue=pendingDisposition">
                 <Button variant="outline">前往工作台</Button>
               </Link>
-              <Link href="/inventory/stocktake?action=transfer">
-                <Button>发起转仓</Button>
+              <Link
+                href={`/logistics/transfers/new?fromLocationId=${encodeURIComponent(order.destinationLocationId ?? "")}&purchaseOrderId=${encodeURIComponent(order.id)}`}
+              >
+                <Button>部分转运 / 混装</Button>
               </Link>
             </div>
           </CardContent>

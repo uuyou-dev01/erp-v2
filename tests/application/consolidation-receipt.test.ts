@@ -6,6 +6,7 @@ vi.mock("next/cache", () => ({
 }));
 
 import {
+  addInventoryToConsolidationBatch,
   addPurchaseOrderToConsolidation,
   createConsolidationForPurchaseOrders,
   getConsolidationBatchById,
@@ -13,10 +14,7 @@ import {
   updateConsolidationDestination,
   updateConsolidationStatus,
 } from "@/app/actions/consolidations";
-import {
-  confirmInboundShipmentDelivered,
-  dispatchPurchaseTransfer,
-} from "@/app/actions/logistics";
+import { confirmInboundShipmentDelivered, dispatchPurchaseTransfer } from "@/app/actions/logistics";
 
 const runId = `consolidation_${Date.now()}`;
 let organizationId = "";
@@ -372,6 +370,99 @@ describe("purchase order consolidation preparation", () => {
     expect(destinationLot.status).toBe("ACTIVE");
   });
 
+  it("splits only the selected quantity and keeps the rest at the origin", async () => {
+    const lot = await prisma.inventoryLot.create({
+      data: {
+        storeId: preparationStoreId,
+        skuId: preparationSkuId,
+        locationId: preparationSourceLocationId,
+        unitCost: "40",
+        costCurrency: "CNY",
+        sourceType: "MANUAL",
+        sourceId: `PARTIAL_${preparationRunId}`,
+        receivedAt: new Date(),
+        status: "ACTIVE",
+      },
+    });
+    await prisma.stockLedger.create({
+      data: {
+        storeId: preparationStoreId,
+        entityType: "LOT",
+        entityId: lot.id,
+        locationId: preparationSourceLocationId,
+        deltaQty: "5",
+        reason: "ADJUSTMENT",
+        refType: "TEST",
+        refId: lot.id,
+      },
+    });
+    const batch = await prisma.consolidationBatch.create({
+      data: {
+        storeId: preparationStoreId,
+        fromLocationId: preparationSourceLocationId,
+        toLocationId: preparationDestinationLocationId,
+      },
+    });
+
+    await expect(
+      addInventoryToConsolidationBatch({
+        batchId: batch.id,
+        lines: [{ entityType: "LOT", entityId: lot.id, quantity: "2" }],
+      })
+    ).resolves.toMatchObject({ batchId: batch.id, added: 1 });
+
+    const line = await prisma.consolidationBatchLine.findFirstOrThrow({
+      where: { batchId: batch.id, sourceType: "LOT" },
+    });
+    const splitLot = await prisma.inventoryLot.findUniqueOrThrow({
+      where: { id: line.sourceId },
+    });
+    const [originBalance, splitBalance] = await Promise.all([
+      prisma.stockLedger.aggregate({
+        where: { entityType: "LOT", entityId: lot.id },
+        _sum: { deltaQty: true },
+      }),
+      prisma.stockLedger.aggregate({
+        where: { entityType: "LOT", entityId: splitLot.id },
+        _sum: { deltaQty: true },
+      }),
+    ]);
+    expect(line.quantity.toString()).toBe("2");
+    expect(lot.id).not.toBe(splitLot.id);
+    expect(splitLot).toMatchObject({
+      locationId: preparationSourceLocationId,
+      sourceType: "SPLIT",
+      sourceId: batch.id,
+      status: "CONSOLIDATING",
+    });
+    expect(originBalance._sum.deltaQty?.toString()).toBe("3");
+    expect(splitBalance._sum.deltaQty?.toString()).toBe("2");
+    await expect(
+      prisma.inventoryLot.findUniqueOrThrow({ where: { id: lot.id } })
+    ).resolves.toMatchObject({ status: "ACTIVE" });
+
+    await updateConsolidationStatus(batch.id, "SEALED");
+    await updateConsolidationStatus(batch.id, "SHIPPED");
+    await updateConsolidationStatus(batch.id, "RECEIVED");
+
+    const destinationLot = await prisma.inventoryLot.findFirstOrThrow({
+      where: {
+        storeId: preparationStoreId,
+        locationId: preparationDestinationLocationId,
+        sourceType: "TRANSFER",
+        sourceId: line.id,
+      },
+    });
+    const destinationBalance = await prisma.stockLedger.aggregate({
+      where: { entityType: "LOT", entityId: destinationLot.id },
+      _sum: { deltaQty: true },
+    });
+    expect(destinationBalance._sum.deltaQty?.toString()).toBe("2");
+    await expect(
+      prisma.inventoryLot.findUniqueOrThrow({ where: { id: lot.id } })
+    ).resolves.toMatchObject({ status: "ACTIVE", locationId: preparationSourceLocationId });
+  });
+
   it("requires a destination for purchase consolidation and before sealing", async () => {
     const order = await createReceivedOrder({
       orderNo: `PO_ROUTE_REQUIRED_${preparationRunId}`,
@@ -387,9 +478,9 @@ describe("purchase order consolidation preparation", () => {
         purchaseOrderIds: [order.id],
       })
     ).rejects.toThrow("请选择集运目的仓库");
-    expect(
-      await prisma.consolidationBatch.count({ where: { storeId: preparationStoreId } })
-    ).toBe(before);
+    expect(await prisma.consolidationBatch.count({ where: { storeId: preparationStoreId } })).toBe(
+      before
+    );
 
     const draft = await prisma.consolidationBatch.create({
       data: { storeId: preparationStoreId, fromLocationId: preparationSourceLocationId },

@@ -84,29 +84,46 @@ export async function lockInventoryForShipment(
     ...(units.length ? [{ itemUnitId: { in: units.map((unit) => unit.id) } }] : []),
   ];
   const [orderReservations, fulfillmentReservations] = await Promise.all([
-    tx.orderAllocation.count({
+    tx.orderAllocation.findMany({
       where: {
         status: { in: [...RESERVING_ALLOCATION_STATUSES] },
         OR: reservationTargets,
       },
+      select: { lotId: true, itemUnitId: true, quantity: true },
     }),
-    tx.fulfillmentInventoryAllocation.count({
+    tx.fulfillmentInventoryAllocation.findMany({
       where: { status: "ALLOCATED", OR: reservationTargets },
+      select: { lotId: true, itemUnitId: true, quantity: true },
     }),
   ]);
-  if (orderReservations > 0 || fulfillmentReservations > 0) {
-    throw new Error("调拨库存已被销售单或代发履约占用");
+  const reservedByLotId = new Map<string, Decimal>();
+  const reservedUnitIds = new Set<string>();
+  for (const reservation of [...orderReservations, ...fulfillmentReservations]) {
+    if (reservation.lotId) {
+      reservedByLotId.set(
+        reservation.lotId,
+        (reservedByLotId.get(reservation.lotId) ?? new Decimal(0)).plus(
+          reservation.quantity.toString()
+        )
+      );
+    }
+    if (reservation.itemUnitId) reservedUnitIds.add(reservation.itemUnitId);
+  }
+  if (unitLines.some((line) => reservedUnitIds.has(line.entityId))) {
+    throw new Error("调拨单品已被销售单或代发履约占用");
   }
 
   const lotById = new Map(lots.map((lot) => [lot.id, lot]));
   const resolvedLotLines: InventoryTransferLineInput[] = [];
   for (const line of lotLines) {
     const requested = new Decimal(line.quantity);
-    const available = await getLotOnHand(tx, line.entityId);
+    const onHand = await getLotOnHand(tx, line.entityId);
+    const reserved = reservedByLotId.get(line.entityId) ?? new Decimal(0);
+    const available = Decimal.max(onHand.minus(reserved), 0);
     if (!requested.isFinite() || requested.lte(0) || requested.gt(available)) {
       throw new Error(`批次可调数量不足（当前 ${available.toString()}）`);
     }
-    if (requested.eq(available)) {
+    if (reserved.eq(0) && requested.eq(onHand)) {
       await tx.inventoryLot.update({
         where: { id: line.entityId },
         data: { status: "CONSOLIDATING" },

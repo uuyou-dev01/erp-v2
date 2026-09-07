@@ -1,4 +1,5 @@
 import {
+  ArrowRightLeft,
   Bell,
   Box,
   Building2,
@@ -78,6 +79,7 @@ export const operationsNavigation: NavGroup[] = [
       },
       { name: "期初库存", href: "/inventory/opening-stock", icon: PackagePlus },
       { name: "盘点调整", href: "/inventory/stocktake", icon: Box },
+      { name: "转运包裹", href: "/logistics/transfers", icon: ArrowRightLeft },
       { name: "集运批次", href: "/logistics/consolidations", icon: Truck },
       { name: "仓库与位置", href: "/inventory/locations", icon: MapPin },
     ],

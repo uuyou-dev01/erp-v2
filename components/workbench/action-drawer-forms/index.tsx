@@ -734,8 +734,28 @@ export function DispositionForm({
 
       {mode === "transfer" && (
         <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            提交后会立即锁定当前库存并创建转仓在途记录，不是仅保存下一个位置。
+          <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+            <div>
+              <p className="text-sm font-medium">部分发出或与其他采购混装</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                进入转运装箱页后，可从当前位置选择实际发出数量，并加入其他采购来源的库存。
+              </p>
+            </div>
+            <Button asChild type="button" className="w-full">
+              <Link
+                href={`/logistics/transfers/new?fromLocationId=${encodeURIComponent(defaultLocationId)}&purchaseOrderId=${encodeURIComponent(detail.entityId)}`}
+              >
+                选择商品并创建转运包裹
+              </Link>
+            </Button>
+          </div>
+          <div className="flex items-center gap-3 py-1" aria-hidden="true">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-[11px] text-muted-foreground">整张采购单快速发出</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            下方快捷操作会锁定该采购单当前可用的全部库存；目标位置仍需另行确认到货。
           </p>
           <div className="space-y-2">
             <Label>目标位置</Label>
@@ -815,7 +835,7 @@ export function DispositionForm({
               }
             />
           </div>
-          <SubmitButton pending={pending}>确认并立即发起转仓</SubmitButton>
+          <SubmitButton pending={pending}>整单确认发出并进入在途</SubmitButton>
         </div>
       )}
 

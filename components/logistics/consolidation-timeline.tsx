@@ -5,7 +5,7 @@ const STEPS = ["OPEN", "SEALED", "SHIPPED", "RECEIVED"] as const;
 const LABELS: Record<(typeof STEPS)[number], string> = {
   OPEN: "可加入商品",
   SEALED: "已封箱",
-  SHIPPED: "国际运输",
+  SHIPPED: "运输中",
   RECEIVED: "已到货",
 };
 
@@ -17,11 +17,16 @@ export function ConsolidationTimeline({ status }: { status: string }) {
         const done = index < currentIndex;
         const current = index === currentIndex;
         return (
-          <div key={step} className="flex min-w-[120px] items-center gap-2 rounded-md border px-3 py-2">
+          <div
+            key={step}
+            className="flex min-w-[120px] items-center gap-2 rounded-md border px-3 py-2"
+          >
             {done ? (
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             ) : (
-              <CircleDot className={cn("h-4 w-4", current ? "text-primary" : "text-muted-foreground/40")} />
+              <CircleDot
+                className={cn("h-4 w-4", current ? "text-primary" : "text-muted-foreground/40")}
+              />
             )}
             <div>
               <p className="text-xs font-medium">{LABELS[step]}</p>

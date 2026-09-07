@@ -7,13 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  removeInventoryFromConsolidationBatchAction,
   repairConsolidationOriginInventoryAction,
   updateConsolidationDestinationAction,
   updateConsolidationStatusAction,
 } from "@/app/actions/consolidations";
+import type { TransferInventoryCandidate } from "@/app/actions/transfer-shipments";
 import { ConsolidationTimeline } from "./consolidation-timeline";
-import { AlertTriangle, ArrowRight, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Trash2 } from "lucide-react";
 import { BackButton } from "@/components/shared/back-button";
+import { ConsolidationInventoryEditor } from "./consolidation-inventory-editor";
 
 interface Batch {
   id: string;
@@ -65,9 +68,11 @@ const SOURCE_LABELS: Record<string, string> = {
 export function ConsolidationBatchDetail({
   batch,
   locations,
+  availableInventory,
 }: {
   batch: Batch;
   locations: LocationOption[];
+  availableInventory: TransferInventoryCandidate[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -75,7 +80,7 @@ export function ConsolidationBatchDetail({
   const [carrier, setCarrier] = useState(batch.carrier ?? "");
   const [shippingCost, setShippingCost] = useState(batch.shippingCost ?? "");
   const [shippingCurrency, setShippingCurrency] = useState(
-    batch.shippingCurrency || batch.storeCurrency,
+    batch.shippingCurrency || batch.storeCurrency
   );
   const [statusError, setStatusError] = useState<string | null>(null);
   const [toLocationId, setToLocationId] = useState(batch.toLocation?.id ?? "");
@@ -83,6 +88,7 @@ export function ConsolidationBatchDetail({
   const [routeMessage, setRouteMessage] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [confirmingRepair, setConfirmingRepair] = useState(false);
+  const [removingLineId, setRemovingLineId] = useState<string | null>(null);
   const inventoryIssues = batch.lines.filter((line) => line.inventoryIssue);
   const routeEditable = batch.status === "OPEN" || batch.status === "SEALED";
   const routeReady = Boolean(batch.fromLocation && batch.toLocation);
@@ -151,6 +157,28 @@ export function ConsolidationBatchDetail({
     });
   };
 
+  const removeInventoryLine = (lineId: string) => {
+    setRemovingLineId(lineId);
+    startTransition(async () => {
+      setStatusError(null);
+      try {
+        const result = await removeInventoryFromConsolidationBatchAction({
+          batchId: batch.id,
+          lineId,
+        });
+        if (!result.success) {
+          setStatusError(result.error);
+          return;
+        }
+        router.refresh();
+      } catch (error) {
+        setStatusError(error instanceof Error ? error.message : "移除集运商品失败，请重试");
+      } finally {
+        setRemovingLineId(null);
+      }
+    });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -174,6 +202,14 @@ export function ConsolidationBatchDetail({
       </div>
 
       <ConsolidationTimeline status={batch.status} />
+
+      {batch.status === "OPEN" && batch.fromLocation ? (
+        <ConsolidationInventoryEditor
+          batchId={batch.id}
+          originName={batch.fromLocation.name}
+          candidates={availableInventory}
+        />
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <section className="rounded-lg border">
@@ -206,7 +242,26 @@ export function ConsolidationBatchDetail({
                       </p>
                     ) : null}
                   </div>
-                  <span className="shrink-0 text-muted-foreground">× {line.quantity}</span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-muted-foreground">× {line.quantity}</span>
+                    {batch.status === "OPEN" &&
+                    (line.sourceType === "LOT" || line.sourceType === "ITEM_UNIT") ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        disabled={isPending}
+                        onClick={() => removeInventoryLine(line.id)}
+                        aria-label={`移除 ${line.displayTitle}`}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        <span className="sr-only">
+                          {removingLineId === line.id ? "正在移除" : "移除"}
+                        </span>
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               ))
             )}
@@ -277,7 +332,7 @@ export function ConsolidationBatchDetail({
             ) : null}
           </div>
           <div className="space-y-2">
-            <Label>国际物流单号</Label>
+            <Label>物流单号</Label>
             <Input value={trackingNo} onChange={(e) => setTrackingNo(e.target.value)} />
           </div>
           <div className="space-y-2">

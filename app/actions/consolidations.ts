@@ -737,6 +737,353 @@ export async function createConsolidationBatchAction(data: {
   }
 }
 
+export async function addInventoryToConsolidationBatch(input: {
+  batchId: string;
+  lines: Array<{
+    entityType: "LOT" | "ITEM_UNIT";
+    entityId: string;
+    quantity: string;
+  }>;
+}) {
+  if (input.lines.length === 0) throw new Error("请至少选择一项要加入的库存");
+  const keys = input.lines.map((line) => `${line.entityType}:${line.entityId}`);
+  if (new Set(keys).size !== keys.length) throw new Error("集运装箱明细不能重复");
+
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${input.batchId} FOR UPDATE`;
+    const batch = await tx.consolidationBatch.findUnique({
+      where: { id: input.batchId },
+      select: {
+        id: true,
+        storeId: true,
+        inventoryPoolId: true,
+        status: true,
+        fromLocationId: true,
+      },
+    });
+    if (!batch) throw new Error("集运批次不存在");
+    if (batch.status !== "OPEN") throw new Error("只能修改未封箱的集运批次");
+    if (!batch.fromLocationId) throw new Error("请先设置集运起运仓库");
+
+    const lotInputs = input.lines.filter((line) => line.entityType === "LOT");
+    const unitInputs = input.lines.filter((line) => line.entityType === "ITEM_UNIT");
+    const [candidateLots, candidateUnits] = await Promise.all([
+      lotInputs.length
+        ? tx.inventoryLot.findMany({
+            where: {
+              id: { in: lotInputs.map((line) => line.entityId) },
+              storeId: batch.storeId,
+              locationId: batch.fromLocationId,
+              status: "ACTIVE",
+            },
+          })
+        : [],
+      unitInputs.length
+        ? tx.itemUnit.findMany({
+            where: {
+              id: { in: unitInputs.map((line) => line.entityId) },
+              storeId: batch.storeId,
+              locationId: batch.fromLocationId,
+              status: "AVAILABLE",
+            },
+          })
+        : [],
+    ]);
+    if (candidateLots.length !== lotInputs.length || candidateUnits.length !== unitInputs.length) {
+      throw new Error("部分库存已被占用、已移动或不在集运起运仓");
+    }
+
+    await lockConsolidationSkuRows(tx, [
+      ...candidateLots.map((lot) => lot.skuId),
+      ...candidateUnits.map((unit) => unit.skuId),
+    ]);
+    await lockConsolidationEntityRows(tx, {
+      lotIds: candidateLots.map((lot) => lot.id),
+      itemUnitIds: candidateUnits.map((unit) => unit.id),
+    });
+    const duplicate = await tx.consolidationBatchLine.findFirst({
+      where: {
+        OR: input.lines.map((line) => ({
+          sourceType: line.entityType,
+          sourceId: line.entityId,
+        })),
+      },
+      select: { id: true },
+    });
+    if (duplicate) throw new Error("所选库存已经加入其他集运批次");
+
+    const lotById = new Map(candidateLots.map((lot) => [lot.id, lot]));
+    const unitById = new Map(candidateUnits.map((unit) => [unit.id, unit]));
+    let added = 0;
+    for (const line of input.lines) {
+      const quantity = new Decimal(line.quantity);
+      if (!quantity.isFinite() || quantity.lte(0)) throw new Error("集运数量必须大于 0");
+      if (line.entityType === "ITEM_UNIT") {
+        if (!quantity.eq(1)) throw new Error("一物一单商品的集运数量必须为 1");
+        const unit = unitById.get(line.entityId);
+        if (!unit) throw new Error("集运单品已不可用");
+        const reservations = await getActiveReservations(tx, {
+          lotIds: [],
+          itemUnitIds: [unit.id],
+        });
+        if (reservations.length > 0) throw new Error("集运单品已被销售单或代发履约占用");
+        const locked = await tx.itemUnit.updateMany({
+          where: { id: unit.id, status: "AVAILABLE", locationId: batch.fromLocationId },
+          data: { status: "CONSOLIDATING" },
+        });
+        if (locked.count !== 1) throw new Error("集运单品状态已变化，请刷新后重试");
+        await tx.consolidationBatchLine.create({
+          data: {
+            batchId: batch.id,
+            sourceType: "ITEM_UNIT",
+            sourceId: unit.id,
+            quantity: "1",
+          },
+        });
+        added += 1;
+        continue;
+      }
+
+      const lot = lotById.get(line.entityId);
+      if (!lot) throw new Error("集运库存批次已不可用");
+      const [onHand, orderReserved, fulfillmentReserved] = await Promise.all([
+        getLotAvailableQuantity(tx, lot.id),
+        tx.orderAllocation.aggregate({
+          where: {
+            lotId: lot.id,
+            status: { in: [...RESERVING_ALLOCATION_STATUSES] },
+          },
+          _sum: { quantity: true },
+        }),
+        tx.fulfillmentInventoryAllocation.aggregate({
+          where: { lotId: lot.id, status: "ALLOCATED" },
+          _sum: { quantity: true },
+        }),
+      ]);
+      const reserved = new Decimal(orderReserved._sum.quantity?.toString() ?? "0").plus(
+        fulfillmentReserved._sum.quantity?.toString() ?? "0"
+      );
+      const available = Decimal.max(onHand.minus(reserved), 0);
+      if (quantity.gt(available)) {
+        throw new Error(`集运数量超过可用库存（需要 ${quantity}，可用 ${available}）`);
+      }
+
+      let sourceLotId = lot.id;
+      if (reserved.eq(0) && quantity.eq(onHand)) {
+        const locked = await tx.inventoryLot.updateMany({
+          where: { id: lot.id, status: "ACTIVE", locationId: batch.fromLocationId },
+          data: { status: "CONSOLIDATING" },
+        });
+        if (locked.count !== 1) throw new Error("集运库存状态已变化，请刷新后重试");
+      } else {
+        const splitLot = await tx.inventoryLot.create({
+          data: {
+            storeId: lot.storeId,
+            inventoryPoolId: lot.inventoryPoolId,
+            skuId: lot.skuId,
+            locationId: lot.locationId,
+            unitCost: lot.unitCost,
+            costCurrency: lot.costCurrency,
+            fxRateId: lot.fxRateId,
+            sourceType: "SPLIT",
+            sourceId: batch.id,
+            receivedAt: new Date(),
+            batchLabel: lot.batchLabel,
+            status: "CONSOLIDATING",
+          },
+        });
+        const meta = {
+          consolidationBatchId: batch.id,
+          sourceLotId: lot.id,
+          splitLotId: splitLot.id,
+        };
+        await tx.stockLedger.createMany({
+          data: [
+            {
+              storeId: lot.storeId,
+              inventoryPoolId: lot.inventoryPoolId,
+              entityType: "LOT",
+              entityId: lot.id,
+              locationId: lot.locationId,
+              deltaQty: quantity.negated().toFixed(4),
+              reason: "SPLIT_OUT",
+              refType: "CONSOLIDATION_BATCH",
+              refId: batch.id,
+              meta,
+            },
+            {
+              storeId: splitLot.storeId,
+              inventoryPoolId: splitLot.inventoryPoolId,
+              entityType: "LOT",
+              entityId: splitLot.id,
+              locationId: splitLot.locationId,
+              deltaQty: quantity.toFixed(4),
+              reason: "SPLIT_IN",
+              refType: "CONSOLIDATION_BATCH",
+              refId: batch.id,
+              meta,
+            },
+          ],
+        });
+        sourceLotId = splitLot.id;
+      }
+      await tx.consolidationBatchLine.create({
+        data: {
+          batchId: batch.id,
+          sourceType: "LOT",
+          sourceId: sourceLotId,
+          quantity: quantity.toFixed(4),
+        },
+      });
+      added += 1;
+    }
+    return { batchId: batch.id, added };
+  });
+
+  revalidatePath("/logistics/consolidations");
+  revalidatePath(`/logistics/consolidations/${input.batchId}`);
+  revalidatePath("/inventory/lots");
+  revalidatePath("/inventory/items");
+  revalidatePath("/inventory/sellable");
+  return result;
+}
+
+export async function addInventoryToConsolidationBatchAction(input: {
+  batchId: string;
+  lines: Array<{
+    entityType: "LOT" | "ITEM_UNIT";
+    entityId: string;
+    quantity: string;
+  }>;
+}) {
+  try {
+    const batch = await prisma.consolidationBatch.findUnique({
+      where: { id: input.batchId },
+      select: { storeId: true },
+    });
+    if (!batch) throw new Error("集运批次不存在");
+    await requireUserContext({ storeId: batch.storeId });
+    return actionSuccess(await addInventoryToConsolidationBatch(input));
+  } catch (error) {
+    return toActionFailure(error, "添加集运商品失败，请重试");
+  }
+}
+
+export async function removeInventoryFromConsolidationBatchAction(input: {
+  batchId: string;
+  lineId: string;
+}) {
+  try {
+    const batch = await prisma.consolidationBatch.findUnique({
+      where: { id: input.batchId },
+      select: { storeId: true },
+    });
+    if (!batch) throw new Error("集运批次不存在");
+    await requireUserContext({ storeId: batch.storeId });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${input.batchId} FOR UPDATE`;
+      const current = await tx.consolidationBatch.findUnique({
+        where: { id: input.batchId },
+        select: { status: true, fromLocationId: true },
+      });
+      if (!current || current.status !== "OPEN") {
+        throw new Error("只能移除未封箱批次中的商品");
+      }
+      const line = await tx.consolidationBatchLine.findFirst({
+        where: { id: input.lineId, batchId: input.batchId },
+      });
+      if (!line) throw new Error("集运商品不存在");
+      if (line.sourceType === "PURCHASE_LINE") {
+        throw new Error("整单加入的采购商品暂不能逐行移除，请新建转运包裹处理部分发出");
+      }
+      if (line.sourceType === "ITEM_UNIT") {
+        await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${line.sourceId} FOR UPDATE`;
+        const released = await tx.itemUnit.updateMany({
+          where: {
+            id: line.sourceId,
+            status: "CONSOLIDATING",
+            ...(current.fromLocationId ? { locationId: current.fromLocationId } : {}),
+          },
+          data: { status: "AVAILABLE" },
+        });
+        if (released.count !== 1) throw new Error("单品库存状态已变化，不能移除");
+      } else if (line.sourceType === "LOT") {
+        await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${line.sourceId} FOR UPDATE`;
+        const lot = await tx.inventoryLot.findUnique({ where: { id: line.sourceId } });
+        if (!lot || lot.status !== "CONSOLIDATING") {
+          throw new Error("批次库存状态已变化，不能移除");
+        }
+        if (lot.sourceType === "SPLIT" && lot.sourceId === input.batchId) {
+          const splitLedger = await tx.stockLedger.findFirst({
+            where: {
+              entityType: "LOT",
+              entityId: lot.id,
+              reason: "SPLIT_IN",
+              refType: "CONSOLIDATION_BATCH",
+              refId: input.batchId,
+            },
+            orderBy: { createdAt: "asc" },
+          });
+          const meta =
+            splitLedger?.meta &&
+            typeof splitLedger.meta === "object" &&
+            !Array.isArray(splitLedger.meta)
+              ? (splitLedger.meta as Record<string, unknown>)
+              : null;
+          const sourceLotId = typeof meta?.sourceLotId === "string" ? meta.sourceLotId : null;
+          if (!sourceLotId) throw new Error("拆分来源缺失，不能安全移除");
+          await tx.$queryRaw`SELECT "id" FROM "inventory_lots" WHERE "id" = ${sourceLotId} FOR UPDATE`;
+          const quantity = new Decimal(line.quantity.toString());
+          await tx.stockLedger.createMany({
+            data: [
+              {
+                storeId: lot.storeId,
+                inventoryPoolId: lot.inventoryPoolId,
+                entityType: "LOT",
+                entityId: lot.id,
+                locationId: lot.locationId,
+                deltaQty: quantity.negated().toFixed(4),
+                reason: "SPLIT_OUT",
+                refType: "CONSOLIDATION_BATCH",
+                refId: input.batchId,
+                meta: { ...meta, releasedFromBatch: true },
+              },
+              {
+                storeId: lot.storeId,
+                inventoryPoolId: lot.inventoryPoolId,
+                entityType: "LOT",
+                entityId: sourceLotId,
+                locationId: lot.locationId,
+                deltaQty: quantity.toFixed(4),
+                reason: "SPLIT_IN",
+                refType: "CONSOLIDATION_BATCH",
+                refId: input.batchId,
+                meta: { ...meta, releasedFromBatch: true },
+              },
+            ],
+          });
+          await tx.inventoryLot.update({ where: { id: lot.id }, data: { status: "CONSUMED" } });
+        } else {
+          await tx.inventoryLot.update({ where: { id: lot.id }, data: { status: "ACTIVE" } });
+        }
+      } else {
+        throw new Error("该来源类型暂不能从批次移除");
+      }
+      await tx.consolidationBatchLine.delete({ where: { id: line.id } });
+    });
+
+    revalidatePath(`/logistics/consolidations/${input.batchId}`);
+    revalidatePath("/logistics/consolidations");
+    revalidatePath("/inventory/lots");
+    revalidatePath("/inventory/items");
+    revalidatePath("/inventory/sellable");
+    return actionSuccess({ batchId: input.batchId, lineId: input.lineId });
+  } catch (error) {
+    return toActionFailure(error, "移除集运商品失败，请重试");
+  }
+}
+
 export async function addPurchaseOrderToConsolidation(data: {
   batchId: string;
   purchaseOrderId: string;

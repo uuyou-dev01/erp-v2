@@ -22,7 +22,7 @@ export default async function ConsolidationsPage() {
     <div>
       <PageHeader
         title="集运批次"
-        description="管理合包、封箱、国际运输和到货确认。"
+        description="按实际库存合包，管理封箱、发出确认和到货确认，不限制国内外方向。"
         badge={<Badge variant="secondary">{batches.length} 个批次</Badge>}
       />
       <ConsolidationBatchForm locations={locations} />
