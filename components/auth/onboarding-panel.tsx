@@ -22,9 +22,11 @@ type Invitation = {
 export function OnboardingPanel({
   invitations,
   hasMembership,
+  hasWarehouseCollaboration,
 }: {
   invitations: Invitation[];
   hasMembership: boolean;
+  hasWarehouseCollaboration: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -165,6 +167,14 @@ export function OnboardingPanel({
         <Button type="button" variant="ghost" className="w-full" onClick={() => setMode("choose")}>
           返回待处理邀请
         </Button>
+      ) : null}
+      {hasWarehouseCollaboration ? (
+        <Link
+          href="/collaboration"
+          className="block text-center text-sm text-primary hover:underline"
+        >
+          暂不创建，返回我的外部协作
+        </Link>
       ) : null}
     </form>
   );

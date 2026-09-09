@@ -18,9 +18,9 @@ export default async function WarehouseInvitationPage({
 
   return (
     <AuthShell
-      eyebrow="仓库发货邀请"
-      title="协助朋友处理发货"
-      description="你只会获得这个仓库的发货任务，不会加入对方企业，也看不到采购成本和其他仓库。"
+      eyebrow="外部任务邀请"
+      title="参与合作方任务"
+      description="你只会获得当前协作范围内分配给你的任务，不会加入对方企业，也看不到采购成本和其他未授权数据。"
     >
       {invitation ? (
         <LocationFulfillerInvitationPanel
@@ -31,7 +31,7 @@ export default async function WarehouseInvitationPage({
         />
       ) : (
         <p role="alert" className="text-sm text-destructive">
-          邀请链接无效，请联系仓库管理员重新生成。
+          邀请链接无效，请联系邀请方重新生成。
         </p>
       )}
     </AuthShell>

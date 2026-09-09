@@ -24,7 +24,7 @@ type Option = { id: string; name: string; code?: string };
 const RELATIONSHIP_LABELS: Record<string, string> = {
   SELF: "本人",
   MEMBER: "企业成员",
-  WAREHOUSE_COLLABORATOR: "仓库协作",
+  WAREHOUSE_COLLABORATOR: "外部任务协作",
   PARTNER_ORGANIZATION: "外部组织",
   UNKNOWN: "历史关系未知",
 };

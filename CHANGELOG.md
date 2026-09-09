@@ -10,6 +10,22 @@ All notable changes to this project are documented here. The format follows
 
 - Future release changes are recorded here before they move into a versioned section.
 
+## [0.9.0-rc.7] - 2026-09-09
+
+### Added
+
+- Added a personal external-task workspace with explicit relationship lifecycle, task assignment,
+  optional ERP onboarding and company-connection growth paths.
+- Added organization-targeted offer visibility backed by active company connections and immediate
+  access revocation when a connection ends.
+
+### Changed
+
+- Generalized collaboration language to task owner and task collaborator while keeping concrete
+  task types such as order shipment visible on task cards and details.
+- Kept invited users outside the inviting company's membership and inventory boundary unless a
+  separate company connection and business authorization are explicitly established.
+
 ## [0.9.0-rc.6] - 2026-09-07
 
 ### Added

@@ -16,6 +16,7 @@ import {
   claimShipOrderTask,
   declineShipOrderTask,
   requestShipOrderHandoff,
+  assignQueuedShipOrderTask,
   returnShipOrderTask,
   withdrawShipOrderTask,
 } from "@/lib/application/shipping-dispatch-lifecycle";
@@ -29,6 +30,7 @@ type WarehouseInboxTask = Omit<CollaborationShippingTask, "assigneeName"> & {
   assignedToId: string | null;
   isAssignedToMe: boolean;
   isCreatedByMe: boolean;
+  canDispatch?: boolean;
   transferCandidates: Array<{ id: string; name: string; email: string }>;
 };
 
@@ -60,6 +62,7 @@ export async function getCollaborationShippingTasks() {
   });
   return tasks.map((task) => ({
     ...task,
+    assignedToId: task.assignedToId,
     transferCandidates: roster.flatMap((candidate) =>
       candidate.organizationId === task.organizationId &&
       candidate.locationId === task.fulfillmentLocationId &&
@@ -77,6 +80,22 @@ export async function getCollaborationShippingTasks() {
         : []
     ),
   }));
+}
+
+export async function assignCollaborationShippingTaskAction(taskId: string, assignedToId: string) {
+  try {
+    const user = await requireAuthenticatedUser();
+    const result = await assignQueuedShipOrderTask({
+      taskId,
+      actorUserId: user.id,
+      targetUserId: assignedToId,
+    });
+    revalidateCollaborationTaskViews();
+    revalidatePath("/notifications");
+    return actionSuccess({ taskId, outcome: result.outcome });
+  } catch (error) {
+    return toActionFailure(error, "指派任务失败，请重试");
+  }
 }
 
 export async function getMyCollaborationWorkMetrics() {
@@ -229,6 +248,7 @@ export async function getWarehouseCollaborationTaskInbox() {
         assigneeName: assignee?.name || assignee?.email || null,
         assignedToId: task.assignedToId,
         isAssignedToMe: task.assignedToId === user.id,
+        canDispatch: false,
         isCreatedByMe: true,
         handoffRequestId: null,
         isHandoffOffer: false,

@@ -1338,7 +1338,7 @@ export async function bundleSellListings(data: {
           select: { id: true },
         });
         if (!activeWarehouseFulfiller) {
-          throw new Error("合作仓尚无可领取发货任务的有效仓库协作者");
+          throw new Error("合作仓尚无可领取该订单发货任务的有效任务协作者");
         }
       }
       const inventoryPoolIsAuthorized = (inventoryPoolId: string | null) =>

@@ -115,6 +115,7 @@ docs/
 3. [UI规范](ui.md) - 遵循UI设计规范
 4. [开发交接规范](handoffs/README.md) - 接手跨模块开发前必读
 5. [当前版本交接](handoffs/2026-09-02-opening-stock-hong-kong-deployment-handoff.md) - 期初库存与香港测试环境部署基线
+6. [账号、关系与数据权限底层规则](relationship-access-foundation.md) - 邀请、外部协作、企业连接和显式授权的统一规则
 
 ### 模块开发
 

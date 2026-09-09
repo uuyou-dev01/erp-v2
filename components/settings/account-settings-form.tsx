@@ -176,7 +176,7 @@ export function AccountSettingsForm({ name, email }: { name: string; email: stri
               <Label htmlFor="profile-email">登录邮箱</Label>
               <Input id="profile-email" value={email} disabled readOnly />
               <p className="text-xs text-muted-foreground">
-                登录邮箱由企业管理员在团队成员中维护。
+                登录邮箱是你的个人账号标识，目前暂不支持在系统内修改。
               </p>
             </div>
             <ResultMessage error={profileError} success={null} />

@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { createPublicCode } from "../lib/auth/invitation-token";
 
 const prisma = new PrismaClient();
 
@@ -224,8 +225,16 @@ async function ensureBaseStore() {
     create: {
       code: "main",
       name: "默认经营主体",
+      collaborationCode: createPublicCode("ORG"),
     },
   });
+
+  if (!/^ORG-[23456789A-HJ-NP-Z]{6,12}$/.test(organization.collaborationCode)) {
+    await prisma.organization.update({
+      where: { id: organization.id },
+      data: { collaborationCode: createPublicCode("ORG") },
+    });
+  }
 
   return prisma.store.upsert({
     where: { id: STORE_ID },
@@ -327,9 +336,7 @@ async function cleanupStressData(storeId: string) {
 
   const ledgerOr = [
     ...(lotIds.length > 0 ? [{ entityType: "LOT", entityId: { in: lotIds } }] : []),
-    ...(itemUnitIds.length > 0
-      ? [{ entityType: "ITEM_UNIT", entityId: { in: itemUnitIds } }]
-      : []),
+    ...(itemUnitIds.length > 0 ? [{ entityType: "ITEM_UNIT", entityId: { in: itemUnitIds } }] : []),
     { refId: { startsWith: STRESS_PREFIX } },
   ];
   await prisma.stockLedger.deleteMany({ where: { storeId, OR: ledgerOr } });
@@ -459,7 +466,9 @@ async function seedStressInventory(
     const productKind = groupIndex % 4 === 0 ? "USED" : "NEW";
     const variantTotal = 1 + (groupIndex % Math.min(4, catalog.variants.length));
     const referencePrice =
-      groupIndex % 11 === 0 ? null : String(currency === "JPY" ? 1800 + groupIndex * 420 : 80 + groupIndex * 16);
+      groupIndex % 11 === 0
+        ? null
+        : String(currency === "JPY" ? 1800 + groupIndex * 420 : 80 + groupIndex * 16);
     const referenceCost =
       referencePrice === null
         ? null
@@ -534,7 +543,8 @@ async function seedStressInventory(
           codeSource: "AUTO",
           category,
           brand,
-          imageUrl: hasImage && variantIndex === 0 ? imageUrl(`${catalog.brand}-${variantNo}`) : null,
+          imageUrl:
+            hasImage && variantIndex === 0 ? imageUrl(`${catalog.brand}-${variantNo}`) : null,
           attributes: {
             ...catalogAttrs({
               productKind,
@@ -552,12 +562,14 @@ async function seedStressInventory(
       variantCountTotal += 1;
 
       const sourceId = `${STRESS_PREFIX}SEED-${variantNo}`;
-      let sellableQty = productKind === "USED" && variantIndex === 0 ? 0 : lotQuantity(groupIndex + variantIndex);
+      let sellableQty =
+        productKind === "USED" && variantIndex === 0 ? 0 : lotQuantity(groupIndex + variantIndex);
       if (groupIndex % 10 === 0 && variantIndex === 0) sellableQty = 1;
       const receivedAt = daysAgo((groupIndex + variantIndex) % 45);
 
       if (sellableQty > 0) {
-        const primaryLocation = sellableLocations[(groupIndex + variantIndex) % sellableLocations.length];
+        const primaryLocation =
+          sellableLocations[(groupIndex + variantIndex) % sellableLocations.length];
         const splitAcrossWarehouses = sellableQty >= 5 && (groupIndex + variantIndex) % 4 === 0;
         if (splitAcrossWarehouses) {
           const secondaryQty = Math.max(1, Math.floor(sellableQty / 3));
@@ -615,7 +627,12 @@ async function seedStressInventory(
         lotCount += 1;
       }
 
-      const usedUnitTotal = productKind === "USED" ? 1 + ((groupIndex + variantIndex) % 2) : groupIndex % 9 === 0 && variantIndex === 0 ? 1 : 0;
+      const usedUnitTotal =
+        productKind === "USED"
+          ? 1 + ((groupIndex + variantIndex) % 2)
+          : groupIndex % 9 === 0 && variantIndex === 0
+            ? 1
+            : 0;
       const createdUnits = [];
       for (let unitIndex = 0; unitIndex < usedUnitTotal; unitIndex += 1) {
         const inTransit = (groupIndex + unitIndex) % 8 === 0;
@@ -643,7 +660,11 @@ async function seedStressInventory(
 
       const listingMode = (groupIndex + variantIndex) % 5;
       const skuListingTargetCount =
-        sellableQty <= 0 ? 0 : listingMode === 0 ? 0 : Math.min(platformTargets.length, listingMode);
+        sellableQty <= 0
+          ? 0
+          : listingMode === 0
+            ? 0
+            : Math.min(platformTargets.length, listingMode);
       for (let platformIndex = 0; platformIndex < skuListingTargetCount; platformIndex += 1) {
         const platform = platformTargets[platformIndex];
         await prisma.listing.create({
@@ -706,7 +727,15 @@ async function main() {
   const [groupCount, variantCount, listingCount] = await Promise.all([
     prisma.sKU.count({ where: { storeId: store.id, code: { startsWith: GROUP_PREFIX } } }),
     prisma.sKU.count({ where: { storeId: store.id, code: { startsWith: SKU_PREFIX } } }),
-    prisma.listing.count({ where: { storeId: store.id, OR: [{ sku: { code: { startsWith: SKU_PREFIX } } }, { itemUnit: { sku: { code: { startsWith: SKU_PREFIX } } } }] } }),
+    prisma.listing.count({
+      where: {
+        storeId: store.id,
+        OR: [
+          { sku: { code: { startsWith: SKU_PREFIX } } },
+          { itemUnit: { sku: { code: { startsWith: SKU_PREFIX } } } },
+        ],
+      },
+    }),
   ]);
 
   console.log("库存压力数据生成完成");

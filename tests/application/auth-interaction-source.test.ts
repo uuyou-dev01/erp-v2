@@ -17,7 +17,8 @@ describe("auth interaction source hygiene", () => {
     expect(actionSource).toContain("export async function switchCurrentUserAction");
     expect(actionSource).toContain("return actionSuccess");
     expect(actionSource).toContain("return toActionFailure");
-    expect(actionSource).toContain('requestedNext?.startsWith("/collaboration/tasks")');
+    expect(actionSource).toContain("resolveAuthenticatedDestination");
+    expect(actionSource).toContain("hasWarehouseRelationship");
 
     expect(formSource).toContain("switchCurrentUserAction");
     expect(formSource).toContain("loginError");

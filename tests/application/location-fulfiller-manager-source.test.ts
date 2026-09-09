@@ -13,7 +13,7 @@ describe("location fulfiller progressive disclosure", () => {
     const dialogIndex = componentSource.indexOf("<dialog");
     const invitationFormIndex = componentSource.indexOf("<form onSubmit={invite}");
 
-    expect(componentSource).toContain("添加仓库协作人");
+    expect(componentSource).toContain("添加任务协作者");
     expect(dialogIndex).toBeGreaterThan(-1);
     expect(invitationFormIndex).toBeGreaterThan(dialogIndex);
     expect(componentSource).toContain('aria-labelledby="fulfiller-dialog-title"');

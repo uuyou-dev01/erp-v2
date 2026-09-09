@@ -7,15 +7,17 @@ function source(path: string) {
 }
 
 describe("warehouse collaboration workbench integration", () => {
-  it("renders the member experience inside the warehouse workbench scope", () => {
+  it("keeps member work in workbench and external work in the personal collaboration portal", () => {
     const workbench = source("app/(dashboard)/workbench/page.tsx");
     const standalone = source("app/collaboration/tasks/page.tsx");
 
     expect(workbench).toContain('pageParams.scope === "warehouse"');
     expect(workbench).toContain("getWarehouseCollaborationTaskInbox()");
     expect(workbench).toContain('mode="workbench"');
-    expect(standalone).toContain('redirect("/workbench?scope=warehouse")');
     expect(standalone).toContain("getCollaborationShippingTasks()");
+    expect(standalone).toContain("getMyCollaborationWorkMetrics()");
+    expect(standalone).toContain("我的任务");
+    expect(standalone).not.toContain('redirect("/workbench?scope=warehouse")');
   });
 
   it("shows the four warehouse queues and resilient result states", () => {
@@ -58,6 +60,6 @@ describe("warehouse collaboration workbench integration", () => {
     expect(component).toContain("/inventory/locations/${selected.location.id}?returnTo=");
     expect(component).toContain("/inventory/stocktake?locationId=");
     expect(component).toContain("/workbench?scope=warehouse&task=${selected.id}");
-    expect(component).toContain('aria-label="关闭仓库任务详情"');
+    expect(component).toContain('aria-label="关闭任务详情"');
   });
 });

@@ -15,6 +15,7 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
     select: { organizationId: true, locationId: true, role: true },
   });
   const locationIds = Array.from(new Set(activeRoster.map((entry) => entry.locationId)));
+  const managedScopes = activeRoster.filter((entry) => entry.role === "MANAGER");
   const declinedRequestIds = new Set(
     (
       await prisma.collaborationResponse.findMany({
@@ -68,6 +69,10 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
             },
           },
         },
+        ...managedScopes.map((scope) => ({
+          organizationId: scope.organizationId,
+          fulfillmentLocationId: scope.locationId,
+        })),
       ],
     },
     select: {
@@ -159,7 +164,7 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
   const acceptedOrderIds = tasks
     .filter(
       (task) =>
-        task.status === "DONE" ||
+        (task.status === "DONE" && task.completedById === user.id) ||
         (task.status === "IN_PROGRESS" && task.assignedToId === user.id)
     )
     .map((task) => task.refId);
@@ -188,19 +193,24 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
     const handoff = dispatch ? handoffByParentId.get(dispatch.requestId) : null;
     const isQueuedForWarehouse = Boolean(
       dispatch &&
-        dispatch.status === "QUEUED" &&
-        !declinedRequestIds.has(dispatch.requestId) &&
-        ((dispatch.targetScopeType === "LOCATION" &&
-          activeRosterKeys.has(`${task.organizationId}:${dispatch.targetScopeRef}`)) ||
-          (dispatch.targetScopeType === "USER" && dispatch.targetScopeRef === user.id))
+      dispatch.status === "QUEUED" &&
+      !declinedRequestIds.has(dispatch.requestId) &&
+      ((dispatch.targetScopeType === "LOCATION" &&
+        activeRosterKeys.has(`${task.organizationId}:${dispatch.targetScopeRef}`)) ||
+        (dispatch.targetScopeType === "USER" && dispatch.targetScopeRef === user.id))
     );
     const isClaimedByMe = Boolean(
       dispatch &&
-        ["CLAIMED", "COMPLETED"].includes(dispatch.status) &&
-        dispatch.claimedByUserId === user.id
+      ["CLAIMED", "COMPLETED"].includes(dispatch.status) &&
+      dispatch.claimedByUserId === user.id
     );
     const isLegacyAssignedToMe = task.assignedToId === user.id;
     const isCompletedByMe = task.completedById === user.id;
+    const canDispatch = managedScopes.some(
+      (scope) =>
+        scope.organizationId === task.organizationId &&
+        scope.locationId === task.fulfillmentLocationId
+    );
     if (
       !order ||
       !task.fulfillmentLocationId ||
@@ -208,7 +218,8 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
         !isClaimedByMe &&
         !isLegacyAssignedToMe &&
         !isCompletedByMe &&
-        !handoff)
+        !handoff &&
+        !canDispatch)
     ) {
       return [];
     }
@@ -229,6 +240,14 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
         completedAt: task.completedAt?.toISOString() ?? null,
         organizationId: task.organizationId,
         fulfillmentLocationId: task.fulfillmentLocationId,
+        assignedToId: task.assignedToId,
+        isAssignedToMe:
+          isClaimedByMe ||
+          isLegacyAssignedToMe ||
+          isCompletedByMe ||
+          isQueuedForWarehouse ||
+          Boolean(handoff),
+        canDispatch,
         organizationName: organizationById.get(task.organizationId)?.name || "委托企业",
         assignedByName: creator?.name || creator?.email || null,
         assigneeName: assignee?.name || assignee?.email || null,

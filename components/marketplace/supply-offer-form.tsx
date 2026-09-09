@@ -206,9 +206,9 @@ export function SupplyOfferForm({
       .map((rule) => rule.viewerStoreId)
       .filter((id): id is string => Boolean(id)) ?? []
   );
-  const [viewerPartnerIds, setViewerPartnerIds] = useState<string[]>(
+  const [viewerOrganizationIds, setViewerOrganizationIds] = useState<string[]>(
     initialData?.visibilityRules
-      .map((rule) => rule.partnerId)
+      .map((rule) => rule.viewerOrganizationId)
       .filter((id): id is string => Boolean(id)) ?? []
   );
   const [salesChannelAccountIds] = useState<string[]>(
@@ -334,6 +334,9 @@ export function SupplyOfferForm({
       return "请为每个商品填写有效供货价";
     }
     if (!formData.currency.trim()) return "请填写货盘币种";
+    if (formData.visibility === "PARTNER_ONLY" && viewerOrganizationIds.length === 0) {
+      return "请选择至少一家已确认的合作企业";
+    }
     if (
       ["PERCENT", "HYBRID", "PROFIT_PERCENT"].includes(formData.commissionType) &&
       !formData.commissionRate
@@ -377,7 +380,7 @@ export function SupplyOfferForm({
         minOrderQty: formData.minOrderQty || undefined,
         maxOrderQty: formData.maxOrderQty || undefined,
         viewerStoreIds: formData.visibility === "PARTNER_ONLY" ? viewerStoreIds : [],
-        viewerPartnerIds: formData.visibility === "PARTNER_ONLY" ? viewerPartnerIds : [],
+        viewerOrganizationIds: formData.visibility === "PARTNER_ONLY" ? viewerOrganizationIds : [],
         salesChannelAccountIds,
         resellerPartnerIds,
         items: items.map((item) => ({
@@ -609,26 +612,26 @@ export function SupplyOfferForm({
               onChange={(event) => updateField({ visibility: event.target.value })}
             >
               <option value="PRIVATE">只在自己团队内使用</option>
-              <option value="PARTNER_ONLY">只给指定朋友 / 公司</option>
+              <option value="PARTNER_ONLY">只给指定合作企业</option>
               <option value="PUBLIC">市场里的合作方都能看到</option>
             </Select>
             {formData.visibility === "PARTNER_ONLY" ? (
               <div className="max-h-36 space-y-2 overflow-y-auto rounded-md bg-muted/30 p-2">
-                {partners.length ? (
-                  partners.map((partner) => (
+                {formContext.connectedOrganizations.length ? (
+                  formContext.connectedOrganizations.map((organization) => (
                     <Checkbox
-                      key={partner.id}
-                      id={`core-viewer-partner-${partner.id}`}
-                      label={partner.name}
-                      checked={viewerPartnerIds.includes(partner.id)}
+                      key={organization.id}
+                      id={`core-viewer-organization-${organization.id}`}
+                      label={`${organization.name} · ${organization.code}`}
+                      checked={viewerOrganizationIds.includes(organization.id)}
                       onChange={(event) =>
-                        toggleId(setViewerPartnerIds, partner.id, event.target.checked)
+                        toggleId(setViewerOrganizationIds, organization.id, event.target.checked)
                       }
                     />
                   ))
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    请先建立合作方并关联对方经营主体代码。
+                    暂无已确认的合作企业。请先在设置中用对方的企业协作码建立连接；连接本身不会开放库存。
                   </p>
                 )}
               </div>
@@ -657,7 +660,7 @@ export function SupplyOfferForm({
               }}
             >
               <option value="SUPPLIER_SHIPS">我方负责发货</option>
-              <option value="THIRD_PARTY_SHIPS">指定服务方帮忙发货</option>
+              <option value="THIRD_PARTY_SHIPS">由指定服务方处理订单发货</option>
               <option value="RESELLER_SHIPS">代卖方拿货后自己发</option>
               <option value="CONTACT_ONLY">成交后再商量</option>
             </Select>

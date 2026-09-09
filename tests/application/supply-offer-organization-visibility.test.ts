@@ -95,32 +95,34 @@ describe("supply offer organization visibility", () => {
         reason: "PURCHASE_IN",
       },
     });
-    const partner = await prisma.partner.create({
-      data: {
-        storeId: owner.store.id,
-        organizationId: reseller.organization.id,
-        code: `${runId}_partner`,
-        name: "Authorized reseller",
-        type: "RESELLER",
-      },
-    });
-
     process.env.ERP_DEV_USER_EMAIL = ownerEmail;
     const result = await createSupplyOfferAction({
       storeId: owner.store.id,
       title: "Only for the linked reseller organization",
       visibility: "PARTNER_ONLY",
-      viewerPartnerIds: [partner.id],
+      viewerOrganizationIds: [reseller.organization.id],
       currency: "CNY",
       unitPrice: "120",
       agreementTerms: "双方确认：每成交一件，货主收取 CNY 120，其他收益由代卖方保留。",
       items: [
-        { skuId: sku.id, title: sku.name, quantityAvailable: "2", unitPrice: "120", currency: "CNY" },
+        {
+          skuId: sku.id,
+          title: sku.name,
+          quantityAvailable: "2",
+          unitPrice: "120",
+          currency: "CNY",
+        },
       ],
     });
     expect(result.success).toBe(true);
     if (!result.success) return;
     offerId = result.id;
+    const visibilityRule = await prisma.offerVisibility.findFirstOrThrow({
+      where: { offerId },
+    });
+    expect(visibilityRule.viewerOrganizationId).toBe(reseller.organization.id);
+    expect(visibilityRule.organizationConnectionId).toBeTruthy();
+    expect(visibilityRule.partnerId).toBeNull();
     expect((await changeSupplyOfferStatusAction(offerId, "PUBLISHED")).success).toBe(true);
   });
 

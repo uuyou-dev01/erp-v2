@@ -11,10 +11,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const authenticatedUser = await requireAuthenticatedUser().catch(() => redirect("/login"));
   const context = await requireUserContext().catch(async () => {
     const collaboration = await prisma.locationFulfiller.findFirst({
-      where: { userId: authenticatedUser.id, status: "ACTIVE" },
+      where: { userId: authenticatedUser.id },
       select: { id: true },
     });
-    redirect(collaboration ? "/collaboration/tasks" : "/onboarding");
+    redirect(collaboration ? "/collaboration" : "/onboarding");
   });
   const pathname = (await headers()).get("x-erp-pathname") ?? "/workbench";
   if (!isNavigationHrefAllowed(context.role, pathname)) {

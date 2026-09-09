@@ -14,10 +14,17 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined })
 
 import {
   acceptLocationFulfillerInvitationAction,
+  endMyLocationFulfillerRelationshipAction,
   getLocationFulfillerInvitationByToken,
   getLocationFulfillerRoster,
+  reactivateLocationFulfillerAction,
+  suspendLocationFulfillerAction,
 } from "@/app/actions/location-fulfillers";
 import { assignWorkTaskAction } from "@/app/actions/tasks";
+import {
+  claimShipOrderTask,
+  ensureShipOrderTaskDispatch,
+} from "@/lib/application/shipping-dispatch-lifecycle";
 
 const runId = `warehouse_collaboration_${Date.now()}`;
 const ownerEmail = `${runId}_owner@example.com`;
@@ -251,6 +258,58 @@ describe("warehouse-scoped fulfillment collaboration", () => {
     ).resolves.toBeNull();
   });
 
+  it("returns claimed work to the warehouse queue when a collaborator is suspended", async () => {
+    const roster = await prisma.locationFulfiller.findFirstOrThrow({
+      where: { locationId, userId: manualAccessUserId },
+      select: { id: true },
+    });
+    const bundle = await ensureShipOrderTaskDispatch({
+      organizationId,
+      storeId,
+      orderId: `${runId}_suspension_order`,
+      orderNumber: `${runId}_SUSPENSION_ORDER`,
+      createdById: ownerId,
+      locationId,
+    });
+    await claimShipOrderTask({ taskId: bundle.task.id, userId: manualAccessUserId });
+
+    process.env.ERP_DEV_USER_EMAIL = ownerEmail;
+    const result = await suspendLocationFulfillerAction(locationId, roster.id);
+    expect(result.success).toBe(true);
+
+    const [task, dispatch] = await Promise.all([
+      prisma.task.findUniqueOrThrow({ where: { id: bundle.task.id } }),
+      prisma.taskDispatch.findUniqueOrThrow({
+        where: { id: bundle.dispatch.id },
+        include: { request: true },
+      }),
+    ]);
+    expect(task).toMatchObject({ status: "OPEN", assignedToId: null, startedAt: null });
+    expect(dispatch).toMatchObject({
+      status: "QUEUED",
+      targetScopeType: "LOCATION",
+      targetScopeRef: locationId,
+      claimedByUserId: null,
+      request: { status: "OPEN" },
+    });
+
+    const restored = await reactivateLocationFulfillerAction(locationId, roster.id);
+    expect(restored.success).toBe(true);
+    await expect(
+      prisma.locationFulfiller.findUniqueOrThrow({
+        where: { id: roster.id },
+        select: { status: true, suspendedAt: true },
+      })
+    ).resolves.toEqual({ status: "ACTIVE", suspendedAt: null });
+    await expect(
+      prisma.locationFulfillerEvent.findMany({
+        where: { fulfillerId: roster.id },
+        select: { eventType: true },
+        orderBy: { createdAt: "asc" },
+      })
+    ).resolves.toEqual([{ eventType: "SUSPENDED" }, { eventType: "REACTIVATED" }]);
+  });
+
   it("persists the allocated warehouse when assigning a collaborator", async () => {
     await prisma.task.update({
       where: { id: taskId },
@@ -383,12 +442,13 @@ describe("warehouse-scoped fulfillment collaboration", () => {
 
       const reopened = await getLocationFulfillerInvitationByToken(token);
       expect(reopened).toMatchObject({ status: "ACTIVE", acceptedAt: expect.any(Date) });
-      await expect(
-        prisma.locationFulfiller.findMany({
-          where: { locationId: secondLocation.id, email: collaboratorEmail },
-          select: { userId: true, status: true },
-        })
-      ).resolves.toEqual([{ userId: collaboratorId, status: "ACTIVE" }]);
+      const acceptedRelationships = await prisma.locationFulfiller.findMany({
+        where: { locationId: secondLocation.id, email: collaboratorEmail },
+        select: { id: true, userId: true, status: true },
+      });
+      expect(acceptedRelationships).toEqual([
+        { id: expect.any(String), userId: collaboratorId, status: "ACTIVE" },
+      ]);
       await expect(
         prisma.membership.count({ where: { organizationId, userId: collaboratorId } })
       ).resolves.toBe(0);
@@ -397,6 +457,22 @@ describe("warehouse-scoped fulfillment collaboration", () => {
           where: { locationId: secondLocation.id, userId: collaboratorId },
         })
       ).resolves.toBe(1);
+
+      const ended = await endMyLocationFulfillerRelationshipAction(acceptedRelationships[0].id);
+      expect(ended).toMatchObject({ success: true, destination: "/collaboration" });
+      await expect(
+        prisma.locationFulfiller.findUniqueOrThrow({
+          where: { id: acceptedRelationships[0].id },
+          select: { status: true },
+        })
+      ).resolves.toEqual({ status: "ENDED" });
+      await expect(
+        prisma.locationFulfillerEvent.findMany({
+          where: { fulfillerId: acceptedRelationships[0].id },
+          select: { eventType: true },
+          orderBy: { createdAt: "asc" },
+        })
+      ).resolves.toEqual([{ eventType: "ACCEPTED" }, { eventType: "ENDED" }]);
     } finally {
       process.env.ERP_DEV_USER_EMAIL = ownerEmail;
     }

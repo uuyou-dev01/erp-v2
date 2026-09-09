@@ -1,12 +1,11 @@
 import type { Prisma } from "@prisma/client";
+import {
+  capabilitiesForWarehouseRole,
+  COLLABORATION_CAPABILITY,
+  type CollaborationCapability,
+} from "@/lib/application/relationship-foundation";
 
-export const COLLABORATION_CAPABILITY = {
-  WAREHOUSE_SHIP: "warehouse.ship",
-  WAREHOUSE_MANAGE: "warehouse.manage",
-} as const;
-
-export type CollaborationCapability =
-  (typeof COLLABORATION_CAPABILITY)[keyof typeof COLLABORATION_CAPABILITY];
+export { COLLABORATION_CAPABILITY, type CollaborationCapability };
 
 type CollaborationCapabilityClient = Pick<
   Prisma.TransactionClient,
@@ -14,16 +13,7 @@ type CollaborationCapabilityClient = Pick<
 >;
 
 export function capabilitiesForLocationFulfillerRole(role: string | null | undefined) {
-  if (role === "MANAGER") {
-    return [
-      COLLABORATION_CAPABILITY.WAREHOUSE_SHIP,
-      COLLABORATION_CAPABILITY.WAREHOUSE_MANAGE,
-    ] as const;
-  }
-  if (role === "OPERATOR" || role === "BACKUP") {
-    return [COLLABORATION_CAPABILITY.WAREHOUSE_SHIP] as const;
-  }
-  return [] as const;
+  return capabilitiesForWarehouseRole(role);
 }
 
 export async function resolveCollaborationCapabilities(

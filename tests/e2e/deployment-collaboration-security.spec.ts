@@ -218,9 +218,9 @@ test.describe("deployment RC external warehouse and private evidence", () => {
 
     await ownerPage.goto(`/inventory/locations/${locationId}`);
     await ownerPage.getByRole("button", { name: "添加协作人" }).click();
-    const inviteDialog = ownerPage.getByRole("dialog", { name: "添加仓库协作人" });
+    const inviteDialog = ownerPage.getByRole("dialog", { name: "添加任务协作者" });
     await inviteDialog.getByLabel("对方邮箱").fill(collaboratorAEmail);
-    await inviteDialog.getByLabel("仓库角色").selectOption("OPERATOR");
+    await inviteDialog.getByLabel("任务角色").selectOption("OPERATOR");
     await inviteDialog.getByLabel("设为默认负责人").check();
     await shot(ownerPage, "10-01-owner-external-warehouse-invite-filled-rc1.png");
     await inviteDialog.getByRole("button", { name: "生成邀请链接" }).click();
@@ -231,11 +231,11 @@ test.describe("deployment RC external warehouse and private evidence", () => {
 
     const invitationPath = new URL(invitationUrl).pathname;
     await login(collaboratorAPage, collaboratorAEmail, invitationPath);
-    await expect(collaboratorAPage.getByText("你只会获得这个仓库的发货任务")).toBeVisible();
+    await expect(collaboratorAPage.getByText(/当前协作范围是这个仓库/)).toBeVisible();
     await expect(collaboratorAPage.getByText("不会加入对方企业")).toBeVisible();
     await shot(collaboratorAPage, "10-03-collaborator-scope-before-accept-rc1.png");
-    await collaboratorAPage.getByRole("button", { name: "接受并进入发货任务" }).click();
-    await expect(collaboratorAPage.getByRole("heading", { name: "我的发货任务" })).toBeVisible();
+    await collaboratorAPage.getByRole("button", { name: "接受并进入我的任务" }).click();
+    await expect(collaboratorAPage.getByRole("heading", { name: "我的任务" })).toBeVisible();
 
     await expect
       .poll(() =>
@@ -358,7 +358,7 @@ test.describe("deployment RC external warehouse and private evidence", () => {
 
     await ownerPage.goto(`/inventory/locations/${locationId}`);
     const winnerRosterRow = ownerPage
-      .getByText(`${winnerEmail} · 发货操作员`, { exact: true })
+      .getByText(`${winnerEmail} · 任务协作者`, { exact: true })
       .locator("xpath=../..");
     await winnerRosterRow.getByRole("button", { name: "暂停权限" }).click();
     await expect(winnerRosterRow.getByText("已暂停")).toBeVisible();

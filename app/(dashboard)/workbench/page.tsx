@@ -40,8 +40,8 @@ export default async function WorkbenchPage({
     return (
       <div>
         <PageHeader
-          title="仓库协作任务"
-          description="统一处理待领取、处理中、我发起和已完成的仓库交接任务。"
+          title="外部协作任务"
+          description="统一处理待领取、处理中、我发起和已完成的外部任务；具体任务类型会在卡片中标明。"
           badge={
             pendingCount > 0 ? (
               <Badge variant="secondary" className="font-normal">
@@ -57,7 +57,7 @@ export default async function WorkbenchPage({
                 href="/settings/warehouse-collaboration"
                 className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-muted"
               >
-                仓库协作设置
+                任务协作设置
               </Link>
               <Link
                 href="/workbench"

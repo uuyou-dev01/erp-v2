@@ -129,6 +129,7 @@ export type SupplyOfferInventoryOption = {
 
 export type SupplyOfferFormContext = {
   organization: { id: string; name: string; code: string };
+  connectedOrganizations: Array<{ id: string; name: string; code: string; connectionId: string }>;
   inventoryPools: Array<{ id: string; name: string; code: string; baseCurrency: string }>;
   salesChannels: Array<{ id: string; name: string; code: string; platformCode: string }>;
   fulfillmentProviders: Array<{ id: string; name: string; code: string }>;
@@ -656,6 +657,50 @@ async function resolveConnectedVisiblePartners(input: {
   });
 }
 
+async function resolveConnectedVisibleOrganizations(input: {
+  organizationIds: string[];
+  organizationId: string;
+}) {
+  if (input.organizationIds.includes(input.organizationId)) {
+    throw new Error("不能把当前经营主体添加为定向可见企业");
+  }
+  const connections = await prisma.organizationConnection.findMany({
+    where: {
+      status: "ACTIVE",
+      OR: [
+        {
+          requesterOrganizationId: input.organizationId,
+          targetOrganizationId: { in: input.organizationIds },
+        },
+        {
+          targetOrganizationId: input.organizationId,
+          requesterOrganizationId: { in: input.organizationIds },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      requesterOrganizationId: true,
+      targetOrganizationId: true,
+    },
+  });
+  const connectionByOrganizationId = new Map(
+    connections.map((connection) => [
+      connection.requesterOrganizationId === input.organizationId
+        ? connection.targetOrganizationId
+        : connection.requesterOrganizationId,
+      connection.id,
+    ])
+  );
+  if (connectionByOrganizationId.size !== input.organizationIds.length) {
+    throw new Error("包含尚未确认或已经结束的合作企业");
+  }
+  return input.organizationIds.map((viewerOrganizationId) => ({
+    viewerOrganizationId,
+    organizationConnectionId: connectionByOrganizationId.get(viewerOrganizationId)!,
+  }));
+}
+
 export async function getMarketplaceOffers(storeId?: string) {
   const context = await requireUserContext(storeId ? { storeId } : undefined);
   const offers = await prisma.supplyOffer.findMany({
@@ -691,6 +736,7 @@ export async function getSupplyOfferFormContext(storeId?: string): Promise<Suppl
   const stockBreakdownPromise = getStoreStockBreakdown(context.activeStoreId);
   const [
     organization,
+    organizationConnections,
     inventoryPools,
     salesChannels,
     agreements,
@@ -703,6 +749,23 @@ export async function getSupplyOfferFormContext(storeId?: string): Promise<Suppl
     prisma.organization.findUniqueOrThrow({
       where: { id: context.organizationId },
       select: { id: true, name: true, code: true },
+    }),
+    prisma.organizationConnection.findMany({
+      where: {
+        status: "ACTIVE",
+        OR: [
+          { requesterOrganizationId: context.organizationId },
+          { targetOrganizationId: context.organizationId },
+        ],
+      },
+      select: {
+        id: true,
+        requesterOrganizationId: true,
+        targetOrganizationId: true,
+        requesterOrganization: { select: { id: true, name: true, code: true } },
+        targetOrganization: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: { updatedAt: "desc" },
     }),
     prisma.inventoryPool.findMany({
       where: {
@@ -902,6 +965,12 @@ export async function getSupplyOfferFormContext(storeId?: string): Promise<Suppl
 
   return {
     organization,
+    connectedOrganizations: organizationConnections.map((connection) => ({
+      ...(connection.requesterOrganizationId === context.organizationId
+        ? connection.targetOrganization
+        : connection.requesterOrganization),
+      connectionId: connection.id,
+    })),
     inventoryPools,
     salesChannels,
     fulfillmentProviders: [...providerMap.values()],
@@ -970,6 +1039,7 @@ export async function createSupplyOfferAction(data: {
   maxOrderQty?: string;
   viewerStoreIds?: string[];
   viewerPartnerIds?: string[];
+  viewerOrganizationIds?: string[];
   salesChannelAccountIds?: string[];
   resellerPartnerIds?: string[];
   items: SupplyOfferItemInput[];
@@ -1025,11 +1095,25 @@ export async function createSupplyOfferAction(data: {
     });
     const viewerStoreIds = normalizeViewerStoreIds(data.viewerStoreIds, context.storeIds);
     const viewerPartnerIds = normalizeIds(data.viewerPartnerIds);
+    const viewerOrganizationIds = normalizeIds(data.viewerOrganizationIds);
     const visiblePartners = await resolveConnectedVisiblePartners({
       partnerIds: viewerPartnerIds,
       storeId: context.activeStoreId,
       organizationId: context.organizationId,
     });
+    const visibleOrganizations = await resolveConnectedVisibleOrganizations({
+      organizationIds: viewerOrganizationIds.filter(
+        (organizationId) =>
+          !visiblePartners.some((partner) => partner.organizationId === organizationId)
+      ),
+      organizationId: context.organizationId,
+    });
+    if (
+      data.visibility === "PARTNER_ONLY" &&
+      viewerStoreIds.length + visiblePartners.length + visibleOrganizations.length === 0
+    ) {
+      throw new Error("定向货盘至少需要选择一家已确认的合作企业");
+    }
     const channelCreates = await resolveOfferChannelCreates({
       organizationId: context.organizationId,
       storeId: context.activeStoreId,
@@ -1118,6 +1202,11 @@ export async function createSupplyOfferAction(data: {
               viewerOrganizationId: partner.organizationId,
               organizationConnectionId: partner.organizationConnectionId,
             })),
+            ...visibleOrganizations.map((organization) => ({
+              scope: "ORGANIZATION",
+              viewerOrganizationId: organization.viewerOrganizationId,
+              organizationConnectionId: organization.organizationConnectionId,
+            })),
           ],
         },
         salesChannels: {
@@ -1161,6 +1250,7 @@ export async function updateSupplyOfferAction(
     maxOrderQty?: string;
     viewerStoreIds?: string[];
     viewerPartnerIds?: string[];
+    viewerOrganizationIds?: string[];
     salesChannelAccountIds?: string[];
     resellerPartnerIds?: string[];
     items: SupplyOfferItemInput[];
@@ -1254,11 +1344,25 @@ export async function updateSupplyOfferAction(
     if (totalQty.lt(existing.reservedQty)) throw new Error("发布数量不能小于当前订单已预留数量");
     const viewerStoreIds = normalizeViewerStoreIds(data.viewerStoreIds, context.storeIds);
     const viewerPartnerIds = normalizeIds(data.viewerPartnerIds);
+    const viewerOrganizationIds = normalizeIds(data.viewerOrganizationIds);
     const visiblePartners = await resolveConnectedVisiblePartners({
       partnerIds: viewerPartnerIds,
       storeId: context.activeStoreId,
       organizationId: context.organizationId,
     });
+    const visibleOrganizations = await resolveConnectedVisibleOrganizations({
+      organizationIds: viewerOrganizationIds.filter(
+        (organizationId) =>
+          !visiblePartners.some((partner) => partner.organizationId === organizationId)
+      ),
+      organizationId: context.organizationId,
+    });
+    if (
+      data.visibility === "PARTNER_ONLY" &&
+      viewerStoreIds.length + visiblePartners.length + visibleOrganizations.length === 0
+    ) {
+      throw new Error("定向货盘至少需要选择一家已确认的合作企业");
+    }
     const channelCreates = await resolveOfferChannelCreates({
       organizationId: context.organizationId,
       storeId: context.activeStoreId,
@@ -1397,6 +1501,11 @@ export async function updateSupplyOfferAction(
                 partnerId: partner.id,
                 viewerOrganizationId: partner.organizationId,
                 organizationConnectionId: partner.organizationConnectionId,
+              })),
+              ...visibleOrganizations.map((organization) => ({
+                scope: "ORGANIZATION",
+                viewerOrganizationId: organization.viewerOrganizationId,
+                organizationConnectionId: organization.organizationConnectionId,
               })),
             ],
           },

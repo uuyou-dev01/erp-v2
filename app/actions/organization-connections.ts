@@ -91,7 +91,7 @@ export async function getOrganizationConnectionsData() {
 }
 
 export async function requestOrganizationConnectionAction(data: {
-  partnerId: string;
+  partnerId?: string;
   collaborationCode: string;
 }) {
   try {
@@ -100,9 +100,11 @@ export async function requestOrganizationConnectionAction(data: {
       throw new Error("只有运营负责人及以上角色可以发起企业连接");
     const targetCode = normalizeCollaborationCode(data.collaborationCode);
     const [partner, target, requester] = await Promise.all([
-      prisma.partner.findFirst({
-        where: { id: data.partnerId, storeId: context.activeStoreId, status: "ACTIVE" },
-      }),
+      data.partnerId
+        ? prisma.partner.findFirst({
+            where: { id: data.partnerId, storeId: context.activeStoreId, status: "ACTIVE" },
+          })
+        : Promise.resolve(null),
       prisma.organization.findUnique({
         where: { collaborationCode: targetCode },
         select: { id: true, name: true },
@@ -112,10 +114,10 @@ export async function requestOrganizationConnectionAction(data: {
         select: { name: true },
       }),
     ]);
-    if (!partner) throw new Error("请选择当前店铺的有效合作方");
+    if (data.partnerId && !partner) throw new Error("请选择当前店铺的有效合作方");
     if (!target) throw new Error("没有找到该企业，请核对完整协作码");
     if (target.id === context.organizationId) throw new Error("不能连接当前企业自己");
-    if (partner.organizationId && partner.organizationId !== target.id)
+    if (partner?.organizationId && partner.organizationId !== target.id)
       throw new Error("该合作方已经连接到其他企业");
     const key = pairKey(context.organizationId, target.id);
     const previous = await prisma.organizationConnection.findUnique({ where: { pairKey: key } });
@@ -129,7 +131,7 @@ export async function requestOrganizationConnectionAction(data: {
             data: {
               requesterOrganizationId: context.organizationId,
               targetOrganizationId: target.id,
-              initiatingPartnerId: partner.id,
+              initiatingPartnerId: partner?.id ?? null,
               status: "PENDING",
               requestedById: context.userId,
               respondedById: null,
@@ -141,7 +143,7 @@ export async function requestOrganizationConnectionAction(data: {
             data: {
               requesterOrganizationId: context.organizationId,
               targetOrganizationId: target.id,
-              initiatingPartnerId: partner.id,
+              initiatingPartnerId: partner?.id,
               pairKey: key,
               requestedById: context.userId,
             },
@@ -153,7 +155,7 @@ export async function requestOrganizationConnectionAction(data: {
           actorUserId: context.userId,
           fromStatus: previous?.status ?? null,
           toStatus: "PENDING",
-          metadata: { initiatingPartnerId: partner.id },
+          metadata: { initiatingPartnerId: partner?.id ?? null },
         },
       });
       return saved;
@@ -165,7 +167,9 @@ export async function requestOrganizationConnectionAction(data: {
       refId: connection.id,
       type: "ORGANIZATION_CONNECTION_REQUEST",
       title: `${requester.name} 发来企业连接请求`,
-      body: `对方希望通过合作方「${partner.name}」建立企业协作关系。`,
+      body: partner
+        ? `对方希望通过合作方「${partner.name}」建立企业协作关系。`
+        : "对方希望确认企业身份，并在后续按具体供给或协议开展合作。",
       actionUrl: "/settings/connections",
       dedupeKey: `organization-connection:${connection.id}:requested:${connection.updatedAt.getTime()}`,
       priority: "HIGH",

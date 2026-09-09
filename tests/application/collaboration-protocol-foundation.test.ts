@@ -11,7 +11,7 @@ describe("generic collaboration protocol foundation", () => {
   it("maps warehouse roster roles to centralized capabilities", () => {
     expect(capabilitiesForLocationFulfillerRole("MANAGER")).toEqual([
       COLLABORATION_CAPABILITY.WAREHOUSE_SHIP,
-      COLLABORATION_CAPABILITY.WAREHOUSE_MANAGE,
+      COLLABORATION_CAPABILITY.WAREHOUSE_DISPATCH,
     ]);
     expect(capabilitiesForLocationFulfillerRole("OPERATOR")).toEqual([
       COLLABORATION_CAPABILITY.WAREHOUSE_SHIP,

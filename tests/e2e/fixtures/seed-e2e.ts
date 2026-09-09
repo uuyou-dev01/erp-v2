@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../../../lib/auth/password";
+import { createPublicCode } from "../../../lib/auth/invitation-token";
 import { assertSafeTestDatabaseUrl } from "../../../lib/database/database-url-guard";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -16,7 +17,11 @@ async function main() {
   const organization = await prisma.organization.upsert({
     where: { code: "e2e-main" },
     update: { name: "E2E 默认经营主体" },
-    create: { name: "E2E 默认经营主体", code: "e2e-main" },
+    create: {
+      name: "E2E 默认经营主体",
+      code: "e2e-main",
+      collaborationCode: createPublicCode("ORG"),
+    },
   });
   const store = await prisma.store.upsert({
     where: { id: "store_1" },

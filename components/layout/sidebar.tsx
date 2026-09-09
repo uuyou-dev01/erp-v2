@@ -382,9 +382,9 @@ export function Sidebar({
       {collaboration.hasWarehouseCollaboration ? (
         <div className="border-b border-sidebar-border p-2">
           <Link
-            href="/collaboration/tasks"
+            href="/collaboration"
             onClick={handleNavClick}
-            title={collapsed ? "仓库协作任务" : undefined}
+            title={collapsed ? "外部任务协作" : undefined}
             className={cn(
               "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
               collapsed && "justify-center px-2",
@@ -396,7 +396,7 @@ export function Sidebar({
             <PackageCheck className="h-4 w-4 shrink-0" />
             {!collapsed ? (
               <>
-                <span className="flex-1 truncate">仓库协作任务</span>
+                <span className="flex-1 truncate">任务协作</span>
                 <CountBadge count={collaboration.pendingTaskCount} />
               </>
             ) : null}

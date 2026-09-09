@@ -62,7 +62,7 @@ export function TaskAssignmentCard({
           <p className="text-xs font-medium text-foreground">任务委托</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {fulfillmentLocationLabel
-              ? `仅显示具备 ${fulfillmentLocationLabel} 发货权限的人员。`
+              ? `仅显示具备 ${fulfillmentLocationLabel} 对应任务权限的人员。`
               : "指派后，对方会收到站内通知并可在“我的任务”中看到。"}
           </p>
         </div>
@@ -79,7 +79,7 @@ export function TaskAssignmentCard({
           }}
           className="h-9"
         >
-          <option value="">选择负责人</option>
+          <option value="">选择任务负责人</option>
           {eligibleMembers.map((member) => (
             <option key={member.id} value={member.id}>
               {member.name || member.email}
@@ -87,7 +87,7 @@ export function TaskAssignmentCard({
               member.defaultLocationIds.includes(fulfillmentLocationIds[0])
                 ? "（默认）"
                 : member.relationship === "WAREHOUSE_COLLABORATOR"
-                  ? "（仓库协作）"
+                  ? "（外部任务协作）"
                   : ""}
             </option>
           ))}

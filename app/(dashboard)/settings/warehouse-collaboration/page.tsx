@@ -3,26 +3,25 @@ import { ArrowUpRight, Warehouse } from "lucide-react";
 import { getOrganizationWarehouseCollaborators } from "@/app/actions/location-fulfillers";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  WAREHOUSE_ROLE_LABELS,
+  type WarehouseFulfillerRole,
+} from "@/lib/application/relationship-foundation";
 
 export const dynamic = "force-dynamic";
-
-const ROLE_LABELS: Record<string, string> = {
-  MANAGER: "仓库主管",
-  OPERATOR: "发货操作员",
-  BACKUP: "备用发货人",
-};
 
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE: "合作中",
   INVITED: "待接受",
   EXPIRED: "邀请已过期",
   SUSPENDED: "已暂停",
+  ENDED: "已结束",
 };
 
 const RELATIONSHIP_LABELS: Record<string, string> = {
-  MEMBER: "企业成员兼仓库协作人",
-  WAREHOUSE_COLLABORATOR: "外部仓库协作者",
-  PENDING_INVITATION: "待确认仓库协作",
+  MEMBER: "企业成员兼任务协作者",
+  WAREHOUSE_COLLABORATOR: "外部任务协作者",
+  PENDING_INVITATION: "待确认任务协作",
 };
 
 export default async function WarehouseCollaborationPage() {
@@ -36,12 +35,12 @@ export default async function WarehouseCollaborationPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="仓库协作"
-        description="按账号归并协作关系；同一人增加仓库时只新增该仓授权，不会创建重复身份。"
+        title="任务协作"
+        description="按账号归并外部任务关系；当前按仓库划分协作范围，同一人增加仓库时不会创建重复身份。"
         badge={<Warehouse className="h-5 w-5 text-muted-foreground" />}
       />
 
-      <section className="flex flex-wrap gap-x-10 gap-y-4 border-y py-5" aria-label="仓库协作摘要">
+      <section className="flex flex-wrap gap-x-10 gap-y-4 border-y py-5" aria-label="任务协作摘要">
         <div>
           <p className="text-xs text-muted-foreground">全部协作者</p>
           <p className="mt-1 text-2xl font-semibold">{rows.length}</p>
@@ -62,7 +61,7 @@ export default async function WarehouseCollaborationPage() {
             协作关系
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            暂停某个仓库只会撤销该仓库权限，已完成工作仍保留。
+            暂停某个仓库只会撤销该协作范围，已完成任务记录仍保留。
           </p>
         </div>
         <div className="divide-y border-y">
@@ -102,7 +101,8 @@ export default async function WarehouseCollaborationPage() {
                         <ArrowUpRight className="h-3.5 w-3.5" />
                       </Link>
                       <span className="text-muted-foreground">
-                        {ROLE_LABELS[location.role] ?? location.role}
+                        {WAREHOUSE_ROLE_LABELS[location.role as WarehouseFulfillerRole] ??
+                          location.role}
                       </span>
                       {location.isDefault ? <Badge>默认负责人</Badge> : null}
                       {location.status !== "ACTIVE" ? (
@@ -136,8 +136,8 @@ export default async function WarehouseCollaborationPage() {
             ))
           ) : (
             <div className="py-12 text-center">
-              <p className="font-medium">还没有仓库协作关系</p>
-              <p className="mt-1 text-sm text-muted-foreground">进入具体仓库添加第一位协作人。</p>
+              <p className="font-medium">还没有任务协作关系</p>
+              <p className="mt-1 text-sm text-muted-foreground">进入具体仓库添加第一位任务协作者。</p>
             </div>
           )}
         </div>

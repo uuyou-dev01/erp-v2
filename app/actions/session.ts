@@ -20,6 +20,7 @@ import {
   recordAuthAudit,
   recordLoginFailureAttempt,
 } from "@/lib/auth/security-events";
+import { resolveAuthenticatedDestination } from "@/lib/application/relationship-foundation";
 
 function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
@@ -71,7 +72,6 @@ async function authenticateUser(
         take: 1,
       },
       locationFulfillerAssignments: {
-        where: { status: "ACTIVE" },
         select: { id: true },
         take: 1,
       },
@@ -150,30 +150,29 @@ async function authenticateUser(
     id: user.id,
     email: user.email,
     hasMembership: user.memberships.length > 0,
-    hasWarehouseCollaboration: user.locationFulfillerAssignments.length > 0,
+    hasWarehouseRelationship: user.locationFulfillerAssignments.length > 0,
   };
 }
 
 export async function switchCurrentUser(formData: FormData) {
-  await authenticateUser(formData.get("email"), formData.get("password"));
-
-  redirect("/workbench");
+  const user = await authenticateUser(formData.get("email"), formData.get("password"));
+  redirect(
+    resolveAuthenticatedDestination({
+      hasMembership: user.hasMembership,
+      hasWarehouseRelationship: user.hasWarehouseRelationship,
+    })
+  );
 }
 
 export async function switchCurrentUserAction(formData: FormData) {
   try {
     const user = await authenticateUser(formData.get("email"), formData.get("password"));
     const requestedNext = safeNextPath(formData.get("next"));
-    const destination = user.hasMembership
-      ? (requestedNext ?? "/workbench")
-      : requestedNext?.startsWith("/invite/team/") ||
-          requestedNext?.startsWith("/invite/warehouse/")
-        ? requestedNext
-        : user.hasWarehouseCollaboration
-          ? requestedNext?.startsWith("/collaboration/tasks")
-            ? requestedNext
-            : "/collaboration/tasks"
-          : "/onboarding";
+    const destination = resolveAuthenticatedDestination({
+      requestedNext,
+      hasMembership: user.hasMembership,
+      hasWarehouseRelationship: user.hasWarehouseRelationship,
+    });
     return actionSuccess({ email: user.email, destination });
   } catch (error) {
     return toActionFailure(error, "切换操作人失败，请重试");

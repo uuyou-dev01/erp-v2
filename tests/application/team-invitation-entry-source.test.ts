@@ -52,11 +52,11 @@ describe("team invitation entry", () => {
       expect(panel).not.toContain("router.refresh()");
       expect(panel).toContain("window.location.assign(");
     }
-    expect(warehousePanel).toContain("邀请已接受，正在打开你的发货任务");
+    expect(warehousePanel).toContain("邀请已接受，正在打开你的任务");
     expect(warehousePanel).toContain("此邀请已接受");
     expect(warehousePanel).toContain('const destination = "/collaboration/tasks"');
-    expect(warehousePanel).toContain("接受仓库邀请失败，请重试");
-    expect(loading).toContain("正在加载你的仓库权限和发货任务");
+    expect(warehousePanel).toContain("接受任务邀请失败，请重试");
+    expect(loading).toContain("正在加载你的任务协作关系");
   });
 
   it("keeps accepted warehouse links idempotent and reuses the existing account", () => {
@@ -73,7 +73,7 @@ describe("team invitation entry", () => {
       "tokenHash: null,\n          expiresAt: null,\n          acceptedAt"
     );
     expect(action).toContain("ensureWarehouseRosterLocationAccess");
-    expect(collaborationPage).toContain("同一人增加仓库时只新增该仓授权");
+    expect(collaborationPage).toContain("同一人增加仓库时不会创建重复身份");
     expect(collaborationPage).toContain("个仓库授权");
   });
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   claimCollaborationShippingTaskAction,
+  assignCollaborationShippingTaskAction,
   completeCollaborationShippingTaskAction,
   declineCollaborationShippingTaskAction,
   returnCollaborationShippingTaskAction,
@@ -39,6 +40,7 @@ type WarehouseTaskView = Omit<CollaborationShippingTask, "assigneeName"> & {
   isAssignedToMe?: boolean;
   isCreatedByMe?: boolean;
   isHandoffOffer?: boolean;
+  canDispatch?: boolean;
   transferCandidates?: Array<{ id: string; name: string; email: string }>;
 };
 
@@ -47,10 +49,11 @@ type WorkbenchQueue = "claimable" | "processing" | "created" | "completed";
 const OUTCOME_MESSAGES: Record<string, string> = {
   claimed: "任务已领取，可以开始填写发货结果。",
   returned: "任务已退回委托方。",
-  transferred: "任务已转交给新的仓库负责人。",
+  transferred: "任务已转交给新的任务负责人。",
+  assigned: "任务已指派，等待对方领取。",
   transfer_pending: "转交请求已发送；对方接受前仍由当前执行人负责。",
   handoff_accepted: "转交已接受，现在由你负责这项任务。",
-  declined: "已从你的待领取列表移除，其他仓库协作者仍可领取。",
+  declined: "已从你的待领取列表移除，其他任务协作者仍可领取。",
   withdrawn: "任务已撤回。",
   already_claimed: "任务已被领取或状态已经变化，列表已刷新。",
   already_returned: "任务已经退回或转交，列表已刷新。",
@@ -179,6 +182,23 @@ export function ShippingTaskList({
 
   return (
     <div className="space-y-4">
+      {tasks.some((task) => task.canDispatch) ? (
+        <div className="flex flex-col gap-2 border-y bg-muted/20 px-1 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium">任务负责人视图</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              你可以查看本仓库任务进度并进行指派；客户地址仍只对当前执行人开放。
+            </p>
+          </div>
+          <div className="flex gap-4 text-sm tabular-nums">
+            <span>
+              待领取{" "}
+              {tasks.filter((task) => ["OPEN", "ASSIGNED", "OVERDUE"].includes(task.status)).length}
+            </span>
+            <span>处理中 {tasks.filter((task) => task.status === "IN_PROGRESS").length}</span>
+          </div>
+        </div>
+      ) : null}
       <div className="inline-flex rounded-lg bg-muted p-1" aria-label="任务范围">
         {(mode === "workbench"
           ? [
@@ -256,7 +276,7 @@ export function ShippingTaskList({
               : view === "processing"
                 ? "当前没有处理中的任务"
                 : view === "created"
-                  ? "还没有发起仓库任务"
+                  ? "还没有发起协作任务"
                   : "还没有已完成记录"}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -265,7 +285,7 @@ export function ShippingTaskList({
               : view === "processing"
                 ? "领取任务后会进入这里。"
                 : view === "created"
-                  ? "从订单任务中委托仓库协作者后会显示在这里。"
+                  ? "从订单中委托任务协作者后会显示在这里。"
                   : "完成的协作任务会长期保留在这里。"}
           </p>
         </div>
@@ -289,7 +309,10 @@ export function ShippingTaskList({
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{task.order.orderNumber}</span>
+                  <span>
+                    <span className="block text-[11px] text-muted-foreground">订单发货</span>
+                    <span className="font-medium">{task.order.orderNumber}</span>
+                  </span>
                   <Badge variant={task.status === "IN_PROGRESS" ? "default" : "outline"}>
                     {task.status === "DONE"
                       ? "已完成"
@@ -313,7 +336,7 @@ export function ShippingTaskList({
           {mode === "workbench" && selected ? (
             <button
               type="button"
-              aria-label="关闭仓库任务详情"
+              aria-label="关闭任务详情"
               className="fixed inset-0 z-40 bg-black/20"
               onClick={() => setSelectedId("")}
             />
@@ -331,7 +354,7 @@ export function ShippingTaskList({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label="关闭仓库任务详情"
+                  aria-label="关闭任务详情"
                   className="absolute right-3 top-3"
                   onClick={() => setSelectedId("")}
                 >
@@ -340,7 +363,10 @@ export function ShippingTaskList({
               ) : null}
               <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-5">
                 <div>
-                  <p className="text-xs text-muted-foreground">{selected.organizationName} 委托</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">订单发货</Badge>
+                    <p className="text-xs text-muted-foreground">{selected.organizationName} 委托</p>
+                  </div>
                   <h2 className="mt-1 text-xl font-semibold">订单 {selected.order.orderNumber}</h2>
                   <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground">
                     <MapPin className="h-4 w-4" /> 来源仓库：{selected.location.name} ·{" "}
@@ -387,8 +413,8 @@ export function ShippingTaskList({
                 ) : (
                   <Badge variant="outline">
                     {selected.status === "IN_PROGRESS"
-                      ? `${selected.assigneeName || "仓库负责人"} 处理中`
-                      : `已指派给 ${selected.assigneeName || "仓库负责人"}`}
+                      ? `${selected.assigneeName || "任务负责人"} 处理中`
+                      : `已指派给 ${selected.assigneeName || "任务负责人"}`}
                   </Badge>
                 )}
               </div>
@@ -472,7 +498,7 @@ export function ShippingTaskList({
                         退回任务
                       </Button>
                     ) : null}
-                    {selected.isCreatedByMe ? (
+                    {selected.isCreatedByMe || selected.canDispatch ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -491,7 +517,8 @@ export function ShippingTaskList({
                       </Button>
                     ) : null}
                   </div>
-                  {selected.isCreatedByMe && selected.status === "IN_PROGRESS" ? (
+                  {(selected.isCreatedByMe || selected.canDispatch) &&
+                  selected.status === "IN_PROGRESS" ? (
                     <Input
                       value={withdrawReason}
                       onChange={(event) => setWithdrawReason(event.target.value)}
@@ -499,14 +526,46 @@ export function ShippingTaskList({
                       aria-label="撤回原因"
                     />
                   ) : null}
-                  {selected.status === "IN_PROGRESS" && selected.transferCandidates?.length ? (
+                  {selected.canDispatch &&
+                  ["OPEN", "ASSIGNED", "OVERDUE"].includes(selected.status) &&
+                  selected.transferCandidates?.length ? (
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Select
+                        aria-label="指派给"
+                        value={transferTargetId}
+                        onChange={(event) => setTransferTargetId(event.target.value)}
+                      >
+                        <option value="">选择任务协作者</option>
+                        {selected.transferCandidates.map((candidate) => (
+                          <option key={candidate.id} value={candidate.id}>
+                            {candidate.name}
+                          </option>
+                        ))}
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={pending || !transferTargetId}
+                        onClick={() =>
+                          run(() =>
+                            assignCollaborationShippingTaskAction(selected.id, transferTargetId)
+                          )
+                        }
+                      >
+                        指派任务
+                      </Button>
+                    </div>
+                  ) : null}
+                  {selected.status === "IN_PROGRESS" &&
+                  selected.transferCandidates?.length &&
+                  (selected.isAssignedToMe !== false || selected.canDispatch) ? (
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <Select
                         aria-label="转交给"
                         value={transferTargetId}
                         onChange={(event) => setTransferTargetId(event.target.value)}
                       >
-                        <option value="">选择新的仓库负责人</option>
+                        <option value="">选择新的任务负责人</option>
                         {selected.transferCandidates
                           .filter((candidate) => candidate.id !== selected.assignedToId)
                           .map((candidate) => (
@@ -631,7 +690,7 @@ export function ShippingTaskList({
                 <div className="rounded-lg border bg-muted/30 p-5 text-sm">
                   <p className="font-medium">任务已撤回</p>
                   <p className="mt-1 text-muted-foreground">
-                    此结果会保留在“我发起”中，仓库协作者不再需要处理。
+                    此结果会保留在“我发起”中，任务协作者不再需要处理。
                   </p>
                 </div>
               ) : selected.isAssignedToMe !== false ? (

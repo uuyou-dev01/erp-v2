@@ -184,6 +184,7 @@ model User {
   connectionsResponded         OrganizationConnection[]      @relation("OrganizationConnectionResponderUser")
   locationFulfillerAssignments LocationFulfiller[]           @relation("LocationFulfillerUser")
   locationFulfillerInvitations LocationFulfiller[]           @relation("LocationFulfillerInviter")
+  locationFulfillerEvents      LocationFulfillerEvent[]      @relation("LocationFulfillerEventActor")
   serviceAgreementsAccepted    ServiceAgreement[]            @relation("ServiceAgreementAcceptor")
   workRecords                  WorkRecord[]
   collaborationRequestsCreated CollaborationRequest[]        @relation("CollaborationRequestCreator")
@@ -1224,7 +1225,7 @@ model LocationFulfiller {
   userId         String?
   email          String
   role           String    @default("OPERATOR") // MANAGER, OPERATOR, BACKUP
-  status         String    @default("INVITED") // INVITED, ACTIVE, SUSPENDED
+  status         String    @default("INVITED") // INVITED, ACTIVE, SUSPENDED, ENDED
   isDefault      Boolean   @default(false)
   tokenHash      String?   @unique
   expiresAt      DateTime?
@@ -1234,10 +1235,11 @@ model LocationFulfiller {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  location     Location     @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  user         User?        @relation("LocationFulfillerUser", fields: [userId], references: [id], onDelete: SetNull)
-  invitedBy    User         @relation("LocationFulfillerInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location     Location                 @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  user         User?                    @relation("LocationFulfillerUser", fields: [userId], references: [id], onDelete: SetNull)
+  invitedBy    User                     @relation("LocationFulfillerInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  events       LocationFulfillerEvent[]
 
   @@unique([locationId, email])
   @@index([organizationId, status])
@@ -1245,6 +1247,28 @@ model LocationFulfiller {
   @@index([userId, status])
   @@index([expiresAt])
   @@map("location_fulfillers")
+}
+
+/// 仓库协作关系的追加式生命周期记录。权限以 LocationFulfiller 当前状态为准，
+/// 事件只用于解释是谁、何时、为什么改变了关系。
+model LocationFulfillerEvent {
+  id          String   @id @default(cuid())
+  fulfillerId String
+  eventType   String // INVITED, REOPENED, ACCEPTED, ROLE_CHANGED, SUSPENDED, REACTIVATED, ENDED
+  actorUserId String
+  fromStatus  String?
+  toStatus    String
+  reason      String?  @db.Text
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  fulfiller LocationFulfiller @relation(fields: [fulfillerId], references: [id], onDelete: Cascade)
+  actor     User              @relation("LocationFulfillerEventActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([fulfillerId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("location_fulfiller_events")
 }
 
 /// 仓库节点的运营能力。地区只表示物理位置，能力决定节点能执行哪些动作。

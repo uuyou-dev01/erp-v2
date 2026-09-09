@@ -13,9 +13,10 @@ import { createShipOrderDispatch } from "@/lib/application/collaboration-protoco
 import { notifyUser } from "@/lib/application/notifications";
 import { INCOMPLETE_TASK_STATUSES, TASK_STATUS, TASK_TYPE } from "@/lib/application/tasks";
 import { prisma } from "@/lib/prisma";
+import { COLLABORATION_CAPABILITY } from "@/lib/application/relationship-foundation";
 
-const SHIP_CAPABILITY = "warehouse.ship";
-const MANAGE_CAPABILITY = "warehouse.manage";
+const SHIP_CAPABILITY = COLLABORATION_CAPABILITY.WAREHOUSE_SHIP;
+const DISPATCH_CAPABILITY = COLLABORATION_CAPABILITY.WAREHOUSE_DISPATCH;
 
 function roleHasCapability(role: string | null | undefined, capability: string) {
   return (capabilitiesForLocationFulfillerRole(role) as readonly string[]).includes(capability);
@@ -25,10 +26,7 @@ function taskActionUrl(taskId: string) {
   return `/collaboration/tasks?task=${encodeURIComponent(taskId)}`;
 }
 
-async function eligibleWarehouseUsers(input: {
-  organizationId: string;
-  locationId: string;
-}) {
+async function eligibleWarehouseUsers(input: { organizationId: string; locationId: string }) {
   const roster = await prisma.locationFulfiller.findMany({
     where: {
       organizationId: input.organizationId,
@@ -41,9 +39,7 @@ async function eligibleWarehouseUsers(input: {
   return Array.from(
     new Set(
       roster.flatMap((entry) =>
-        entry.userId && roleHasCapability(entry.role, SHIP_CAPABILITY)
-          ? [entry.userId]
-          : []
+        entry.userId && roleHasCapability(entry.role, SHIP_CAPABILITY) ? [entry.userId] : []
       )
     )
   );
@@ -71,7 +67,7 @@ export async function notifyShipOrderQueue(input: {
         refType: "CUSTOMER_ORDER",
         refId: input.orderId,
         type: "WAREHOUSE_TASK_AVAILABLE",
-        title: "仓库有新的待领取发货任务",
+        title: "当前协作范围有新的订单发货任务",
         body: input.title,
         actionUrl: taskActionUrl(input.taskId),
         dedupeKey: `warehouse-task:${input.taskId}:${input.notificationKey ?? "available"}`,
@@ -199,10 +195,10 @@ export async function claimShipOrderTask(input: { taskId: string; userId: string
 }
 
 export async function declineShipOrderTask(input: { taskId: string; userId: string }) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const dispatch = await tx.taskDispatch.findUnique({
       where: { taskId: input.taskId },
-      include: { request: true },
+      include: { request: true, task: true },
     });
     if (!dispatch) throw new Error("任务派发不存在");
     await respondToCollaborationRequest(tx, {
@@ -219,8 +215,120 @@ export async function declineShipOrderTask(input: { taskId: string; userId: stri
         resolvedById: input.userId,
       },
     });
-    return { outcome: "declined" as const };
+    if (dispatch.targetScopeType === "USER" && dispatch.capabilityLocationId && dispatch.task) {
+      await tx.taskDispatch.update({
+        where: { id: dispatch.id },
+        data: {
+          targetScopeType: "LOCATION",
+          targetScopeRef: dispatch.capabilityLocationId,
+        },
+      });
+      await tx.task.update({
+        where: { id: dispatch.task.id },
+        data: { status: TASK_STATUS.OPEN, assignedToId: null, assignedAt: null },
+      });
+    }
+    return {
+      outcome: "declined" as const,
+      task: dispatch.task,
+      locationId: dispatch.capabilityLocationId,
+    };
   });
+  if (result.task && result.locationId) {
+    await notifyShipOrderQueue({
+      taskId: result.task.id,
+      organizationId: result.task.organizationId,
+      storeId: result.task.storeId,
+      locationId: result.locationId,
+      orderId: result.task.refId,
+      actorId: input.userId,
+      title: `指派已拒绝，任务返回仓库队列：${result.task.title}`,
+      notificationKey: `assignment-declined:${Date.now()}`,
+    });
+  }
+  return { outcome: result.outcome };
+}
+
+export async function assignQueuedShipOrderTask(input: {
+  taskId: string;
+  actorUserId: string;
+  targetUserId: string;
+}) {
+  const result = await prisma.$transaction(async (tx) => {
+    const dispatch = await tx.taskDispatch.findUnique({
+      where: { taskId: input.taskId },
+      include: { task: true },
+    });
+    if (!dispatch?.task || !dispatch.task.fulfillmentLocationId) {
+      throw new Error("任务派发或来源仓库不存在");
+    }
+    if (
+      dispatch.status !== "QUEUED" ||
+      !["OPEN", "ASSIGNED", "OVERDUE"].includes(dispatch.task.status)
+    ) {
+      throw new Error("只有尚未领取的任务可以指派");
+    }
+    const [manager, target] = await Promise.all([
+      tx.locationFulfiller.findFirst({
+        where: {
+          organizationId: dispatch.task.organizationId,
+          locationId: dispatch.task.fulfillmentLocationId,
+          userId: input.actorUserId,
+          status: "ACTIVE",
+        },
+        select: { role: true },
+      }),
+      tx.locationFulfiller.findFirst({
+        where: {
+          organizationId: dispatch.task.organizationId,
+          locationId: dispatch.task.fulfillmentLocationId,
+          userId: input.targetUserId,
+          status: "ACTIVE",
+        },
+        select: { role: true },
+      }),
+    ]);
+    if (!roleHasCapability(manager?.role, DISPATCH_CAPABILITY)) {
+      throw new Error("只有这个仓库的负责人可以指派任务");
+    }
+    if (!roleHasCapability(target?.role, SHIP_CAPABILITY)) {
+      throw new Error("接收人不具备这个仓库的发货能力");
+    }
+    await tx.taskDispatch.update({
+      where: { id: dispatch.id },
+      data: {
+        targetScopeType: "USER",
+        targetScopeRef: input.targetUserId,
+        capabilityLocationId: dispatch.task.fulfillmentLocationId,
+      },
+    });
+    await tx.task.update({
+      where: { id: dispatch.task.id },
+      data: {
+        status: TASK_STATUS.ASSIGNED,
+        assignedToId: input.targetUserId,
+        delegatedToId: input.targetUserId,
+        assignedAt: new Date(),
+      },
+    });
+    return dispatch.task;
+  });
+
+  await notifyUser({
+    organizationId: result.organizationId,
+    storeId: result.storeId,
+    recipientId: input.targetUserId,
+    actorId: input.actorUserId,
+    taskId: result.id,
+    refType: "CUSTOMER_ORDER",
+    refId: result.refId,
+    type: "WAREHOUSE_TASK_ASSIGNED",
+    title: "任务负责人向你指派了订单发货任务",
+    body: result.title,
+    actionUrl: taskActionUrl(result.id),
+    dedupeKey: `warehouse-task:${result.id}:assigned:${input.targetUserId}:${Date.now()}`,
+  });
+  return { outcome: "assigned" as const };
 }
 
 export async function returnShipOrderTask(input: { taskId: string; userId: string }) {
@@ -324,12 +432,22 @@ export async function requestShipOrderHandoff(input: {
     if (!dispatch?.task || !dispatch.task.fulfillmentLocationId) {
       throw new Error("任务派发或来源仓库不存在");
     }
+    const manager = await tx.locationFulfiller.findFirst({
+      where: {
+        organizationId: dispatch.task.organizationId,
+        locationId: dispatch.task.fulfillmentLocationId,
+        userId: input.actorUserId,
+        status: "ACTIVE",
+      },
+      select: { role: true },
+    });
     if (
       dispatch.status !== "CLAIMED" ||
       (dispatch.claimedByUserId !== input.actorUserId &&
-        dispatch.task.createdById !== input.actorUserId)
+        dispatch.task.createdById !== input.actorUserId &&
+        !roleHasCapability(manager?.role, DISPATCH_CAPABILITY))
     ) {
-      throw new Error("只有当前执行人或委托方可以发起转交");
+      throw new Error("只有当前执行人、委托方或任务负责人可以发起转交");
     }
     const target = await tx.locationFulfiller.findFirst({
       where: {
@@ -388,7 +506,7 @@ export async function requestShipOrderHandoff(input: {
     refType: "COLLABORATION_REQUEST",
     refId: result.handoff.id,
     type: "TASK_HANDOFF_REQUESTED",
-    title: "有人向你转交仓库发货任务",
+    title: "有人向你转交订单发货任务",
     body: result.task.title,
     actionUrl: taskActionUrl(result.task.id),
     dedupeKey: `handoff:${result.handoff.id}:${input.targetUserId}`,
@@ -465,7 +583,7 @@ async function hasWarehouseManageCapability(
     where: { ...input, status: "ACTIVE" },
     select: { role: true },
   });
-  return roleHasCapability(roster?.role, MANAGE_CAPABILITY);
+  return roleHasCapability(roster?.role, DISPATCH_CAPABILITY);
 }
 
 export async function withdrawShipOrderTask(input: {

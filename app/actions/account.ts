@@ -8,7 +8,7 @@ import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import {
   ACTIVE_ORGANIZATION_COOKIE,
   ACTIVE_STORE_COOKIE,
-  requireUserContext,
+  requireAuthenticatedUser,
   USER_CONTEXT_COOKIE,
 } from "@/lib/auth/user-context";
 import { recordAuthAudit } from "@/lib/auth/security-events";
@@ -23,13 +23,13 @@ function passwordString(value: FormDataEntryValue | null) {
 
 export async function updateMyProfileAction(formData: FormData) {
   try {
-    const context = await requireUserContext();
+    const user = await requireAuthenticatedUser();
     const name = cleanString(formData.get("name"));
     if (!name) throw new Error("请输入姓名");
     if (name.length > 50) throw new Error("姓名不能超过 50 个字符");
 
     await prisma.user.update({
-      where: { id: context.userId },
+      where: { id: user.id },
       data: { name },
     });
     revalidatePath("/settings/personal");
@@ -41,7 +41,7 @@ export async function updateMyProfileAction(formData: FormData) {
 
 export async function changeMyPasswordAction(formData: FormData) {
   try {
-    const context = await requireUserContext();
+    const authenticatedUser = await requireAuthenticatedUser();
     const currentPassword = passwordString(formData.get("currentPassword"));
     const newPassword = passwordString(formData.get("newPassword"));
     const confirmPassword = passwordString(formData.get("confirmPassword"));
@@ -52,7 +52,7 @@ export async function changeMyPasswordAction(formData: FormData) {
     if (newPassword === currentPassword) throw new Error("新密码不能与当前密码相同");
 
     const user = await prisma.user.findUnique({
-      where: { id: context.userId },
+      where: { id: authenticatedUser.id },
       select: { password: true },
     });
     if (!user || !(await verifyPassword(currentPassword, user.password))) {
@@ -61,18 +61,18 @@ export async function changeMyPasswordAction(formData: FormData) {
 
     await prisma.$transaction(async (tx) => {
       await tx.user.update({
-        where: { id: context.userId },
+        where: { id: authenticatedUser.id },
         data: { password: await hashPassword(newPassword), sessionVersion: { increment: 1 } },
       });
       await tx.authToken.updateMany({
-        where: { userId: context.userId, consumedAt: null },
+        where: { userId: authenticatedUser.id, consumedAt: null },
         data: { consumedAt: new Date() },
       });
     });
     await recordAuthAudit({
       eventType: "PASSWORD_CHANGED",
       outcome: "SUCCESS",
-      userId: context.userId,
+      userId: authenticatedUser.id,
     });
     const cookieStore = await cookies();
     cookieStore.delete(USER_CONTEXT_COOKIE);

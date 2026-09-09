@@ -1,19 +1,33 @@
 import { PrismaClient } from "@prisma/client";
+import { createPublicCode } from "../lib/auth/invitation-token";
 
 const prisma = new PrismaClient();
 const DEMO_STORE_ID = "store_1";
 
 async function resetDemoBusinessData(storeId: string) {
-  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { organizationId: true } });
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { organizationId: true },
+  });
   if (store?.organizationId) {
     await prisma.notificationOutbox.deleteMany({ where: { organizationId: store.organizationId } });
-    await prisma.notificationPreference.deleteMany({ where: { organizationId: store.organizationId } });
+    await prisma.notificationPreference.deleteMany({
+      where: { organizationId: store.organizationId },
+    });
     await prisma.pushSubscription.deleteMany({ where: { organizationId: store.organizationId } });
     await prisma.companionDevice.deleteMany({ where: { organizationId: store.organizationId } });
-    await prisma.mobileActionRequest.deleteMany({ where: { organizationId: store.organizationId } });
-    await prisma.mobileRateLimitBucket.deleteMany({ where: { organizationId: store.organizationId } });
-    await prisma.notification.deleteMany({ where: { organizationId: store.organizationId, OR: [{ storeId }, { storeId: null }] } });
-    await prisma.activityLog.deleteMany({ where: { organizationId: store.organizationId, OR: [{ storeId }, { storeId: null }] } });
+    await prisma.mobileActionRequest.deleteMany({
+      where: { organizationId: store.organizationId },
+    });
+    await prisma.mobileRateLimitBucket.deleteMany({
+      where: { organizationId: store.organizationId },
+    });
+    await prisma.notification.deleteMany({
+      where: { organizationId: store.organizationId, OR: [{ storeId }, { storeId: null }] },
+    });
+    await prisma.activityLog.deleteMany({
+      where: { organizationId: store.organizationId, OR: [{ storeId }, { storeId: null }] },
+    });
   }
   await prisma.task.deleteMany({ where: { storeId } });
   await prisma.mobileAsset.deleteMany({ where: { storeId } });
@@ -692,8 +706,16 @@ async function main() {
     create: {
       name: "默认经营主体",
       code: "main",
+      collaborationCode: createPublicCode("ORG"),
     },
   });
+
+  if (!/^ORG-[23456789A-HJ-NP-Z]{6,12}$/.test(organization.collaborationCode)) {
+    await prisma.organization.update({
+      where: { id: organization.id },
+      data: { collaborationCode: createPublicCode("ORG") },
+    });
+  }
 
   // Create default store
   const store = await prisma.store.upsert({

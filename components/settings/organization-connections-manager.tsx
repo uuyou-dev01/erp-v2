@@ -169,7 +169,6 @@ export function OrganizationConnectionsManager({
           <div className="text-right">
             <Button
               type="button"
-              disabled={availablePartners.length === 0}
               onClick={() => {
                 setError(null);
                 setConnectionDialogOpen(true);
@@ -178,9 +177,6 @@ export function OrganizationConnectionsManager({
               <Plus className="h-4 w-4" />
               发起连接
             </Button>
-            {availablePartners.length === 0 ? (
-              <p className="mt-1.5 text-xs text-muted-foreground">暂无可连接的合作方</p>
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -192,20 +188,19 @@ export function OrganizationConnectionsManager({
           if (!nextOpen) setError(null);
         }}
         title="发起企业连接"
-        description="选择一个合作方，再使用对方的企业协作码确认身份。"
+        description="使用对方的企业协作码确认身份；关联本地合作方档案是可选的。"
         size="md"
         closeDisabled={pending}
       >
         <form onSubmit={request} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="connection-partner">从哪个合作方建立连接</Label>
+            <Label htmlFor="connection-partner">关联本地合作方（可选）</Label>
             <Select
               id="connection-partner"
               value={partnerId}
               onChange={(event) => setPartnerId(event.target.value)}
-              required
             >
-              <option value="">请选择未连接的合作方</option>
+              <option value="">暂不关联合作方档案</option>
               {availablePartners.map((partner) => (
                 <option key={partner.id} value={partner.id}>
                   {partner.name} · {partner.code}
@@ -259,7 +254,7 @@ export function OrganizationConnectionsManager({
             >
               取消
             </Button>
-            <Button type="submit" disabled={pending || !preview || !partnerId}>
+            <Button type="submit" disabled={pending || !preview}>
               <Link2 className="h-4 w-4" />
               发送连接请求
             </Button>

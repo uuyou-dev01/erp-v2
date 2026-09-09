@@ -25,7 +25,7 @@ export default async function NotificationsPage() {
     <div className="space-y-4">
       <PageHeader
         title="通知"
-        description="查看当前账号在各企业中的任务指派、仓库协作和异常提醒。"
+        description="查看当前账号在各企业中的任务指派、外部任务协作和异常提醒。"
       />
       <NotificationList notifications={rows} />
     </div>

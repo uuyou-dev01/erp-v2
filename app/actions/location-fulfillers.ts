@@ -1,6 +1,7 @@
 "use server";
 
 import Decimal from "decimal.js";
+import type { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { logActivity } from "@/lib/application/activity-log";
@@ -14,8 +15,11 @@ import { hasRoleAtLeast, ROLES } from "@/lib/auth/permissions";
 import { createInvitationToken, hashInvitationToken } from "@/lib/auth/invitation-token";
 import { requireAuthenticatedUser, requireUserContext } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
-
-const FULFILLER_ROLES = new Set(["MANAGER", "OPERATOR", "BACKUP"]);
+import {
+  normalizeWarehouseFulfillerRole,
+  WAREHOUSE_FULFILLER_STATUS,
+  WAREHOUSE_RELATIONSHIP_EVENT,
+} from "@/lib/application/relationship-foundation";
 
 function normalizeEmail(value: string) {
   const email = value.trim().toLowerCase();
@@ -24,15 +28,82 @@ function normalizeEmail(value: string) {
 }
 
 function normalizeRole(value?: string) {
-  const role = value?.trim().toUpperCase() || "OPERATOR";
-  if (!FULFILLER_ROLES.has(role)) throw new Error("请选择有效的仓库角色");
-  return role;
+  return normalizeWarehouseFulfillerRole(value);
+}
+
+async function recordFulfillerEvent(
+  tx: Prisma.TransactionClient,
+  input: {
+    fulfillerId: string;
+    eventType: string;
+    actorUserId: string;
+    fromStatus?: string | null;
+    toStatus: string;
+    reason?: string | null;
+    metadata?: Prisma.InputJsonValue;
+  }
+) {
+  return tx.locationFulfillerEvent.create({ data: input });
+}
+
+async function revokeFulfillerWork(
+  tx: Prisma.TransactionClient,
+  input: { locationId: string; storeId: string; userId: string }
+) {
+  const claimedTasks = await tx.task.findMany({
+    where: {
+      fulfillmentLocationId: input.locationId,
+      assignedToId: input.userId,
+      status: { in: [...INCOMPLETE_TASK_STATUSES] },
+    },
+    select: { id: true, dispatch: { select: { requestId: true } } },
+  });
+  const taskIds = claimedTasks.map((task) => task.id);
+  const requestIds = claimedTasks
+    .map((task) => task.dispatch?.requestId)
+    .filter((id): id is string => Boolean(id));
+  await tx.task.updateMany({
+    where: {
+      id: { in: taskIds },
+    },
+    data: {
+      assignedToId: null,
+      delegatedToId: null,
+      assignedAt: null,
+      startedAt: null,
+      status: "OPEN",
+    },
+  });
+  await tx.taskDispatch.updateMany({
+    where: { taskId: { in: taskIds }, status: "CLAIMED" },
+    data: {
+      targetScopeType: "LOCATION",
+      targetScopeRef: input.locationId,
+      status: "QUEUED",
+      claimedByUserId: null,
+      claimedAt: null,
+    },
+  });
+  await tx.collaborationRequest.updateMany({
+    where: { id: { in: requestIds }, status: "ACCEPTED" },
+    data: { status: "OPEN", resolvedAt: null, resolutionCode: null },
+  });
+  const internalAccess = await tx.storeAccess.findFirst({
+    where: { storeId: input.storeId, userId: input.userId },
+    select: { id: true },
+  });
+  if (!internalAccess) {
+    await revokeWarehouseRosterLocationAccess(tx, {
+      locationId: input.locationId,
+      userId: input.userId,
+    });
+  }
 }
 
 async function requireLocationRosterManager(locationId: string) {
   const context = await requireUserContext();
   if (!hasRoleAtLeast(context.role, ROLES.ADMIN)) {
-    throw new Error("只有企业管理员可以维护仓库发货人");
+    throw new Error("只有企业管理员可以维护任务协作者");
   }
   const location = await prisma.location.findFirst({
     where: {
@@ -45,14 +116,14 @@ async function requireLocationRosterManager(locationId: string) {
     },
     select: { id: true, name: true, storeId: true, operatorOrganizationId: true },
   });
-  if (!location) throw new Error("仓库不存在或无权维护发货人");
+  if (!location) throw new Error("仓库不存在或无权维护任务协作者");
   return { context, location };
 }
 
 async function requireOrganizationRosterViewer() {
   const context = await requireUserContext();
   if (!hasRoleAtLeast(context.role, ROLES.MANAGER)) {
-    throw new Error("只有企业运营负责人可以查看仓库协作关系");
+    throw new Error("只有企业运营负责人可以查看任务协作关系");
   }
   return context;
 }
@@ -275,6 +346,10 @@ export async function addExistingLocationFulfillerAction(input: {
     const candidateUser = candidate.user;
 
     const saved = await prisma.$transaction(async (tx) => {
+      const previous = await tx.locationFulfiller.findUnique({
+        where: { locationId_email: { locationId: location.id, email: candidate.email } },
+        select: { status: true },
+      });
       if (isDefault) {
         await tx.locationFulfiller.updateMany({
           where: { locationId: location.id },
@@ -311,6 +386,16 @@ export async function addExistingLocationFulfillerAction(input: {
         locationId: location.id,
         userId: candidateUserId,
       });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: fulfiller.id,
+        eventType: previous
+          ? WAREHOUSE_RELATIONSHIP_EVENT.REACTIVATED
+          : WAREHOUSE_RELATIONSHIP_EVENT.ACCEPTED,
+        actorUserId: context.userId,
+        fromStatus: previous?.status ?? null,
+        toStatus: WAREHOUSE_FULFILLER_STATUS.ACTIVE,
+        metadata: { role, reusedFromAnotherLocation: true },
+      });
       return fulfiller;
     });
 
@@ -342,7 +427,7 @@ export async function addExistingLocationFulfillerAction(input: {
         refId: location.id,
         type: "LOCATION_ACCESS_ADDED",
         title: `你已被添加到 ${location.name}`,
-        body: "无需再次接受邀请，现在可以处理该仓库分配给你的发货任务。",
+        body: "无需再次接受邀请，现在可以处理该仓库范围内分配给你的任务。",
         actionUrl: "/collaboration/tasks",
         dedupeKey: `location-access:${location.id}:${candidateUserId}`,
       }),
@@ -377,7 +462,7 @@ export async function createLocationFulfillerInvitationAction(input: {
     }
 
     const saved = await prisma.$transaction(async (tx) => {
-      return tx.locationFulfiller.upsert({
+      const fulfiller = await tx.locationFulfiller.upsert({
         where: { locationId_email: { locationId: location.id, email } },
         update: {
           role,
@@ -402,6 +487,17 @@ export async function createLocationFulfillerInvitationAction(input: {
         },
         select: { id: true },
       });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: fulfiller.id,
+        eventType: activeExisting
+          ? WAREHOUSE_RELATIONSHIP_EVENT.REOPENED
+          : WAREHOUSE_RELATIONSHIP_EVENT.INVITED,
+        actorUserId: context.userId,
+        fromStatus: activeExisting?.status ?? null,
+        toStatus: WAREHOUSE_FULFILLER_STATUS.INVITED,
+        metadata: { role, isDefault },
+      });
+      return fulfiller;
     });
 
     await logActivity({
@@ -480,7 +576,7 @@ async function notifyOpenLocationTasks(input: {
       refType: "CUSTOMER_ORDER",
       refId: task.refId,
       type: "WAREHOUSE_TASK_AVAILABLE",
-      title: "仓库有待领取的发货任务",
+      title: "当前协作范围有新的订单发货任务",
       body: task.title,
       actionUrl: `/collaboration/tasks?task=${encodeURIComponent(task.id)}`,
       dedupeKey: `warehouse-task:${task.id}:available`,
@@ -551,6 +647,13 @@ export async function acceptLocationFulfillerInvitationAction(token: string) {
         locationId: invitation.locationId,
         userId: user.id,
       });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: invitation.id,
+        eventType: WAREHOUSE_RELATIONSHIP_EVENT.ACCEPTED,
+        actorUserId: user.id,
+        fromStatus: WAREHOUSE_FULFILLER_STATUS.INVITED,
+        toStatus: WAREHOUSE_FULFILLER_STATUS.ACTIVE,
+      });
       return true;
     });
 
@@ -620,10 +723,20 @@ export async function updateLocationFulfillerRoleAction(
     const role = normalizeRole(nextRole);
     const fulfiller = await prisma.locationFulfiller.findFirst({
       where: { id: fulfillerId, locationId },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true, role: true, status: true },
     });
-    if (!fulfiller) throw new Error("仓库协作者不存在");
-    await prisma.locationFulfiller.update({ where: { id: fulfiller.id }, data: { role } });
+    if (!fulfiller) throw new Error("任务协作者不存在");
+    await prisma.$transaction(async (tx) => {
+      await tx.locationFulfiller.update({ where: { id: fulfiller.id }, data: { role } });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: fulfiller.id,
+        eventType: WAREHOUSE_RELATIONSHIP_EVENT.ROLE_CHANGED,
+        actorUserId: context.userId,
+        fromStatus: fulfiller.status,
+        toStatus: fulfiller.status,
+        metadata: { fromRole: fulfiller.role, toRole: role },
+      });
+    });
     await logActivity({
       organizationId: context.organizationId,
       storeId: location.storeId,
@@ -633,12 +746,12 @@ export async function updateLocationFulfillerRoleAction(
       refId: location.id,
       before: { fulfillerId, role: fulfiller.role },
       after: { fulfillerId, role },
-      message: `已调整 ${fulfiller.email} 在 ${location.name} 的仓库角色`,
+      message: `已调整 ${fulfiller.email} 在 ${location.name} 的任务角色`,
     });
     revalidateLocationRoster(location.id);
     return actionSuccess({ fulfillerId, role });
   } catch (error) {
-    return toActionFailure(error, "更新仓库角色失败，请重试");
+    return toActionFailure(error, "更新任务角色失败，请重试");
   }
 }
 
@@ -646,8 +759,12 @@ export async function suspendLocationFulfillerAction(locationId: string, fulfill
   try {
     const { context, location } = await requireLocationRosterManager(locationId);
     const fulfiller = await prisma.locationFulfiller.findFirst({
-      where: { id: fulfillerId, locationId },
-      select: { id: true, userId: true, email: true },
+      where: {
+        id: fulfillerId,
+        locationId,
+        status: { in: [WAREHOUSE_FULFILLER_STATUS.ACTIVE, WAREHOUSE_FULFILLER_STATUS.INVITED] },
+      },
+      select: { id: true, userId: true, email: true, status: true },
     });
     if (!fulfiller) throw new Error("发货人不存在");
     await prisma.$transaction(async (tx) => {
@@ -660,31 +777,19 @@ export async function suspendLocationFulfillerAction(locationId: string, fulfill
           suspendedAt: new Date(),
         },
       });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: fulfiller.id,
+        eventType: WAREHOUSE_RELATIONSHIP_EVENT.SUSPENDED,
+        actorUserId: context.userId,
+        fromStatus: fulfiller.status,
+        toStatus: WAREHOUSE_FULFILLER_STATUS.SUSPENDED,
+      });
       if (fulfiller.userId) {
-        await tx.task.updateMany({
-          where: {
-            fulfillmentLocationId: locationId,
-            assignedToId: fulfiller.userId,
-            status: { in: [...INCOMPLETE_TASK_STATUSES] },
-          },
-          data: {
-            assignedToId: null,
-            delegatedToId: null,
-            assignedAt: null,
-            startedAt: null,
-            status: "OPEN",
-          },
+        await revokeFulfillerWork(tx, {
+          locationId,
+          storeId: location.storeId,
+          userId: fulfiller.userId,
         });
-        const internalAccess = await tx.storeAccess.findFirst({
-          where: { storeId: location.storeId, userId: fulfiller.userId },
-          select: { id: true },
-        });
-        if (!internalAccess) {
-          await revokeWarehouseRosterLocationAccess(tx, {
-            locationId,
-            userId: fulfiller.userId,
-          });
-        }
       }
     });
     await logActivity({
@@ -701,5 +806,120 @@ export async function suspendLocationFulfillerAction(locationId: string, fulfill
     return actionSuccess({ fulfillerId });
   } catch (error) {
     return toActionFailure(error, "暂停发货人失败，请重试");
+  }
+}
+
+export async function reactivateLocationFulfillerAction(locationId: string, fulfillerId: string) {
+  try {
+    const { context, location } = await requireLocationRosterManager(locationId);
+    const fulfiller = await prisma.locationFulfiller.findFirst({
+      where: {
+        id: fulfillerId,
+        locationId,
+        status: WAREHOUSE_FULFILLER_STATUS.SUSPENDED,
+        userId: { not: null },
+      },
+      select: { id: true, userId: true, email: true },
+    });
+    if (!fulfiller?.userId) throw new Error("只有已绑定账号的暂停关系可以直接恢复");
+    await prisma.$transaction(async (tx) => {
+      await tx.locationFulfiller.update({
+        where: { id: fulfiller.id },
+        data: { status: WAREHOUSE_FULFILLER_STATUS.ACTIVE, suspendedAt: null },
+      });
+      await ensureWarehouseRosterLocationAccess(tx, {
+        locationId,
+        userId: fulfiller.userId!,
+      });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: fulfiller.id,
+        eventType: WAREHOUSE_RELATIONSHIP_EVENT.REACTIVATED,
+        actorUserId: context.userId,
+        fromStatus: WAREHOUSE_FULFILLER_STATUS.SUSPENDED,
+        toStatus: WAREHOUSE_FULFILLER_STATUS.ACTIVE,
+      });
+    });
+    await notifyOpenLocationTasks({
+      locationId,
+      userId: fulfiller.userId,
+      actorId: context.userId,
+      organizationId: context.organizationId,
+    });
+    await notifyUser({
+      organizationId: context.organizationId,
+      storeId: location.storeId,
+      recipientId: fulfiller.userId,
+      actorId: context.userId,
+      refType: "LOCATION",
+      refId: locationId,
+      type: "LOCATION_ACCESS_REACTIVATED",
+      title: `${location.name} 的协作已恢复`,
+      body: "你可以继续处理这个仓库范围内的任务。",
+      actionUrl: "/collaboration",
+      dedupeKey: `location-reactivated:${fulfiller.id}:${Date.now()}`,
+    });
+    revalidateLocationRoster(locationId);
+    return actionSuccess({ fulfillerId });
+  } catch (error) {
+    return toActionFailure(error, "恢复任务协作失败，请重试");
+  }
+}
+
+export async function endMyLocationFulfillerRelationshipAction(
+  fulfillerId: string,
+  reason?: string
+) {
+  try {
+    const user = await requireAuthenticatedUser();
+    const fulfiller = await prisma.locationFulfiller.findFirst({
+      where: {
+        id: fulfillerId,
+        userId: user.id,
+        status: { in: [WAREHOUSE_FULFILLER_STATUS.ACTIVE, WAREHOUSE_FULFILLER_STATUS.SUSPENDED] },
+      },
+      include: { location: { select: { id: true, storeId: true, name: true } } },
+    });
+    if (!fulfiller) throw new Error("协作关系不存在或已经结束");
+    const endReason = reason?.trim() || "协作者主动结束合作";
+    await prisma.$transaction(async (tx) => {
+      await tx.locationFulfiller.update({
+        where: { id: fulfiller.id },
+        data: {
+          status: WAREHOUSE_FULFILLER_STATUS.ENDED,
+          isDefault: false,
+          tokenHash: null,
+          expiresAt: null,
+          suspendedAt: new Date(),
+        },
+      });
+      await revokeFulfillerWork(tx, {
+        locationId: fulfiller.location.id,
+        storeId: fulfiller.location.storeId,
+        userId: user.id,
+      });
+      await recordFulfillerEvent(tx, {
+        fulfillerId: fulfiller.id,
+        eventType: WAREHOUSE_RELATIONSHIP_EVENT.ENDED,
+        actorUserId: user.id,
+        fromStatus: fulfiller.status,
+        toStatus: WAREHOUSE_FULFILLER_STATUS.ENDED,
+        reason: endReason,
+      });
+    });
+    await logActivity({
+      organizationId: fulfiller.organizationId,
+      storeId: fulfiller.location.storeId,
+      actorId: user.id,
+      action: "LOCATION_FULFILLER_ENDED",
+      refType: "LOCATION",
+      refId: fulfiller.location.id,
+      before: { fulfillerId, status: fulfiller.status },
+      after: { status: WAREHOUSE_FULFILLER_STATUS.ENDED, reason: endReason },
+      message: `${user.name || user.email} 已结束 ${fulfiller.location.name} 的任务协作`,
+    });
+    revalidateLocationRoster(fulfiller.location.id);
+    return actionSuccess({ fulfillerId, destination: "/collaboration" });
+  } catch (error) {
+    return toActionFailure(error, "结束任务协作失败，请重试");
   }
 }

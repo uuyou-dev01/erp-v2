@@ -35,7 +35,7 @@ const fixture = {
 };
 
 async function shot(page: Page, name: string) {
-  await expect(page.getByText("正在加载你的仓库权限和发货任务...")).toHaveCount(0);
+  await expect(page.getByText(/正在加载你的任务协作关系/)).toHaveCount(0);
   await expect(page.getByText("加载工作台...")).toHaveCount(0);
   await page.screenshot({
     path: path.join(EVIDENCE_DIR, name),
@@ -258,7 +258,7 @@ test.describe("release scenarios 09 and 10", () => {
         orderNumber,
         createdById: fixture.ownerId,
         locationId: fixture.locationId,
-        description: `RC 10 ${label} 外部个人仓库协作验收`,
+        description: `RC 10 ${label} 外部个人任务协作验收`,
       });
       return { orderNumber, taskId: dispatch.task.id };
     }
@@ -432,7 +432,7 @@ test.describe("release scenarios 09 and 10", () => {
     await shot(collaboratorB.page, "10-13-external-b-handoff-accepted-rc2.png");
 
     await collaboratorA.page.reload();
-    await expect(collaboratorA.page.getByRole("heading", { name: "我的发货任务" })).toBeVisible();
+    await expect(collaboratorA.page.getByRole("heading", { name: "我的任务" })).toBeVisible();
     await expect(
       collaboratorA.page.getByRole("heading", {
         name: `订单 ${fixture.transferOrderNumber}`,
@@ -474,7 +474,7 @@ test.describe("release scenarios 09 and 10", () => {
     await shot(ownerPage, "10-17-owner-task-withdrawn-rc2.png");
 
     await collaboratorB.page.reload();
-    await expect(collaboratorB.page.getByRole("heading", { name: "我的发货任务" })).toBeVisible();
+    await expect(collaboratorB.page.getByRole("heading", { name: "我的任务" })).toBeVisible();
     await expect(
       collaboratorB.page.getByRole("heading", {
         name: `订单 ${fixture.withdrawOrderNumber}`,

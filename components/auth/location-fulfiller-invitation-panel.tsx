@@ -6,12 +6,10 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, Loader2, ShieldCheck } from "lucide-react";
 import { acceptLocationFulfillerInvitationAction } from "@/app/actions/location-fulfillers";
 import { Button } from "@/components/ui/button";
-
-const ROLE_LABELS: Record<string, string> = {
-  MANAGER: "仓库主管",
-  OPERATOR: "发货操作员",
-  BACKUP: "备用发货人",
-};
+import {
+  WAREHOUSE_ROLE_LABELS,
+  type WarehouseFulfillerRole,
+} from "@/lib/application/relationship-foundation";
 
 export function LocationFulfillerInvitationPanel({
   token,
@@ -62,7 +60,7 @@ export function LocationFulfillerInvitationPanel({
           if (currentPath !== destination) window.location.assign(destination);
         }, 1800);
       } catch (error) {
-        setError(error instanceof Error ? error.message : "接受仓库邀请失败，请重试");
+        setError(error instanceof Error ? error.message : "接受任务邀请失败，请重试");
       }
     });
   }
@@ -77,7 +75,8 @@ export function LocationFulfillerInvitationPanel({
         </p>
         <p className="mt-4 text-sm">受邀邮箱：{invitation.email}</p>
         <p className="mt-1 text-sm">
-          身份：{ROLE_LABELS[invitation.role] ?? invitation.role}
+          身份：
+          {WAREHOUSE_ROLE_LABELS[invitation.role as WarehouseFulfillerRole] ?? invitation.role}
           {invitation.isDefault ? "（默认负责人）" : ""}
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -87,7 +86,9 @@ export function LocationFulfillerInvitationPanel({
 
       <div className="flex gap-2 rounded-md bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <p>接受后只能查看分配给你的收件、商品数量和发货资料，并回填物流信息。</p>
+        <p>
+          接受后会建立长期的外部任务协作关系，之后的新任务仍会进入“我的协作”。当前协作范围是这个仓库，但关系并不限定为发货，也不会让你加入对方企业或开放其他业务数据。
+        </p>
       </div>
 
       {acceptedDestination ? (
@@ -95,7 +96,7 @@ export function LocationFulfillerInvitationPanel({
           className="space-y-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"
           role="status"
         >
-          <p className="font-medium">邀请已接受，正在打开你的发货任务…</p>
+          <p className="font-medium">邀请已接受，正在打开你的任务…</p>
           <p className="text-xs leading-5 text-emerald-800">
             如果页面没有自动跳转，可以使用下面的入口继续。
           </p>
@@ -103,7 +104,7 @@ export function LocationFulfillerInvitationPanel({
             href={acceptedDestination}
             className="inline-flex font-medium underline underline-offset-4"
           >
-            立即进入发货任务
+            立即进入我的任务
           </Link>
         </div>
       ) : invitation.status === "ACTIVE" ? (
@@ -113,14 +114,14 @@ export function LocationFulfillerInvitationPanel({
         >
           <p className="font-medium">此邀请已接受</p>
           <p className="text-xs leading-5 text-emerald-800">
-            仓库授权已经添加到受邀账号，重复打开链接不会重复创建身份或授权。
+            当前任务协作范围已经添加到受邀账号，重复打开链接不会重复创建身份或授权。
           </p>
           {accountMatches ? (
             <Link
               href={destination}
               className="inline-flex font-medium underline underline-offset-4"
             >
-              进入发货任务
+              进入我的任务
             </Link>
           ) : (
             <Link
@@ -135,19 +136,26 @@ export function LocationFulfillerInvitationPanel({
         <div className="space-y-1" role="alert">
           <p className="text-sm font-medium text-destructive">邀请已过期</p>
           <p className="text-xs leading-5 text-muted-foreground">
-            此链接已超过有效期，请联系仓库管理员重新生成邀请。
+            此链接已超过有效期，请联系邀请方重新生成邀请。
           </p>
         </div>
       ) : invitation.status === "SUSPENDED" ? (
         <div className="space-y-1" role="status">
-          <p className="text-sm font-medium">仓库权限已暂停</p>
+          <p className="text-sm font-medium">任务协作已暂停</p>
           <p className="text-xs leading-5 text-muted-foreground">
-            这条协作关系目前不可用，如需恢复请联系仓库管理员。
+            这条协作关系目前不可用，如需恢复请联系邀请方。
+          </p>
+        </div>
+      ) : invitation.status === "ENDED" ? (
+        <div className="space-y-1" role="status">
+          <p className="text-sm font-medium">任务协作已结束</p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            历史任务记录仍会保留；重新合作需要邀请方发送新邀请。
           </p>
         </div>
       ) : invitation.status !== "INVITED" ? (
         <p role="alert" className="text-sm text-destructive">
-          此邀请已失效，请联系仓库管理员重新生成。
+          此邀请已失效，请联系邀请方重新生成。
         </p>
       ) : !currentEmail ? (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -183,7 +191,7 @@ export function LocationFulfillerInvitationPanel({
           ) : (
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
           )}
-          {pending ? "正在接受..." : "接受并进入发货任务"}
+          {pending ? "正在接受..." : "接受并进入我的任务"}
         </Button>
       )}
       {error ? (

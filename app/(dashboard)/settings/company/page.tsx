@@ -85,11 +85,11 @@ export default async function CompanySettingsPage() {
             icon: Store,
           },
           {
-            title: "仓库协作",
+            title: "任务协作",
             description:
               warehouseCollaboratorCount > 0
-                ? `${warehouseCollaboratorCount} 位协作者，集中查看其仓库范围、角色和工作记录。`
-                : "集中查看外部人员的仓库范围、角色和工作记录。",
+                ? `${warehouseCollaboratorCount} 位协作者，集中查看其任务范围、角色和工作记录。`
+                : "集中查看外部人员的任务范围、角色和工作记录。",
             href: "/settings/warehouse-collaboration",
             icon: Warehouse,
           },

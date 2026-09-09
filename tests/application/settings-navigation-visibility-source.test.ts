@@ -37,13 +37,13 @@ describe("settings navigation visibility source", () => {
     expect(header).toContain('<Settings2 className="h-3.5 w-3.5 text-muted-foreground" />');
   });
 
-  it("exposes warehouse collaboration as an enterprise relationship view", () => {
+  it("exposes task collaboration as an enterprise relationship view", () => {
     const company = source("app/(dashboard)/settings/company/page.tsx");
     const overview = source("app/(dashboard)/settings/warehouse-collaboration/page.tsx");
-    expect(company).toContain('title: "仓库协作"');
+    expect(company).toContain('title: "任务协作"');
     expect(company).toContain('href: "/settings/warehouse-collaboration"');
-    expect(overview).toContain("外部仓库协作者");
-    expect(overview).toContain("暂停某个仓库只会撤销该仓库权限");
+    expect(overview).toContain("外部任务协作者");
+    expect(overview).toContain("暂停某个仓库只会撤销该协作范围");
   });
 
   it("links shipment warehouses to settings with a preserved return path", () => {

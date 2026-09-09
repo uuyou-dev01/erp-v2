@@ -6,6 +6,7 @@ import {
   addExistingLocationFulfillerAction,
   createLocationFulfillerInvitationAction,
   setDefaultLocationFulfillerAction,
+  reactivateLocationFulfillerAction,
   suspendLocationFulfillerAction,
   updateLocationFulfillerRoleAction,
 } from "@/app/actions/location-fulfillers";
@@ -17,6 +18,10 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Check, Copy, Plus, UserPlus, Users, X } from "lucide-react";
+import {
+  WAREHOUSE_ROLE_LABELS,
+  type WarehouseFulfillerRole,
+} from "@/lib/application/relationship-foundation";
 
 type RosterItem = {
   id: string;
@@ -36,17 +41,12 @@ type ExistingCandidate = {
   locations: Array<{ id: string; name: string }>;
 };
 
-const ROLE_LABELS: Record<string, string> = {
-  MANAGER: "仓库主管",
-  OPERATOR: "发货操作员",
-  BACKUP: "备用发货人",
-};
-
 const STATUS_LABELS: Record<string, string> = {
   INVITED: "待接受",
   EXPIRED: "邀请已过期",
   ACTIVE: "已启用",
   SUSPENDED: "已暂停",
+  ENDED: "已结束",
 };
 
 function rosterStatus(person: RosterItem) {
@@ -157,11 +157,11 @@ export function LocationFulfillerManager({
           <div className="min-w-0 space-y-1.5">
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
-              仓库协作人
+              任务协作者
               {roster.length > 0 ? <Badge variant="secondary">{roster.length} 人</Badge> : null}
             </CardTitle>
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-              当前开放打包 / 发货协作；每个仓库的角色和默认负责人可独立调整。
+              当前仓库可开放订单处理、信息确认、盘点等任务协作；每个仓库的角色和默认负责人可独立调整。
             </p>
           </div>
           {roster.length > 0 ? (
@@ -176,14 +176,14 @@ export function LocationFulfillerManager({
             {roster.length === 0 ? (
               <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
                 <div className="space-y-1">
-                  <p className="text-sm font-medium">还没有仓库协作人</p>
+                  <p className="text-sm font-medium">还没有任务协作者</p>
                   <p className="text-sm text-muted-foreground">
-                    添加第一位协作者后，可以把这个仓库的发货任务交给对方处理。
+                    添加第一位协作者后，可以把这个仓库范围内的任务交给对方处理。
                   </p>
                 </div>
                 <Button type="button" size="sm" onClick={openInvitationDialog}>
                   <UserPlus className="h-4 w-4" />
-                  添加第一位协作人
+                  添加协作人
                 </Button>
               </div>
             ) : (
@@ -203,13 +203,14 @@ export function LocationFulfillerManager({
                       </Badge>
                     </div>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {person.email} · {ROLE_LABELS[person.role] ?? person.role}
+                      {person.email} ·
+                      {WAREHOUSE_ROLE_LABELS[person.role as WarehouseFulfillerRole] ?? person.role}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2 self-end sm:self-auto">
                     {person.status === "ACTIVE" ? (
                       <Select
-                        aria-label={`调整 ${person.user?.name || person.email} 的仓库角色`}
+                        aria-label={`调整 ${person.user?.name || person.email} 的任务角色`}
                         className="h-9 w-32"
                         defaultValue={person.role}
                         disabled={pending}
@@ -223,9 +224,8 @@ export function LocationFulfillerManager({
                           )
                         }
                       >
-                        <option value="OPERATOR">发货操作员</option>
-                        <option value="MANAGER">仓库主管</option>
-                        <option value="BACKUP">备用发货人</option>
+                        <option value="OPERATOR">任务协作者</option>
+                        <option value="MANAGER">任务负责人</option>
                       </Select>
                     ) : null}
                     {person.status === "ACTIVE" && !person.isDefault ? (
@@ -241,7 +241,7 @@ export function LocationFulfillerManager({
                         设为默认
                       </Button>
                     ) : null}
-                    {person.status !== "SUSPENDED" ? (
+                    {person.status === "ACTIVE" || person.status === "INVITED" ? (
                       <Button
                         type="button"
                         size="sm"
@@ -252,6 +252,18 @@ export function LocationFulfillerManager({
                         }
                       >
                         暂停权限
+                      </Button>
+                    ) : person.status === "SUSPENDED" && person.user ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={pending}
+                        onClick={() =>
+                          run(() => reactivateLocationFulfillerAction(locationId, person.id))
+                        }
+                      >
+                        恢复协作
                       </Button>
                     ) : null}
                   </div>
@@ -286,14 +298,14 @@ export function LocationFulfillerManager({
         <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
           <div className="space-y-1">
             <h2 id="fulfiller-dialog-title" className="text-base font-semibold">
-              {invitationUrl ? "邀请链接已生成" : "添加仓库协作人"}
+              {invitationUrl ? "邀请链接已生成" : "添加任务协作者"}
             </h2>
             <p
               id="fulfiller-dialog-description"
               className="text-sm leading-5 text-muted-foreground"
             >
               {invitationUrl
-                ? "把链接发给对方；对方接受后即可处理这个仓库的发货任务。"
+                ? "把链接发给对方；对方接受后即可处理这个仓库范围内的任务。"
                 : `为 ${locationName} 生成一条专属邀请链接。`}
             </p>
           </div>
@@ -304,7 +316,7 @@ export function LocationFulfillerManager({
             className="h-9 w-9 shrink-0"
             onClick={closeInvitationDialog}
             disabled={pending}
-            aria-label="关闭添加仓库协作人弹窗"
+            aria-label="关闭添加任务协作者弹窗"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -370,7 +382,7 @@ export function LocationFulfillerManager({
                 <div>
                   <p className="text-sm font-medium">从已有协作者中添加</p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    对方已经接受过本企业的仓库协作，可直接授权当前仓库，无需重新发邀请。
+                    对方已经接受过本企业的任务协作，可直接授权当前仓库，无需重新发邀请。
                   </p>
                 </div>
                 <Select
@@ -388,9 +400,8 @@ export function LocationFulfillerManager({
                 </Select>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Select name="role" defaultValue="OPERATOR" disabled={pending}>
-                    <option value="OPERATOR">发货操作员</option>
-                    <option value="MANAGER">仓库主管</option>
-                    <option value="BACKUP">备用发货人</option>
+                    <option value="OPERATOR">任务协作者</option>
+                    <option value="MANAGER">任务负责人</option>
                   </Select>
                   <Checkbox name="isDefault" label="设为默认负责人" disabled={pending} />
                 </div>
@@ -423,14 +434,13 @@ export function LocationFulfillerManager({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="fulfiller-role">仓库角色</Label>
+                <Label htmlFor="fulfiller-role">任务角色</Label>
                 <Select id="fulfiller-role" name="role" defaultValue="OPERATOR" disabled={pending}>
-                  <option value="OPERATOR">发货操作员</option>
-                  <option value="MANAGER">仓库主管</option>
-                  <option value="BACKUP">备用发货人</option>
+                  <option value="OPERATOR">任务协作者</option>
+                  <option value="MANAGER">任务负责人</option>
                 </Select>
                 <p className="text-xs leading-5 text-muted-foreground">
-                  角色决定对方在这个仓库中承担的职责，不会授予其他仓库权限。
+                  任务负责人可以查看本仓库任务进度并指派任务；任务协作者只处理任务。两者都不会获得其他仓库、成本或企业管理权限。
                 </p>
               </div>
               <Checkbox
