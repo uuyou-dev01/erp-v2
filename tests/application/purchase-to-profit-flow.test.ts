@@ -164,11 +164,7 @@ describe("purchase to profit business flow", () => {
       unitPrice: "100",
     });
 
-    await updatePurchaseOrderStatus(
-      purchase.id,
-      "ORDERED",
-      new Date("2026-06-22T01:00:00.000Z"),
-    );
+    await updatePurchaseOrderStatus(purchase.id, "ORDERED", new Date("2026-06-22T01:00:00.000Z"));
 
     await receivePurchaseOrder({
       purchaseOrderId: purchase.id,
@@ -205,8 +201,8 @@ describe("purchase to profit business flow", () => {
       externalOrderNo: `SO_${runId}`,
     });
 
-    expect(sale.success).toBe(true);
     if (!sale.success) throw new Error(sale.error);
+    expect(sale.success).toBe(true);
 
     await markOrderShipped(sale.orderId, {
       trackingNo: `TRK_${runId}`,
@@ -264,11 +260,13 @@ describe("purchase to profit business flow", () => {
       select: { workCode: true, quantity: true, unit: true },
       orderBy: { occurredAt: "asc" },
     });
-    expect(workRecords.map((record) => ({
-      workCode: record.workCode,
-      quantity: record.quantity.toString(),
-      unit: record.unit,
-    }))).toEqual([
+    expect(
+      workRecords.map((record) => ({
+        workCode: record.workCode,
+        quantity: record.quantity.toString(),
+        unit: record.unit,
+      }))
+    ).toEqual([
       { workCode: "RECEIVE_PURCHASE", quantity: "2", unit: "件" },
       { workCode: "SHIP_ORDER", quantity: "1", unit: "件" },
     ]);
@@ -290,7 +288,7 @@ describe("purchase to profit business flow", () => {
     const result = await updatePurchaseOrderStatus(
       `missing_${runId}`,
       "ORDERED",
-      new Date("2026-06-22T01:00:00.000Z"),
+      new Date("2026-06-22T01:00:00.000Z")
     );
 
     expect(result.success).toBe(false);
@@ -469,8 +467,47 @@ describe("purchase to profit business flow", () => {
     expect(settled.platformFee.toString()).toBe("12");
     expect(settled.shippingFee.toString()).toBe("5");
     expect(settled.netRevenue?.toString()).toBe("103");
+    expect(settled.settlementFxRate?.toString()).toBe("1");
+    expect(settled.settlementBaseCurrency).toBe("CNY");
+    expect(settled.settlementNetRevenueBase?.toString()).toBe("103");
     expect(settled.lines[0].lineAmount.toString()).toBe("120");
     expect(settled.lines[0].unitPrice?.toString()).toBe("120");
+  });
+
+  it("stores the exact foreign-currency rate used at settlement", async () => {
+    const orderResult = await createCustomerOrderAction({
+      storeId,
+      orderNumber: `SO_SETTLE_FX_${runId}`,
+      platformId,
+      customerName: "FX Settlement Buyer",
+      orderDate: new Date("2026-06-22T01:00:00.000Z"),
+      currency: "JPY",
+    });
+    expect(orderResult.success).toBe(true);
+    if (!orderResult.success) throw new Error(orderResult.error);
+
+    const lineResult = await addOrderLineAction({
+      orderId: orderResult.id,
+      skuId,
+      quantity: "1",
+      unitPrice: "2400",
+    });
+    expect(lineResult.success).toBe(true);
+
+    const result = await settleCustomerOrderAction(orderResult.id, {
+      platformFee: "240",
+      shippingFee: "520",
+      fxRate: "0.048",
+    });
+    expect(result.success).toBe(true);
+
+    const settled = await prisma.customerOrder.findUniqueOrThrow({
+      where: { id: orderResult.id },
+    });
+    expect(settled.settlementFxRate?.toString()).toBe("0.048");
+    expect(settled.settlementBaseCurrency).toBe("CNY");
+    expect(settled.netRevenue?.toString()).toBe("1640");
+    expect(settled.settlementNetRevenueBase?.toString()).toBe("78.72");
   });
 
   it("rejects a negative actual sale price without mutating settlement totals", async () => {
@@ -598,17 +635,14 @@ describe("purchase to profit business flow", () => {
     });
     const lineTotal = settled.lines.reduce(
       (sum, line) => sum.plus(new Decimal(line.lineAmount.toString())),
-      new Decimal(0),
+      new Decimal(0)
     );
 
     expect(settled.subtotal.toString()).toBe("100");
     expect(settled.totalPaid.toString()).toBe("100");
     expect(settled.netRevenue?.toString()).toBe("85");
     expect(lineTotal.toFixed(4)).toBe("100.0000");
-    expect(settled.lines.map((line) => line.lineAmount.toString())).toEqual([
-      "33.3333",
-      "66.6667",
-    ]);
+    expect(settled.lines.map((line) => line.lineAmount.toString())).toEqual(["33.3333", "66.6667"]);
   });
 
   it("returns a structured failure when settling a missing customer order", async () => {
@@ -630,7 +664,7 @@ async function expectLotQuantity(lotId: string, expected: string) {
   });
   const quantity = ledgers.reduce(
     (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
-    new Decimal(0),
+    new Decimal(0)
   );
   expect(quantity.toString()).toBe(expected);
 }

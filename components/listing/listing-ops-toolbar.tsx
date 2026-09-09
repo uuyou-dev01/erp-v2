@@ -25,6 +25,9 @@ interface ListingOpsToolbarProps {
   query?: string;
   showStockSort?: boolean;
   scopeLabel?: string;
+  showStatusFilter?: boolean;
+  showSoldOutStatus?: boolean;
+  showRiskFilter?: boolean;
 }
 
 function withParam(
@@ -88,6 +91,9 @@ export function ListingOpsToolbar({
   query,
   showStockSort = false,
   scopeLabel,
+  showStatusFilter = true,
+  showSoldOutStatus = true,
+  showRiskFilter = true,
 }: ListingOpsToolbarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -220,7 +226,15 @@ export function ListingOpsToolbar({
         </div>
       </div>
 
-      <div className="grid gap-2 border-t px-3 py-3 lg:grid-cols-[1fr_140px_140px_150px]">
+      <div
+        className={`grid gap-2 border-t px-3 py-3 ${
+          showStatusFilter && showRiskFilter
+            ? "lg:grid-cols-[1fr_140px_140px_150px]"
+            : showStatusFilter || showRiskFilter
+              ? "lg:grid-cols-[1fr_140px_150px]"
+              : "lg:grid-cols-[1fr_150px]"
+        }`}
+      >
         <form onSubmit={submitSearch} className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -236,31 +250,37 @@ export function ListingOpsToolbar({
           </Button>
         </form>
 
-        <Select
-          value={status ?? ""}
-          className="h-9"
-          onChange={(event) =>
-            router.push(withParam(searchParams, basePath, "status", event.target.value))
-          }
-        >
-          <option value="">全部状态</option>
-          <option value="ACTIVE">在售中</option>
-          <option value="DELISTED">已下架</option>
-          <option value="SOLD_OUT">已售罄</option>
-        </Select>
+        {showStatusFilter ? (
+          <Select
+            value={status ?? ""}
+            className="h-9"
+            aria-label="Listing 状态"
+            onChange={(event) =>
+              router.push(withParam(searchParams, basePath, "status", event.target.value))
+            }
+          >
+            <option value="">全部状态</option>
+            <option value="ACTIVE">在售中</option>
+            <option value="DELISTED">已下架</option>
+            {showSoldOutStatus ? <option value="SOLD_OUT">已售罄</option> : null}
+          </Select>
+        ) : null}
 
-        <Select
-          value={risk ?? ""}
-          className="h-9"
-          onChange={(event) =>
-            router.push(withParam(searchParams, basePath, "risk", event.target.value))
-          }
-        >
-          <option value="">全部风险</option>
-          <option value="lowStock">库存不足</option>
-          <option value="unpriced">未定价</option>
-          <option value="stale">长期未售</option>
-        </Select>
+        {showRiskFilter ? (
+          <Select
+            value={risk ?? ""}
+            className="h-9"
+            aria-label="Listing 风险"
+            onChange={(event) =>
+              router.push(withParam(searchParams, basePath, "risk", event.target.value))
+            }
+          >
+            <option value="">全部风险</option>
+            <option value="lowStock">库存不足</option>
+            <option value="unpriced">未定价</option>
+            <option value="stale">长期未售</option>
+          </Select>
+        ) : null}
 
         <Select
           value={sort ?? (showStockSort ? "stockDesc" : "listedAt")}

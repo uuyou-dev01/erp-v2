@@ -187,6 +187,15 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
     );
     return {
       ...item,
+      metadata: {
+        ...item.metadata,
+        ...(task.metadata &&
+        typeof task.metadata === "object" &&
+        !Array.isArray(task.metadata) &&
+        task.metadata.bundleSale === true
+          ? { bundleSale: true }
+          : {}),
+      },
       taskId: task.id,
       taskStatus: task.status,
       taskStatusLabel: TASK_STATUS_LABELS[task.status] ?? task.status,
@@ -196,6 +205,7 @@ async function attachTaskMetadata(storeId: string, items: WorkItem[]): Promise<W
         : null,
       taskCreatedById: task.createdById,
       taskCreatedByName: userNameById.get(task.createdById) ?? "系统",
+      taskCreatedAt: task.createdAt.toISOString(),
       taskDueAt: task.dueAt?.toISOString() ?? null,
       taskFulfillmentLocationId: task.fulfillmentLocationId,
       taskFulfillmentLocationName: task.fulfillmentLocationId
@@ -401,7 +411,7 @@ export async function bulkUpdatePurchaseOrderLogistics(
       if (!order) throw new Error("采购单不存在");
       const shippingCost = normalizeLogisticsCostInput(
         { amount: payload.shippingCost, currency: payload.shippingCurrency },
-        order.currency,
+        order.currency
       );
       const shippedAt = new Date();
       await markPurchaseAsShipped({

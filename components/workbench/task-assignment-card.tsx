@@ -54,14 +54,23 @@ export function TaskAssignmentCard({
   const fulfillmentLocationLabel = item.taskFulfillmentLocationNames?.length
     ? item.taskFulfillmentLocationNames.join("、")
     : item.taskFulfillmentLocationName;
+  const isBundleSale = item.metadata?.bundleSale === true;
+  const totalQuantity = (item.lineItems ?? []).reduce(
+    (total, line) => total + Number(line.quantity ?? 0),
+    0
+  );
 
   return (
     <section className="rounded-lg border bg-muted/30 p-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-medium text-foreground">任务委托</p>
+          <p className="text-xs font-medium text-foreground">
+            {isBundleSale ? "合并发货任务委托" : "任务委托"}
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {fulfillmentLocationLabel
+            {isBundleSale
+              ? `${item.lineItems?.length ?? 0} 种 SKU、共 ${totalQuantity} 件作为一个包裹，统一指派给一名负责人。`
+              : fulfillmentLocationLabel
               ? `仅显示具备 ${fulfillmentLocationLabel} 对应任务权限的人员。`
               : "指派后，对方会收到站内通知并可在“我的任务”中看到。"}
           </p>

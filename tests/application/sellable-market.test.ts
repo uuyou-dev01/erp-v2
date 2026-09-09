@@ -6,6 +6,7 @@ import {
   fulfillmentMarketsForLocation,
   isPlatformTargetForMarket,
   locationMatchesMarket,
+  locationIsInMarket,
   locationMatchesPlatformMarket,
 } from "@/lib/application/sellable-market";
 
@@ -54,6 +55,8 @@ describe("sellable market rules", () => {
     expect(fulfillmentMarketsForLocation(shanghaiWarehouse)).toEqual(["JP"]);
     expect(locationMatchesMarket(shanghaiWarehouse, "JP")).toBe(true);
     expect(locationMatchesMarket(shanghaiWarehouse, "CN")).toBe(false);
+    expect(locationIsInMarket(shanghaiWarehouse, "CN")).toBe(true);
+    expect(locationIsInMarket(shanghaiWarehouse, "JP")).toBe(false);
     expect(
       locationMatchesPlatformMarket(shanghaiWarehouse, { code: "MERCARI", country: "JP" })
     ).toBe(true);
@@ -129,5 +132,26 @@ describe("sellable market rules", () => {
       sellableQty: 2,
       isPrimary: false,
     });
+  });
+
+  it("keeps cross-border-capable stock in the warehouse's physical market only", () => {
+    const summaries = buildSellableMarketSummaries({
+      sellableLocations: [
+        {
+          locationId: "jp-can-ship-cn",
+          code: "WH-JP",
+          name: "日本仓",
+          region: "JP_TOKYO",
+          type: "WAREHOUSE",
+          fulfillableMarkets: ["JP", "CN"],
+          qty: 6,
+        },
+      ],
+      inTransitLocations: [],
+      itemUnits: [],
+    });
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ market: "JP", sellableQty: 6 });
   });
 });

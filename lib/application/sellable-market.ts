@@ -123,6 +123,22 @@ export function locationMatchesMarket(
 }
 
 /**
+ * 判断库存的物理归属市场。仓库能配送到哪些国家不会改变库存所在地，
+ * 例如日本仓即使配置了中国配送线路，也仍只属于日本库存。
+ */
+export function locationIsInMarket(
+  location: {
+    region?: string | null;
+    code?: string | null;
+    name?: string | null;
+  },
+  market: SellableMarketCode
+) {
+  if (market === "GLOBAL") return true;
+  return inferMarketFromLocation(location) === market;
+}
+
+/**
  * 返回一个库存节点可服务的销售目的地。
  * 新数据以能力 + 客户配送线路为准；未加载履约关系的旧调用回退到物理地区，
  * 以便迁移期间保持兼容，但业务查询应主动加载 shippingLanesFrom。
@@ -214,11 +230,10 @@ export function buildSellableMarketSummaries(input: {
   };
 
   for (const location of input.sellableLocations) {
-    for (const market of fulfillmentMarketsForLocation(location)) {
-      const current = ensure(market);
-      current.sellableQty += location.qty;
-      current.locationNames.add(`${location.code} ${location.name}`.trim());
-    }
+    const market = inferMarketFromLocation(location);
+    const current = ensure(market);
+    current.sellableQty += location.qty;
+    current.locationNames.add(`${location.code} ${location.name}`.trim());
   }
 
   for (const location of input.inTransitLocations) {
@@ -228,17 +243,13 @@ export function buildSellableMarketSummaries(input: {
   }
 
   for (const unit of input.itemUnits) {
-    const markets = unit.sellable
-      ? (unit.fulfillableMarkets ?? [
-          inferMarketFromLocation({ region: unit.locationRegion, name: unit.locationName }),
-        ])
-      : [inferMarketFromLocation({ region: unit.locationRegion, name: unit.locationName })];
-    for (const market of markets) {
-      if (!isSellableMarketCode(market)) continue;
-      const current = ensure(market);
-      if (unit.sellable) {
-        current.locationNames.add(unit.locationName);
-      }
+    const market = inferMarketFromLocation({
+      region: unit.locationRegion,
+      name: unit.locationName,
+    });
+    const current = ensure(market);
+    if (unit.sellable) {
+      current.locationNames.add(unit.locationName);
     }
   }
 

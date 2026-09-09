@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { delistListingAction } from "@/app/actions/listings";
+import { delistListingAction, relistListingAction } from "@/app/actions/listings";
 import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { QuickSellButton } from "@/components/listing/quick-sell-button";
 import type { ListingOpsItem, ListingOpsRisk } from "@/components/listing/listing-ops-types";
@@ -12,13 +13,14 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ProductImage } from "@/components/ui/product-image";
 import { TableCell, TableRow } from "@/components/ui/table";
-import { AlertCircle, AlertTriangle, PowerOff } from "lucide-react";
+import { AlertCircle, AlertTriangle, Pencil, PowerOff, RotateCcw } from "lucide-react";
 
 interface ListingOpsCardProps {
   listing: ListingOpsItem;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelection?: () => void;
+  returnTo?: string;
 }
 
 function statusLabel(status: string) {
@@ -50,9 +52,11 @@ export function ListingOpsCard({
   selectionMode = false,
   selected = false,
   onToggleSelection,
+  returnTo = "/listing",
 }: ListingOpsCardProps) {
   const router = useRouter();
   const [delisting, setDelisting] = useState(false);
+  const [relisting, setRelisting] = useState(false);
   const [confirmDelistOpen, setConfirmDelistOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -71,6 +75,23 @@ export function ListingOpsCard({
       setActionError(error instanceof Error ? error.message : "下架失败，请重试");
     } finally {
       setDelisting(false);
+    }
+  };
+
+  const handleRelist = async () => {
+    setActionError(null);
+    setRelisting(true);
+    try {
+      const result = await relistListingAction(listing.id);
+      if (!result.success) {
+        setActionError(result.error);
+        return;
+      }
+      router.refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "再次上架失败，请重试");
+    } finally {
+      setRelisting(false);
     }
   };
 
@@ -183,19 +204,40 @@ export function ListingOpsCard({
                 />
               ) : null}
               {listing.status === "ACTIVE" && !selectionMode ? (
+                <>
+                  <Button asChild variant="outline" size="sm" className="h-8">
+                    <Link href={`/listing/${listing.id}?returnTo=${encodeURIComponent(returnTo)}`}>
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      修改
+                    </Link>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => {
+                      setActionError(null);
+                      setConfirmDelistOpen(true);
+                    }}
+                    disabled={delisting}
+                  >
+                    <PowerOff className="mr-1 h-3.5 w-3.5" />
+                    {delisting ? "下架中..." : "下架"}
+                  </Button>
+                </>
+              ) : null}
+              {["DELISTED", "SOLD_OUT"].includes(listing.status) && !selectionMode ? (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   className="h-8"
-                  onClick={() => {
-                    setActionError(null);
-                    setConfirmDelistOpen(true);
-                  }}
-                  disabled={delisting}
+                  disabled={relisting}
+                  onClick={() => void handleRelist()}
                 >
-                  <PowerOff className="mr-1 h-3.5 w-3.5" />
-                  {delisting ? "下架中..." : "下架"}
+                  <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                  {relisting ? "上架中..." : "再次上架"}
                 </Button>
               ) : null}
             </div>

@@ -63,6 +63,7 @@ export interface WorkItem {
   title: string;
   subtitle?: string;
   skuCode?: string;
+  imageUrl?: string | null;
   currentStatus: string;
   currentStatusLabel: string;
   primaryAction: PrimaryAction;
@@ -77,6 +78,7 @@ export interface WorkItem {
   taskAssignedToName?: string | null;
   taskCreatedById?: string | null;
   taskCreatedByName?: string | null;
+  taskCreatedAt?: string | null;
   taskDueAt?: string | null;
   taskFulfillmentLocationId?: string | null;
   taskFulfillmentLocationName?: string | null;
@@ -111,6 +113,7 @@ export interface WorkItemLine {
   id: string;
   title: string;
   skuCode?: string;
+  imageUrl?: string | null;
   quantity?: string;
   unitPrice?: string;
   lineAmount?: string;

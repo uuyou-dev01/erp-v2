@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { createClientId } from "@/lib/client-id";
 
 type PlatformOption = {
   id: string;
@@ -34,7 +35,7 @@ export function ResaleListingForm({
   initialData?: SerializedResaleListing;
 }) {
   const router = useRouter();
-  const [createIdempotencyKey] = useState(() => `resale-create:${globalThis.crypto.randomUUID()}`);
+  const [createIdempotencyKey] = useState(() => createClientId("resale-create"));
   const sourceOffer = supplyOffer ?? initialData?.supplyOffer;
   const offerItems = sourceOffer?.items ?? [];
   const initialOfferItem =

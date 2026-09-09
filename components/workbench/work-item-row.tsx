@@ -14,6 +14,7 @@ import {
   Store,
   Truck,
   ClipboardCheck,
+  Layers3,
   type LucideIcon,
 } from "lucide-react";
 
@@ -143,6 +144,7 @@ export function WorkItemRow({
   const tracking = trackingLabel(item);
   const physicalStateLabel =
     typeof item.metadata?.physicalStateLabel === "string" ? item.metadata.physicalStateLabel : null;
+  const isBundleSale = item.metadata?.bundleSale === true;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -170,9 +172,18 @@ export function WorkItemRow({
           className="h-4 w-4 rounded border-input"
         />
       )}
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background">
-        <Icon className={cn("h-3.5 w-3.5", meta.className)} />
-      </span>
+      {item.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={item.imageUrl}
+          alt={`${item.title} 商品图`}
+          className="h-11 w-11 shrink-0 rounded-md border bg-background object-cover"
+        />
+      ) : (
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background">
+          <Icon className={cn("h-3.5 w-3.5", meta.className)} />
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium">{item.title}</span>
@@ -190,6 +201,15 @@ export function WorkItemRow({
               {physicalStateLabel ?? LIFECYCLE_LABELS[item.lifecycleStage]}
             </Badge>
           )}
+          {isBundleSale ? (
+            <Badge
+              variant="outline"
+              className="h-5 gap-1 border-violet-200 bg-violet-50 px-1.5 text-[10px] font-normal text-violet-700"
+            >
+              <Layers3 className="h-3 w-3" />
+              合并发货 · {lineItems.length} 种
+            </Badge>
+          ) : null}
           {item.taskId && (
             <Badge
               variant="outline"
@@ -217,14 +237,25 @@ export function WorkItemRow({
                 key={line.id}
                 className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground"
               >
-                <span className="min-w-0 truncate">{line.title}</span>
+                <span className="flex min-w-0 items-center gap-2 truncate">
+                  {lineItems.length > 1 && line.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={line.imageUrl}
+                      alt=""
+                      className="h-7 w-7 shrink-0 rounded border bg-background object-cover"
+                    />
+                  ) : null}
+                  <span className="truncate">{line.title}</span>
+                </span>
                 <span className="shrink-0 tabular-nums">
-                  x{compactNumber(line.quantity)} · {compactNumber(line.unitPrice)}
+                  x{compactNumber(line.quantity)}
+                  {line.unitPrice ? ` · ${compactNumber(line.unitPrice)}` : ""}
                 </span>
               </div>
             ))}
             {hiddenLineCount > 0 && (
-              <p className="text-xs text-muted-foreground">还有 {hiddenLineCount} 个购入明细...</p>
+              <p className="text-xs text-muted-foreground">还有 {hiddenLineCount} 个商品明细...</p>
             )}
           </div>
         )}

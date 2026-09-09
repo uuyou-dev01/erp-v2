@@ -14,7 +14,15 @@ import {
 } from "@/app/actions/consolidations";
 import type { TransferInventoryCandidate } from "@/app/actions/transfer-shipments";
 import { ConsolidationTimeline } from "./consolidation-timeline";
-import { AlertTriangle, ArrowRight, CheckCircle2, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  Copy,
+  Package,
+  Trash2,
+} from "lucide-react";
 import { BackButton } from "@/components/shared/back-button";
 import { ConsolidationInventoryEditor } from "./consolidation-inventory-editor";
 
@@ -34,6 +42,7 @@ interface Batch {
     quantity: string;
     displayTitle: string;
     skuCode: string | null;
+    imageUrl: string | null;
     sourceReference: string;
     inventoryIssue: {
       code: string;
@@ -44,6 +53,11 @@ interface Batch {
   }>;
   fromLocation?: { id: string; name: string } | null;
   toLocation?: { id: string; name: string } | null;
+  arrivalCollaboration: {
+    recipientName: string | null;
+    taskStatus: string | null;
+    completedAt: string | null;
+  };
 }
 
 interface LocationOption {
@@ -89,9 +103,33 @@ export function ConsolidationBatchDetail({
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [confirmingRepair, setConfirmingRepair] = useState(false);
   const [removingLineId, setRemovingLineId] = useState<string | null>(null);
+  const [manifestCopied, setManifestCopied] = useState(false);
   const inventoryIssues = batch.lines.filter((line) => line.inventoryIssue);
   const routeEditable = batch.status === "OPEN" || batch.status === "SEALED";
   const routeReady = Boolean(batch.fromLocation && batch.toLocation);
+  const manifestText = [
+    `集运到仓清单 ${batch.id.slice(0, 8)}`,
+    `路线：${batch.fromLocation?.name ?? "起运仓"} → ${batch.toLocation?.name ?? "目的仓"}`,
+    trackingNo.trim() ? `物流单号：${trackingNo.trim()}` : null,
+    carrier.trim() ? `承运商：${carrier.trim()}` : null,
+    "内容物：",
+    ...batch.lines.map(
+      (line) => `- ${line.skuCode ? `${line.skuCode} ` : ""}${line.displayTitle} × ${line.quantity}`
+    ),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const copyManifest = async () => {
+    setStatusError(null);
+    try {
+      await navigator.clipboard.writeText(manifestText);
+      setManifestCopied(true);
+      window.setTimeout(() => setManifestCopied(false), 1800);
+    } catch {
+      setStatusError("复制失败，请直接截图左侧的批次商品清单");
+    }
+  };
 
   const run = (status: "SEALED" | "SHIPPED" | "RECEIVED") => {
     startTransition(async () => {
@@ -227,20 +265,34 @@ export function ConsolidationBatchDetail({
                   key={line.id}
                   className="flex items-center justify-between gap-4 px-4 py-3 text-sm"
                 >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{line.displayTitle}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {line.skuCode ? `SKU ${line.skuCode} · ` : ""}
-                      {SOURCE_LABELS[line.sourceType] ?? "其他来源"} {line.sourceReference}
-                    </p>
-                    {line.inventoryIssue ? (
-                      <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-destructive">
-                        <span>{line.inventoryIssue.currentLocationName}</span>
-                        <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                        <span>{line.inventoryIssue.expectedLocationName}</span>
-                        <span>· 缺 {line.inventoryIssue.missingQuantity} 件</span>
+                  <div className="flex min-w-0 items-center gap-3">
+                    {line.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={line.imageUrl}
+                        alt={`${line.displayTitle} 商品图`}
+                        className="h-12 w-12 shrink-0 rounded-md border bg-background object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border bg-muted/40">
+                        <Package className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{line.displayTitle}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {line.skuCode ? `SKU ${line.skuCode} · ` : ""}
+                        {SOURCE_LABELS[line.sourceType] ?? "其他来源"} {line.sourceReference}
                       </p>
-                    ) : null}
+                      {line.inventoryIssue ? (
+                        <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-destructive">
+                          <span>{line.inventoryIssue.currentLocationName}</span>
+                          <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                          <span>{line.inventoryIssue.expectedLocationName}</span>
+                          <span>· 缺 {line.inventoryIssue.missingQuantity} 件</span>
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <span className="text-muted-foreground">× {line.quantity}</span>
@@ -330,6 +382,37 @@ export function ConsolidationBatchDetail({
                 {routeMessage}
               </p>
             ) : null}
+          </div>
+          <div className="space-y-3 border-b pb-4">
+            <div>
+              <p className="text-sm font-semibold">到仓协作</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {batch.status === "RECEIVED"
+                  ? batch.arrivalCollaboration.taskStatus === "DONE" &&
+                    batch.arrivalCollaboration.recipientName
+                    ? `${batch.arrivalCollaboration.recipientName} 已完成到货确认。`
+                    : "已完成到货确认。"
+                  : batch.arrivalCollaboration.recipientName
+                    ? batch.status === "SHIPPED"
+                      ? `已通知 ${batch.arrivalCollaboration.recipientName}，等待对方核对并确认到货。`
+                      : `发出后会自动通知 ${batch.arrivalCollaboration.recipientName} 确认到货。`
+                    : "目的仓未绑定账号，可复制清单通过微信发送，收到回复后由你确认到货。"}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={batch.lines.length === 0}
+              onClick={copyManifest}
+            >
+              {manifestCopied ? (
+                <Check className="mr-2 h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Copy className="mr-2 h-4 w-4" aria-hidden="true" />
+              )}
+              {manifestCopied ? "已复制，可发送给仓库" : "复制内容物清单"}
+            </Button>
           </div>
           <div className="space-y-2">
             <Label>物流单号</Label>
@@ -438,27 +521,42 @@ export function ConsolidationBatchDetail({
               <p>{statusError}</p>
             </div>
           ) : null}
-          <div className="flex flex-col gap-2">
-            <Button
-              variant="outline"
-              disabled={isPending || batch.status !== "OPEN" || !routeReady}
-              onClick={() => run("SEALED")}
-            >
-              封箱
-            </Button>
-            <Button
-              disabled={isPending || batch.status !== "SEALED" || !routeReady}
-              onClick={() => run("SHIPPED")}
-            >
-              填写物流并发出
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={isPending || batch.status !== "SHIPPED"}
-              onClick={() => run("RECEIVED")}
-            >
-              确认到货
-            </Button>
+          <div>
+            {batch.status === "OPEN" ? (
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={isPending || !routeReady}
+                onClick={() => run("SEALED")}
+              >
+                封箱
+              </Button>
+            ) : null}
+            {batch.status === "SEALED" ? (
+              <Button
+                className="w-full"
+                disabled={isPending || !routeReady}
+                onClick={() => run("SHIPPED")}
+              >
+                填写物流并发出
+              </Button>
+            ) : null}
+            {batch.status === "SHIPPED" ? (
+              <Button
+                variant="secondary"
+                className="w-full"
+                disabled={isPending}
+                onClick={() => run("RECEIVED")}
+              >
+                确认到货
+              </Button>
+            ) : null}
+            {batch.status === "RECEIVED" ? (
+              <p className="flex items-center gap-2 text-sm text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                已完成到货确认
+              </p>
+            ) : null}
           </div>
         </aside>
       </div>

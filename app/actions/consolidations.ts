@@ -13,6 +13,7 @@ import {
   normalizeLogisticsCostInput,
   saveLogisticsShippingCost,
 } from "@/lib/application/logistics-cost";
+import { completeTasksForRef, createTaskIfMissing, TASK_TYPE } from "@/lib/application/tasks";
 
 type ConsolidationStatus = "OPEN" | "SEALED" | "SHIPPED" | "RECEIVED";
 
@@ -44,6 +45,84 @@ function assertConsolidationStatusTransition(
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "未知错误";
+}
+
+async function findConsolidationArrivalRecipient(organizationId: string, locationId: string) {
+  const recipients = await prisma.locationFulfiller.findMany({
+    where: {
+      organizationId,
+      locationId,
+      status: "ACTIVE",
+      userId: { not: null },
+    },
+    select: {
+      userId: true,
+      role: true,
+      isDefault: true,
+      user: { select: { name: true, email: true, accountStatus: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  const roleRank = (role: string) => (role === "MANAGER" ? 0 : role === "OPERATOR" ? 1 : 2);
+  return (
+    recipients
+      .filter((recipient) => recipient.user?.accountStatus === "ACTIVE")
+      .sort(
+        (a, b) => Number(b.isDefault) - Number(a.isDefault) || roleRank(a.role) - roleRank(b.role)
+      )[0] ?? null
+  );
+}
+
+async function createConsolidationArrivalTask(input: {
+  batchId: string;
+  organizationId: string;
+  actorUserId: string;
+}) {
+  const batch = await prisma.consolidationBatch.findUnique({
+    where: { id: input.batchId },
+    select: {
+      id: true,
+      storeId: true,
+      status: true,
+      toLocationId: true,
+      toLocation: { select: { name: true } },
+      lines: { select: { quantity: true } },
+    },
+  });
+  if (!batch?.toLocationId || batch.status !== "SHIPPED") return null;
+
+  const recipient = await findConsolidationArrivalRecipient(
+    input.organizationId,
+    batch.toLocationId
+  );
+  if (!recipient?.userId) return null;
+  const totalQuantityValue = batch.lines.reduce(
+    (total, line) => total.plus(line.quantity.toString()),
+    new Decimal(0)
+  );
+  if (totalQuantityValue.lte(0)) return null;
+  const totalQuantity = totalQuantityValue.toString();
+
+  return createTaskIfMissing({
+    organizationId: input.organizationId,
+    storeId: batch.storeId,
+    type: TASK_TYPE.CONFIRM_ARRIVAL,
+    title: `确认集运到货 ${batch.id.slice(0, 8)}`,
+    description: `集运已发往${batch.toLocation?.name ?? "目的仓"}，请到货后核对内容物并确认。`,
+    refType: "CONSOLIDATION_BATCH",
+    refId: batch.id,
+    createdById: input.actorUserId,
+    assignedToId: recipient.userId,
+    fulfillmentLocationId: batch.toLocationId,
+    metadata: {
+      work: {
+        code: "CONFIRM_CONSOLIDATION_ARRIVAL",
+        name: "集运到货确认",
+        quantity: totalQuantity,
+        unit: "件",
+      },
+    },
+  });
 }
 
 type AddPurchaseOrdersResult = {
@@ -531,22 +610,37 @@ export async function getConsolidationBatchById(id: string) {
     include: {
       fromLocation: true,
       toLocation: true,
-      store: { select: { currency: true } },
+      store: { select: { currency: true, organizationId: true } },
       lines: true,
     },
   });
   if (!batch) return null;
-  const shippingCost = await prisma.logisticsCost.findUnique({
-    where: {
-      storeId_sourceType_sourceId_feeType: {
-        storeId: batch.storeId,
-        sourceType: LOGISTICS_COST_SOURCE_TYPES.consolidation,
-        sourceId: batch.id,
-        feeType: "SHIPPING",
+  const [shippingCost, arrivalRecipient, arrivalTask] = await Promise.all([
+    prisma.logisticsCost.findUnique({
+      where: {
+        storeId_sourceType_sourceId_feeType: {
+          storeId: batch.storeId,
+          sourceType: LOGISTICS_COST_SOURCE_TYPES.consolidation,
+          sourceId: batch.id,
+          feeType: "SHIPPING",
+        },
       },
-    },
-    select: { amount: true, currency: true },
-  });
+      select: { amount: true, currency: true },
+    }),
+    batch.store.organizationId && batch.toLocationId
+      ? findConsolidationArrivalRecipient(batch.store.organizationId, batch.toLocationId)
+      : Promise.resolve(null),
+    prisma.task.findFirst({
+      where: {
+        type: TASK_TYPE.CONFIRM_ARRIVAL,
+        refType: "CONSOLIDATION_BATCH",
+        refId: batch.id,
+        status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS", "OVERDUE", "DONE"] },
+      },
+      select: { status: true, completedAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
 
   const purchaseLineIds = batch.lines
     .filter((line) => line.sourceType === "PURCHASE_LINE")
@@ -562,7 +656,7 @@ export async function getConsolidationBatchById(id: string) {
       where: { id: { in: purchaseLineIds } },
       select: {
         id: true,
-        sku: { select: { code: true, name: true } },
+        sku: { select: { code: true, name: true, imageUrl: true } },
         purchaseOrder: {
           select: {
             id: true,
@@ -575,14 +669,14 @@ export async function getConsolidationBatchById(id: string) {
     }),
     prisma.inventoryLot.findMany({
       where: { id: { in: lotIds } },
-      select: { id: true, sku: { select: { code: true, name: true } } },
+      select: { id: true, sku: { select: { code: true, name: true, imageUrl: true } } },
     }),
     prisma.itemUnit.findMany({
       where: { id: { in: itemUnitIds } },
       select: {
         id: true,
         unitCode: true,
-        sku: { select: { code: true, name: true } },
+        sku: { select: { code: true, name: true, imageUrl: true } },
       },
     }),
   ]);
@@ -650,6 +744,11 @@ export async function getConsolidationBatchById(id: string) {
     storeCurrency: batch.store.currency,
     shippingCost: shippingCost?.amount.toString() ?? null,
     shippingCurrency: shippingCost?.currency ?? batch.store.currency,
+    arrivalCollaboration: {
+      recipientName: arrivalRecipient?.user?.name || arrivalRecipient?.user?.email || null,
+      taskStatus: arrivalTask?.status ?? null,
+      completedAt: arrivalTask?.completedAt?.toISOString() ?? null,
+    },
     lines: batch.lines.map((line) => {
       const purchaseLine = purchaseLineById.get(line.sourceId);
       const lot = lotById.get(line.sourceId);
@@ -674,6 +773,7 @@ export async function getConsolidationBatchById(id: string) {
         quantity: line.quantity.toString(),
         displayTitle: sku?.name ?? "未识别商品",
         skuCode: sku?.code ?? null,
+        imageUrl: sku?.imageUrl ?? null,
         sourceReference:
           purchaseLine?.purchaseOrder.orderNo ?? itemUnit?.unitCode ?? line.sourceId.slice(0, 10),
         inventoryIssue,
@@ -2270,7 +2370,34 @@ export async function updateConsolidationStatusAction(
   }
 ) {
   try {
-    await updateConsolidationStatus(id, status, data);
+    const batch = await prisma.consolidationBatch.findUnique({
+      where: { id },
+      select: { storeId: true, status: true },
+    });
+    if (!batch) throw new Error("集运批次不存在");
+    const statusAlreadyApplied = batch.status === status;
+    if (!statusAlreadyApplied) assertConsolidationStatusTransition(batch.status, status);
+    const context = await requireUserContext({ storeId: batch.storeId });
+    if (!statusAlreadyApplied) await updateConsolidationStatus(id, status, data);
+    if (status === "SHIPPED") {
+      await createConsolidationArrivalTask({
+        batchId: id,
+        organizationId: context.organizationId,
+        actorUserId: context.userId,
+      });
+    }
+    if (status === "RECEIVED") {
+      await completeTasksForRef({
+        organizationId: context.organizationId,
+        storeId: batch.storeId,
+        type: TASK_TYPE.CONFIRM_ARRIVAL,
+        refType: "CONSOLIDATION_BATCH",
+        refId: id,
+        completedById: context.userId,
+      });
+    }
+    revalidatePath("/collaboration/tasks");
+    revalidatePath("/notifications");
     return actionSuccess({ id, status });
   } catch (error) {
     return toActionFailure(error, "更新集运状态失败，请重试");

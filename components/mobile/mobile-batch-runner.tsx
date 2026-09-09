@@ -5,6 +5,7 @@ import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { createClientId } from "@/lib/client-id";
 
 type BatchTask = { id: string; title: string; subtitle: string | null; action: string; actionLabel: string };
 
@@ -42,7 +43,7 @@ export function MobileBatchRunner({ tasks, locations }: { tasks: BatchTask[]; lo
           ? { locationId }
           : { arrivalLocationId: locationId, arrivedAt: new Date().toISOString(), isComplete: true },
     }));
-    const response = await fetch("/api/v1/mobile/tasks/batch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ batchId: crypto.randomUUID(), action, items }) });
+    const response = await fetch("/api/v1/mobile/tasks/batch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ batchId: createClientId(), action, items }) });
     const body = await response.json() as { successCount?: number; failureCount?: number; error?: { message?: string } };
     if (!response.ok) { setMessage(body.error?.message || "批量处理失败"); return; }
     setMessage(`完成 ${body.successCount || 0} 项${body.failureCount ? `，${body.failureCount} 项需要重新检查` : ""}`);

@@ -104,6 +104,18 @@ function currentHref(params: Record<string, string | undefined>) {
   return search ? `/listing?${search}` : "/listing";
 }
 
+function listingViewHref(params: Record<string, string | undefined>, view: "active" | "sold-out") {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value && key !== "page" && key !== "status" && key !== "risk" && key !== "view") {
+      query.set(key, value);
+    }
+  }
+  if (view === "sold-out") query.set("view", "sold-out");
+  const search = query.toString();
+  return search ? `/listing?${search}` : "/listing";
+}
+
 function withReturnTo(href: string, returnTo: string) {
   const separator = href.includes("?") ? "&" : "?";
   return `${href}${separator}returnTo=${encodeURIComponent(returnTo)}`;
@@ -123,6 +135,10 @@ function parseMarket(value?: string): SellableMarketCode | undefined {
   return undefined;
 }
 
+function isListingHistory(status: string) {
+  return status === "SOLD_OUT" || status === "DELISTED";
+}
+
 export default async function ListingPage({
   searchParams,
 }: {
@@ -134,6 +150,7 @@ export default async function ListingPage({
     sort?: string;
     q?: string;
     page?: string;
+    view?: string;
   }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
@@ -144,9 +161,13 @@ export default async function ListingPage({
   ]);
 
   const listings = flattenListingRecords(products);
+  const soldOutView = params.view === "sold-out";
+  const viewListings = listings.filter((listing) =>
+    soldOutView ? isListingHistory(listing.status) : !isListingHistory(listing.status)
+  );
   const activeMarket = parseMarket(params.market);
   const filteredListings = sortListingOpsItems(
-    listings.filter((listing) => {
+    viewListings.filter((listing) => {
       if (params.platformId && listing.platform.id !== params.platformId) {
         return false;
       }
@@ -160,7 +181,7 @@ export default async function ListingPage({
       ) {
         return false;
       }
-      if (params.status && listing.status !== params.status) return false;
+      if (!soldOutView && params.status && listing.status !== params.status) return false;
       if (params.risk && !listing.risks.some((risk) => risk.key === params.risk)) {
         return false;
       }
@@ -172,7 +193,9 @@ export default async function ListingPage({
   const totalPages = Math.max(Math.ceil(filteredListings.length / PAGE_SIZE), 1);
   const safePage = Math.min(currentPage, totalPages);
   const pageListings = filteredListings.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-  const stats = computeStats(listings);
+  const stats = computeStats(viewListings);
+  const activeViewCount = listings.filter((listing) => !isListingHistory(listing.status)).length;
+  const soldOutCount = listings.filter((listing) => isListingHistory(listing.status)).length;
   const returnTo = currentHref(params);
 
   return (
@@ -197,6 +220,33 @@ export default async function ListingPage({
         </div>
       </div>
 
+      <nav className="flex items-center gap-1 border-b" aria-label="Listing 记录分类">
+        <Link
+          href={listingViewHref(params, "active")}
+          aria-current={!soldOutView ? "page" : undefined}
+          className={`border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+            !soldOutView
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          上架管理
+          <span className="ml-2 text-xs tabular-nums text-muted-foreground">{activeViewCount}</span>
+        </Link>
+        <Link
+          href={listingViewHref(params, "sold-out")}
+          aria-current={soldOutView ? "page" : undefined}
+          className={`border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+            soldOutView
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          售罄 / 下架
+          <span className="ml-2 text-xs tabular-nums text-muted-foreground">{soldOutCount}</span>
+        </Link>
+      </nav>
+
       <ListingOpsToolbar
         basePath="/listing"
         platforms={platforms.map((platform) => ({
@@ -207,15 +257,22 @@ export default async function ListingPage({
         }))}
         activePlatformId={params.platformId}
         activeMarket={activeMarket}
-        status={params.status}
+        status={soldOutView ? undefined : params.status}
         risk={params.risk}
         sort={params.sort ?? "listedAt"}
         query={params.q}
+        showStatusFilter={false}
+        showSoldOutStatus={false}
+        showRiskFilter={!soldOutView}
       />
 
-      <ListingOpsStats stats={stats} />
+      {!soldOutView ? <ListingOpsStats stats={stats} /> : null}
 
-      <ListingOpsGrid listings={pageListings} />
+      <ListingOpsGrid
+        listings={pageListings}
+        view={soldOutView ? "soldOut" : "active"}
+        returnTo={returnTo}
+      />
 
       {filteredListings.length > PAGE_SIZE ? (
         <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">

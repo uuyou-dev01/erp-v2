@@ -16,6 +16,7 @@ import {
 } from "@/lib/application/listing-coverage";
 import { summarizeSellableGuides } from "@/lib/application/sellable-listing-guide";
 import {
+  inferMarketFromLocation,
   isPlatformTargetForMarket,
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
@@ -165,30 +166,29 @@ function buildLocationOptions(products: ListingCoverageProduct[], market?: Sella
       label: string;
       qty: number;
       market: SellableMarketCode;
+      fulfillableMarkets: Set<SellableMarketCode>;
       productKeys: Set<string>;
     }
   >();
 
   for (const product of products) {
     for (const location of product.sellableLocations) {
-      const fulfillmentMarkets = location.fulfillableMarkets ?? [];
-      if (
-        market &&
-        !fulfillmentMarkets.includes(market) &&
-        !fulfillmentMarkets.includes("GLOBAL")
-      ) {
+      const physicalMarket = inferMarketFromLocation(location);
+      if (market && physicalMarket !== market) {
         continue;
       }
-      const locationMarket =
-        market ?? fulfillmentMarkets.find((value) => value !== "GLOBAL") ?? "GLOBAL";
       const current = locations.get(location.locationId) ?? {
         id: location.locationId,
         label: `${location.code} · ${location.name}`,
         qty: 0,
-        market: locationMarket,
+        market: physicalMarket,
+        fulfillableMarkets: new Set<SellableMarketCode>(),
         productKeys: new Set<string>(),
       };
       current.qty += location.qty;
+      for (const destination of location.fulfillableMarkets ?? []) {
+        current.fulfillableMarkets.add(destination);
+      }
       current.productKeys.add(product.key);
       locations.set(location.locationId, current);
     }
@@ -254,9 +254,19 @@ export default async function SellableInventoryPage({
   const locationOptions = buildLocationOptions(marketProducts, selectedMarket);
   const selectedLocation = locationOptions.find((location) => location.id === params.locationId);
   const effectiveMarket = selectedMarket ?? selectedLocation?.market;
-  const visiblePlatforms = effectiveMarket
-    ? platforms.filter((platform) => isPlatformTargetForMarket(platform, effectiveMarket))
+  const fulfillmentMarkets = [
+    ...new Set(
+      (selectedLocation ? [selectedLocation] : locationOptions).flatMap((location) => [
+        ...location.fulfillableMarkets,
+      ])
+    ),
+  ];
+  const visiblePlatforms = locationOptions.length
+    ? platforms.filter((platform) =>
+        fulfillmentMarkets.some((market) => isPlatformTargetForMarket(platform, market))
+      )
     : platforms;
+  const singleListingMarket = fulfillmentMarkets.length === 1 ? fulfillmentMarkets[0] : undefined;
   const scopedProducts = marketProducts
     .map((product) =>
       buildScopedListingCoverageProduct(product, {
@@ -310,10 +320,10 @@ export default async function SellableInventoryPage({
         <div>
           <h1 className="text-2xl font-bold">库存看板</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            按商品、节点和履约目的地集中查看可分配库存。
+            按商品、节点和仓库所在地集中查看可分配库存。
           </p>
           <p className="mt-1 hidden text-xs text-muted-foreground lg:block">
-            库存口径：可分配表示实物在库且未占用；是否可向某个国家发货由节点能力和配送线路计算。
+            库存归属只看仓库物理所在地；是否可向某个国家发货，由节点能力和配送线路另行判断。
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -347,7 +357,7 @@ export default async function SellableInventoryPage({
           </Link>
           <Link
             href={withReturnTo(
-              effectiveMarket ? `/listing/new?market=${effectiveMarket}` : "/listing/new",
+              singleListingMarket ? `/listing/new?market=${singleListingMarket}` : "/listing/new",
               returnTo
             )}
           >
@@ -376,8 +386,8 @@ export default async function SellableInventoryPage({
         query={params.q}
         scopeLabel={
           effectiveMarket
-            ? `可履约：${fulfillmentDestinationLabel(effectiveMarket)}`
-            : "全部履约目的地"
+            ? `库存所在地：${fulfillmentDestinationLabel(effectiveMarket)}`
+            : "全部库存所在地"
         }
         view={isStockingPoolView ? "pools" : undefined}
         resultCount={filteredProducts.length}

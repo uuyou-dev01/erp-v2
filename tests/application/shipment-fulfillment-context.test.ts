@@ -17,7 +17,9 @@ function lotAllocation(input: {
     allocationType: "LOT",
     quantity: new Decimal(input.quantity),
     status: input.status ?? "ALLOCATED",
-    orderLine: { sku: { code: "SKU-1", name: "测试商品" } },
+    orderLine: {
+      sku: { code: "SKU-1", name: "测试商品", imageUrl: "/images/test-sku.jpg" },
+    },
     inventoryLot: {
       id: input.lotId,
       batchLabel: "LOT-20260816",
@@ -49,6 +51,7 @@ describe("shipment fulfillment context", () => {
       quantity: "3",
       remainingAfterShipment: "7",
       locationName: "上海家庭仓",
+      imageUrl: "/images/test-sku.jpg",
     });
   });
 

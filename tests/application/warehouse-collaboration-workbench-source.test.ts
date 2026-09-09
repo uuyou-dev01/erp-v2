@@ -56,7 +56,7 @@ describe("warehouse collaboration workbench integration", () => {
     const component = source("components/collaboration/shipping-task-list.tsx");
 
     expect(component).toContain("来源仓库");
-    expect(component).toContain("库存明细");
+    expect(component).toContain("库存调整");
     expect(component).toContain("/inventory/locations/${selected.location.id}?returnTo=");
     expect(component).toContain("/inventory/stocktake?locationId=");
     expect(component).toContain("/workbench?scope=warehouse&task=${selected.id}");

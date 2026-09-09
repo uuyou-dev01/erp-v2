@@ -73,12 +73,15 @@ export async function createTask(input: {
   });
 
   if (input.assignedToId) {
-    const actionUrl = await taskActionUrlForAssignee({
-      taskId: task.id,
-      storeId: input.storeId,
-      assignedToId: input.assignedToId,
-      fulfillmentLocationId: input.fulfillmentLocationId,
-    });
+    const actionUrl =
+      input.refType === "CONSOLIDATION_BATCH"
+        ? `/collaboration/tasks?task=${encodeURIComponent(task.id)}`
+        : await taskActionUrlForAssignee({
+            taskId: task.id,
+            storeId: input.storeId,
+            assignedToId: input.assignedToId,
+            fulfillmentLocationId: input.fulfillmentLocationId,
+          });
     await notifyUser({
       organizationId: input.organizationId,
       storeId: input.storeId,

@@ -49,7 +49,7 @@ describe("settings navigation visibility source", () => {
   it("links shipment warehouses to settings with a preserved return path", () => {
     const shippingForm = source("components/workbench/action-drawer-forms/index.tsx");
     const locationPage = source("app/(dashboard)/inventory/locations/[id]/page.tsx");
-    expect(shippingForm).toContain("仓库设置");
+    expect(shippingForm).toContain("查看仓库");
     expect(shippingForm).toContain("encodeURIComponent(returnTo)");
     expect(locationPage).toContain("safeInternalReturnPath(returnTo)");
     expect(locationPage).toContain("返回上一页");

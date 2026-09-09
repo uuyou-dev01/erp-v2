@@ -9,7 +9,7 @@ import {
   buildSellableMarketSummaries,
   fulfillmentMarketsForLocation,
   isPlatformTargetForMarket,
-  locationMatchesMarket,
+  locationIsInMarket,
   locationMatchesPlatformMarket,
   marketLabel,
   type SellableMarketCode,
@@ -279,31 +279,46 @@ function mergeStockLocationBreakdowns(
 }
 
 function locationMatchesScope(
-  location: Pick<StockLocationBreakdown, "locationId" | "region" | "fulfillableMarkets">,
+  location: Pick<
+    StockLocationBreakdown,
+    "locationId" | "region" | "code" | "name" | "fulfillableMarkets"
+  >,
   market?: SellableMarketCode,
   locationId?: string
 ) {
-  if (market && !locationMatchesMarket(location, market)) return false;
+  if (market && !locationIsInMarket(location, market)) return false;
   if (locationId && location.locationId !== locationId) return false;
   return true;
 }
 
 function itemUnitMatchesScope(
-  unit: Pick<SellableItemUnitRow, "locationId" | "locationRegion" | "fulfillableMarkets">,
+  unit: Pick<
+    SellableItemUnitRow,
+    "locationId" | "locationName" | "locationRegion" | "fulfillableMarkets"
+  >,
   market?: SellableMarketCode,
   locationId?: string
 ) {
   if (
     market &&
-    !locationMatchesMarket(
-      { region: unit.locationRegion, fulfillableMarkets: unit.fulfillableMarkets },
-      market
-    )
+    !locationIsInMarket({ region: unit.locationRegion, name: unit.locationName }, market)
   ) {
     return false;
   }
   if (locationId && unit.locationId !== locationId) return false;
   return true;
+}
+
+function fulfillmentMarketsForStock(
+  locations: Array<Pick<StockLocationBreakdown, "fulfillableMarkets">>,
+  fallbackMarket?: SellableMarketCode
+) {
+  const hasFulfillmentData = locations.some(
+    (location) => location.fulfillableMarkets !== undefined
+  );
+  const markets = [...new Set(locations.flatMap((location) => location.fulfillableMarkets ?? []))];
+  if (hasFulfillmentData) return markets;
+  return fallbackMarket ? [fallbackMarket] : [];
 }
 
 export function buildVariantView(input: {
@@ -326,9 +341,12 @@ export function buildVariantView(input: {
       (unit.sellable || unit.inTransit) &&
       itemUnitMatchesScope(unit, input.market, input.locationId)
   );
+  const fulfillmentMarkets = fulfillmentMarketsForStock(scopedSellableLocations, input.market);
   const scopedPlatformIds = new Set(
     (input.market
-      ? input.platforms.filter((platform) => isPlatformTargetForMarket(platform, input.market!))
+      ? input.platforms.filter((platform) =>
+          fulfillmentMarkets.some((market) => isPlatformTargetForMarket(platform, market))
+        )
       : input.platforms
     ).map((platform) => platform.id)
   );
@@ -420,8 +438,11 @@ export function buildScopedListingCoverageProduct(
   const records = [...recordsById.values()];
   const itemUnits = [...itemUnitsById.values()];
   const sellableItemUnits = itemUnits.filter((unit) => unit.sellable);
+  const fulfillmentMarkets = fulfillmentMarketsForStock(sellableLocations, scope.market);
   const targetPlatforms = scope.market
-    ? product.allPlatforms.filter((platform) => isPlatformTargetForMarket(platform, scope.market!))
+    ? product.allPlatforms.filter((platform) =>
+        fulfillmentMarkets.some((market) => isPlatformTargetForMarket(platform, market))
+      )
     : product.platforms;
   const targetPlatformIds = new Set(targetPlatforms.map((platform) => platform.id));
   const activeSkuListingPlatformIds = new Set(
@@ -1097,8 +1118,9 @@ export async function getListingCoverageProducts(storeId: string) {
     const locationMarket = marketSummaries[0]?.market ?? "UNKNOWN";
     const primaryMarket =
       locationMarket === "UNKNOWN" ? inferMarketFromActiveListings(draftListings) : locationMarket;
+    const fulfillmentMarkets = fulfillmentMarketsForStock(product.sellableLocations, primaryMarket);
     const targetPlatforms = corePlatforms.filter((platform) =>
-      isPlatformTargetForMarket(platform, primaryMarket)
+      fulfillmentMarkets.some((market) => isPlatformTargetForMarket(platform, market))
     );
     const platformsForProduct = targetPlatforms;
     const stockScopeForListing = (listing: ListingRow) => {

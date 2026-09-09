@@ -70,9 +70,7 @@ export function ListingEditForm({
             type="number"
             step="0.01"
             value={formData.listedPrice}
-            onChange={(event) =>
-              updateFormData({ listedPrice: event.target.value })
-            }
+            onChange={(event) => updateFormData({ listedPrice: event.target.value })}
           />
         </div>
         <div className="space-y-2">
@@ -80,9 +78,7 @@ export function ListingEditForm({
           <Select
             id="currency"
             value={formData.currency}
-            onChange={(event) =>
-              updateFormData({ currency: event.target.value })
-            }
+            onChange={(event) => updateFormData({ currency: event.target.value })}
           >
             <option value="CNY">人民币 (CNY)</option>
             <option value="USD">美元 (USD)</option>
@@ -90,21 +86,6 @@ export function ListingEditForm({
             <option value="EUR">欧元 (EUR)</option>
           </Select>
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="status">状态</Label>
-        <Select
-          id="status"
-          value={formData.status}
-          onChange={(event) =>
-            updateFormData({ status: event.target.value })
-          }
-        >
-          <option value="ACTIVE">在售中</option>
-          <option value="DELISTED">已下架</option>
-          <option value="SOLD_OUT">已售罄</option>
-        </Select>
       </div>
 
       {submitError ? (

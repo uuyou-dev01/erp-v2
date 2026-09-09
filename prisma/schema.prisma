@@ -1217,7 +1217,7 @@ model Location {
   @@map("locations")
 }
 
-/// 仓库级发货协作人。协作人只获得被邀请仓库的发货权限，不自动成为企业成员。
+/// 仓库级任务协作人。协作人只获得被邀请仓库的任务权限，不自动成为企业成员。
 model LocationFulfiller {
   id             String    @id @default(cuid())
   organizationId String
@@ -1592,40 +1592,43 @@ model PurchaseLine {
 // ============================================
 
 model CustomerOrder {
-  id                      String    @id @default(cuid())
-  storeId                 String
-  salesChannelAccountId   String?
-  requestPayloadHash      String? // Canonical hash used to reject idempotency-key payload drift
-  orderNumber             String    @unique
-  platformId              String?
-  resaleListingId         String?
-  externalOrderNo         String?
-  customerName            String
-  customerEmail           String?
-  customerPhone           String?
-  shippingAddress         String?   @db.Text
-  shippingCountry         String? // CN, JP, US, EU; fulfillment source of truth
-  orderDate               DateTime
-  currency                String
-  subtotal                Decimal   @db.Decimal(19, 4)
-  discountTotal           Decimal   @default(0) @db.Decimal(19, 4)
-  shippingCharged         Decimal   @default(0) @db.Decimal(19, 4)
-  totalPaid               Decimal   @db.Decimal(19, 4)
-  platformFee             Decimal   @default(0) @db.Decimal(19, 4)
-  shippingFee             Decimal   @default(0) @db.Decimal(19, 4)
-  shippingFeeStatus       String    @default("PENDING") // PENDING, ESTIMATED, ACTUAL
-  shippingProvider        String?
-  shippingProviderFeeRate Decimal?  @db.Decimal(8, 4)
-  netRevenue              Decimal?  @db.Decimal(19, 4)
-  countryFlow             String?
-  orderStatus             String    @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
-  shippedAt               DateTime?
-  trackingNo              String?
-  shippingProof           Json?
-  settledAt               DateTime?
-  createdAt               DateTime  @default(now())
-  confirmedAt             DateTime?
-  updatedAt               DateTime  @updatedAt
+  id                       String    @id @default(cuid())
+  storeId                  String
+  salesChannelAccountId    String?
+  requestPayloadHash       String? // Canonical hash used to reject idempotency-key payload drift
+  orderNumber              String    @unique
+  platformId               String?
+  resaleListingId          String?
+  externalOrderNo          String?
+  customerName             String
+  customerEmail            String?
+  customerPhone            String?
+  shippingAddress          String?   @db.Text
+  shippingCountry          String? // CN, JP, US, EU; fulfillment source of truth
+  orderDate                DateTime
+  currency                 String
+  subtotal                 Decimal   @db.Decimal(19, 4)
+  discountTotal            Decimal   @default(0) @db.Decimal(19, 4)
+  shippingCharged          Decimal   @default(0) @db.Decimal(19, 4)
+  totalPaid                Decimal   @db.Decimal(19, 4)
+  platformFee              Decimal   @default(0) @db.Decimal(19, 4)
+  shippingFee              Decimal   @default(0) @db.Decimal(19, 4)
+  shippingFeeStatus        String    @default("PENDING") // PENDING, ESTIMATED, ACTUAL
+  shippingProvider         String?
+  shippingProviderFeeRate  Decimal?  @db.Decimal(8, 4)
+  netRevenue               Decimal?  @db.Decimal(19, 4)
+  countryFlow              String?
+  orderStatus              String    @default("DRAFT") // DRAFT, PLACED, PAID, CONFIRMED, SHIPPED, DELIVERED, RETURNED, CANCELLED
+  shippedAt                DateTime?
+  trackingNo               String?
+  shippingProof            Json?
+  settledAt                DateTime?
+  settlementFxRate         Decimal?  @db.Decimal(19, 8)
+  settlementBaseCurrency   String?
+  settlementNetRevenueBase Decimal?  @db.Decimal(19, 4)
+  createdAt                DateTime  @default(now())
+  confirmedAt              DateTime?
+  updatedAt                DateTime  @updatedAt
 
   store               Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   platform            Platform?            @relation(fields: [platformId], references: [id])

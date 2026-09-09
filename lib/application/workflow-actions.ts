@@ -40,7 +40,12 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
     nextQueue: "pendingArrival",
     successMessage: "物流信息已保存",
     fields: [
-      { name: "carrier", label: "物流方式 / 承运商", type: "text", placeholder: "顺丰、EMS、DHL..." },
+      {
+        name: "carrier",
+        label: "物流方式 / 承运商",
+        type: "text",
+        placeholder: "顺丰、EMS、DHL...",
+      },
       { name: "etaDate", label: "预计到货日", type: "date" },
       { name: "destinationLocationId", label: "预计到货位置", type: "select", required: true },
       { name: "purchaseTrackingNo", label: "采购物流单号", type: "text" },
@@ -98,25 +103,31 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
     nextQueue: "listed",
     successMessage: "上架记录已创建",
     fields: [
-      { name: "platformIds", label: "平台（多选）", type: "text", required: true, placeholder: "从平台库选择" },
+      {
+        name: "platformIds",
+        label: "平台（多选）",
+        type: "text",
+        required: true,
+        placeholder: "从平台库选择",
+      },
     ],
   },
   shipOrder: {
     action: "shipOrder",
     title: "确认发货",
-    description: "暂存发货凭证供代发方查看；确认发出后完成发货并扣减库存。",
+    description: "先核对商品、数量和发货时限；确认发出后扣减库存，物流凭证可选填。",
     submitLabel: "确认已发货",
     fromQueues: ["pendingShipment"],
     subProcess: "FULFILLMENT",
     nextQueue: "shipped",
     successMessage: "订单已标记发货",
     fields: [
-      { name: "shipper", label: "发货人", type: "text" },
-      { name: "shippingMethod", label: "发货方式", type: "text" },
-      { name: "trackingNo", label: "运单号", type: "text" },
-      { name: "pickupCode", label: "取件码 / 交接码", type: "text" },
-      { name: "proofImages", label: "发货凭证图片", type: "text" },
-      { name: "proofNote", label: "发货凭证备注", type: "textarea" },
+      { name: "shipper", label: "现场交接联系人（选填）", type: "text" },
+      { name: "shippingMethod", label: "发货方式（选填）", type: "text" },
+      { name: "trackingNo", label: "运单号（选填）", type: "text" },
+      { name: "pickupCode", label: "取件码 / 交接码（选填）", type: "text" },
+      { name: "proofImages", label: "发货凭证图片（选填）", type: "text" },
+      { name: "proofNote", label: "发货凭证备注（选填）", type: "textarea" },
     ],
   },
   confirmDelivery: {
@@ -181,6 +192,7 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
       { name: "actualSalePrice", label: "实际售价", type: "number" },
       { name: "platformFee", label: "实际手续费", type: "number" },
       { name: "shippingFee", label: "实际邮费", type: "number" },
+      { name: "fxRate", label: "结算汇率", type: "number" },
     ],
   },
   resolveException: {
@@ -207,7 +219,8 @@ export const WORKFLOW_ACTION_SPECS: Record<PrimaryAction, WorkflowActionSpec> = 
   receivePurchase: {
     action: "receivePurchase",
     title: "确认收货",
-    description: "确认实物已经到达所选位置。系统会创建库存；中古或资料不完整的单件进入待检查，转运仓到货进入待分流。",
+    description:
+      "确认实物已经到达所选位置。系统会创建库存；中古或资料不完整的单件进入待检查，转运仓到货进入待分流。",
     submitLabel: "确认收货",
     fromQueues: ["pendingArrival"],
     subProcess: "LOGISTICS",

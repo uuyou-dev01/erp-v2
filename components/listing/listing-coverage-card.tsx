@@ -37,6 +37,7 @@ import {
 import { productKindLabel } from "@/lib/application/sku-catalog";
 import { formatCurrency } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
+import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 import {
   AlertTriangle,
   ClipboardCheck,
@@ -479,6 +480,9 @@ export function ListingCoverageCard({
   );
   const detailCatalogHref = withReturnTo(`/inventory/skus/${detailProduct.skuId}`, currentHref);
   const palletLabel = focusMarket ? marketLabel(focusMarket) : product.marketLabel;
+  const fulfillmentLabels = [
+    ...new Set(product.sellableLocations.flatMap((location) => location.fulfillableMarkets ?? [])),
+  ].map(fulfillmentDestinationLabel);
   const displayedVariantViews =
     visibleVariantViews.length > 0 ? visibleVariantViews.slice(0, 2) : variantViews.slice(0, 2);
   const hasVariantChildren = product.variantRows.some((variant) => variant.skuId !== product.skuId);
@@ -710,7 +714,12 @@ export function ListingCoverageCard({
             仓位
           </span>
           <LocationDistribution locations={product.sellableLocations} />
-          <p className="mt-1 truncate text-[10px] text-muted-foreground">{palletLabel}</p>
+          <p className="mt-1 truncate text-[10px] text-muted-foreground">库存归属：{palletLabel}</p>
+          {fulfillmentLabels.length ? (
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              可配送：{fulfillmentLabels.join("、")}
+            </p>
+          ) : null}
         </div>
 
         <div className="min-w-0">
@@ -931,7 +940,7 @@ export function ListingCoverageCard({
                         {palletLabel} · {primaryLocationLabel(detailProduct, focusLocationId)}
                       </p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        库存按最终可售仓库口径判断
+                        库存归属按仓库物理所在地；可配送国家由仓库能力和线路另行判断
                       </p>
                     </div>
                     {detailRisks.length > 0 ? (

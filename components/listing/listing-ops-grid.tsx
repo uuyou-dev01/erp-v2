@@ -11,9 +11,15 @@ import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components
 
 interface ListingOpsGridProps {
   listings: ListingOpsItem[];
+  view?: "active" | "soldOut";
+  returnTo?: string;
 }
 
-export function ListingOpsGrid({ listings }: ListingOpsGridProps) {
+export function ListingOpsGrid({
+  listings,
+  view = "active",
+  returnTo = "/listing",
+}: ListingOpsGridProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectionError, setSelectionError] = useState("");
@@ -28,8 +34,12 @@ export function ListingOpsGrid({ listings }: ListingOpsGridProps) {
     return (
       <EmptyState
         icon={Globe}
-        title="暂无符合条件的 Listing"
-        description="调整平台、状态或风险筛选后再查看。"
+        title={view === "soldOut" ? "暂无售罄或下架记录" : "暂无符合条件的 Listing"}
+        description={
+          view === "soldOut"
+            ? "Listing 售罄或下架后会统一归档到这里，需要时可以再次上架。"
+            : "调整平台、状态或风险筛选后再查看。"
+        }
         actionLabel="查看可售库存"
         actionHref="/inventory/sellable?unlisted=1"
       />
@@ -101,13 +111,19 @@ export function ListingOpsGrid({ listings }: ListingOpsGridProps) {
       <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5">
         <div>
           <p className="text-sm font-medium">
-            {selectionMode ? `已选择 ${selectedIds.length} 条 Listing` : "上架商品"}
+            {selectionMode
+              ? `已选择 ${selectedIds.length} 条 Listing`
+              : view === "soldOut"
+                ? "售罄 / 下架商品"
+                : "上架商品"}
           </p>
           <p className={`text-xs ${selectionError ? "text-destructive" : "text-muted-foreground"}`}>
             {selectionError ||
-              (selectionMode
-                ? "选择同平台、同币种且可从同一仓库发货的商品"
-                : "需要把多款商品合成一单时，可使用打包出售")}
+              (view === "soldOut"
+                ? "历史记录与当前上架商品分开管理，可直接再次上架"
+                : selectionMode
+                  ? "选择同平台、同币种且可从同一仓库发货的商品"
+                  : "需要把多款商品合成一单时，可使用打包出售")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -125,7 +141,7 @@ export function ListingOpsGrid({ listings }: ListingOpsGridProps) {
                 填写打包单
               </Button>
             </>
-          ) : (
+          ) : view === "active" ? (
             <Button
               type="button"
               variant="outline"
@@ -134,12 +150,12 @@ export function ListingOpsGrid({ listings }: ListingOpsGridProps) {
             >
               打包出售
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="max-h-[calc(100vh-8rem)] overflow-auto [&>div]:overflow-visible">
         <Table className="min-w-[960px]">
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-20 bg-background shadow-[0_1px_0_hsl(var(--border))]">
             <TableRow>
               <TableHead className={selectionMode ? "min-w-[300px]" : "min-w-[260px]"}>
                 商品
@@ -161,6 +177,7 @@ export function ListingOpsGrid({ listings }: ListingOpsGridProps) {
                 selectionMode={selectionMode}
                 selected={selectedIds.includes(listing.id)}
                 onToggleSelection={() => toggleSelection(listing)}
+                returnTo={returnTo}
               />
             ))}
           </TableBody>

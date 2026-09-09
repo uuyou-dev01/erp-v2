@@ -15,6 +15,7 @@ import {
 import type { CollaborationShippingTask } from "@/lib/application/collaboration-shipping-tasks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -23,7 +24,9 @@ import {
   AlertCircle,
   ArrowRightLeft,
   Box,
+  Clock3,
   CheckCircle2,
+  Layers3,
   MapPin,
   PackageCheck,
   RotateCcw,
@@ -33,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getShippingTaskTiming } from "@/lib/application/shipping-task-timing";
 
 type WarehouseTaskView = Omit<CollaborationShippingTask, "assigneeName"> & {
   assigneeName: string | null;
@@ -108,6 +112,7 @@ export function ShippingTaskList({
   const [notice, setNotice] = useState<string | null>(null);
   const [transferTargetId, setTransferTargetId] = useState("");
   const [withdrawReason, setWithdrawReason] = useState("");
+  const [shipmentChecked, setShipmentChecked] = useState(false);
   const selected = useMemo(
     () =>
       visibleTasks.find((task) => task.id === selectedId) ||
@@ -123,11 +128,24 @@ export function ShippingTaskList({
     proofNote: initialProof?.proofNote || "",
     imageUrls: initialProof?.imageUrls || ([] as string[]),
   });
+  const selectedTiming = selected
+    ? getShippingTaskTiming({
+        createdAt: selected.createdAt,
+        dueAt: selected.dueAt,
+        completedAt: selected.completedAt,
+        status: selected.status,
+      })
+    : null;
+  const selectedTotalQuantity = selected?.order.lines.reduce(
+    (total, line) => total + Number(line.quantity),
+    0
+  );
 
   useEffect(() => {
     if (!selected) return;
     setTransferTargetId("");
     setWithdrawReason("");
+    setShipmentChecked(false);
     setForm({
       trackingNo: selected.order.trackingNo || "",
       shipper: selected.order.shippingProof.shipper || selected.assigneeName || "",
@@ -297,40 +315,101 @@ export function ShippingTaskList({
               mode === "workbench" && "grid gap-3 space-y-0 sm:grid-cols-2 xl:grid-cols-3"
             )}
           >
-            {visibleTasks.map((task) => (
-              <button
-                key={task.id}
-                type="button"
-                onClick={() => choose(task)}
-                className={`w-full rounded-lg border p-4 text-left transition ${
-                  task.id === selected?.id
-                    ? "border-primary bg-primary/5"
-                    : "bg-card hover:bg-muted/40"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span>
-                    <span className="block text-[11px] text-muted-foreground">订单发货</span>
-                    <span className="font-medium">{task.order.orderNumber}</span>
-                  </span>
-                  <Badge variant={task.status === "IN_PROGRESS" ? "default" : "outline"}>
-                    {task.status === "DONE"
-                      ? "已完成"
-                      : task.status === "CANCELLED"
-                        ? "已撤回"
-                        : task.status === "OPEN"
-                          ? "待重新指派"
-                          : task.status === "IN_PROGRESS"
-                            ? "处理中"
-                            : "待领取"}
-                  </Badge>
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground">{task.location.name}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {task.order.lines.length} 种商品
-                </p>
-              </button>
-            ))}
+            {visibleTasks.map((task) => {
+              const timing = getShippingTaskTiming({
+                createdAt: task.createdAt,
+                dueAt: task.dueAt,
+                completedAt: task.completedAt,
+                status: task.status,
+              });
+              const totalQuantity = task.order.lines.reduce(
+                (total, line) => total + Number(line.quantity),
+                0
+              );
+              const firstLine = task.order.lines[0];
+
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => choose(task)}
+                  className={`w-full rounded-lg border p-4 text-left transition ${
+                    task.id === selected?.id
+                      ? "border-primary bg-primary/5"
+                      : "bg-card hover:bg-muted/40"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      {firstLine?.sku.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={firstLine.sku.imageUrl}
+                          alt={`${firstLine.sku.name} 商品图`}
+                          className="h-14 w-14 shrink-0 rounded-md border bg-background object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border bg-muted">
+                          <Box className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">
+                          {firstLine?.sku.name ?? "待核对商品"}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {firstLine?.sku.code ?? task.order.orderNumber}
+                          {firstLine?.sku.variantLabel ? ` · ${firstLine.sku.variantLabel}` : ""}
+                        </p>
+                        <p className="mt-1 text-sm font-medium tabular-nums">
+                          {task.order.lines.length} 种，共 {totalQuantity} 件
+                        </p>
+                        {task.isBundleSale ? (
+                          <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-violet-700">
+                            <Layers3 className="h-3 w-3" />
+                            合并发货 · 同一包裹
+                          </p>
+                        ) : null}
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          订单 {task.order.orderNumber}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant={task.status === "IN_PROGRESS" ? "default" : "outline"}>
+                      {task.status === "DONE"
+                        ? "已完成"
+                        : task.status === "CANCELLED"
+                          ? "已撤回"
+                          : task.status === "OPEN"
+                            ? "待重新指派"
+                            : task.status === "IN_PROGRESS"
+                              ? "处理中"
+                              : "待领取"}
+                    </Badge>
+                  </div>
+                  <div className="mt-3 flex items-end justify-between gap-3 border-t pt-3">
+                    <div className="min-w-0">
+                      <p
+                        className={cn(
+                          "text-sm font-semibold",
+                          timing.tone === "overdue" && "text-destructive",
+                          timing.tone === "warning" && "text-amber-700",
+                          timing.tone === "completed" && "text-emerald-700"
+                        )}
+                      >
+                        {timing.urgencyLabel}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {timing.scheduleLabel}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {task.location.name}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </aside>
 
           {mode === "workbench" && selected ? (
@@ -364,10 +443,19 @@ export function ShippingTaskList({
               <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-5">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary">订单发货</Badge>
-                    <p className="text-xs text-muted-foreground">{selected.organizationName} 委托</p>
+                    <Badge
+                      variant="secondary"
+                      className={cn(selected.isBundleSale && "bg-violet-100 text-violet-800")}
+                    >
+                      {selected.isBundleSale ? "合并发货" : "订单发货"}
+                    </Badge>
+                    <p className="text-xs text-muted-foreground">
+                      {selected.organizationName} 委托
+                    </p>
                   </div>
-                  <h2 className="mt-1 text-xl font-semibold">订单 {selected.order.orderNumber}</h2>
+                  <h2 className="mt-1 text-xl font-semibold">
+                    {selected.isBundleSale ? "合并发货" : "订单"} {selected.order.orderNumber}
+                  </h2>
                   <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground">
                     <MapPin className="h-4 w-4" /> 来源仓库：{selected.location.name} ·{" "}
                     {selected.location.code}
@@ -419,6 +507,156 @@ export function ShippingTaskList({
                 )}
               </div>
 
+              {selectedTiming ? (
+                <section
+                  aria-label="发货时限"
+                  className={cn(
+                    "flex flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between",
+                    selectedTiming.tone === "overdue" && "border-destructive/30 bg-destructive/5",
+                    selectedTiming.tone === "warning" && "border-amber-200 bg-amber-50/60",
+                    selectedTiming.tone === "completed" && "border-emerald-200 bg-emerald-50/60"
+                  )}
+                >
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <Clock3
+                      className={cn(
+                        "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
+                        selectedTiming.tone === "overdue" && "text-destructive",
+                        selectedTiming.tone === "warning" && "text-amber-700",
+                        selectedTiming.tone === "completed" && "text-emerald-700"
+                      )}
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{selectedTiming.scheduleLabel}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {selectedTiming.createdLabel}
+                      </p>
+                    </div>
+                  </div>
+                  <p
+                    className={cn(
+                      "shrink-0 text-lg font-semibold tabular-nums",
+                      selectedTiming.tone === "overdue" && "text-destructive",
+                      selectedTiming.tone === "warning" && "text-amber-700",
+                      selectedTiming.tone === "completed" && "text-emerald-700"
+                    )}
+                  >
+                    {selectedTiming.urgencyLabel}
+                  </p>
+                </section>
+              ) : null}
+
+              <section aria-labelledby="shipping-products-title">
+                <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <h3 id="shipping-products-title" className="text-base font-semibold">
+                      先核对商品
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {selected.isBundleSale
+                        ? "这些商品属于同一个包裹，请按图片、SKU 和数量逐项取齐后一起发出。"
+                        : "按图片、SKU 和数量逐项取货，确认无误后再发出。"}
+                    </p>
+                  </div>
+                  <span className="text-sm font-semibold tabular-nums">
+                    {selected.order.lines.length} 种，共 {selectedTotalQuantity ?? 0} 件
+                  </span>
+                </div>
+                <div className="divide-y rounded-lg border">
+                  {selected.order.lines.map((line) => (
+                    <div key={line.id} className="flex items-center gap-3 p-3">
+                      {line.sku.imageUrl ? (
+                        <a
+                          href={line.sku.imageUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`查看 ${line.sku.name} 商品原图`}
+                          className="shrink-0 rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={line.sku.imageUrl}
+                            alt={`${line.sku.name} 商品图`}
+                            className="h-20 w-20 rounded-md border bg-background object-cover"
+                          />
+                        </a>
+                      ) : (
+                        <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md border bg-muted">
+                          <Box className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">{line.sku.name}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          SKU {line.sku.code}
+                          {line.sku.variantLabel ? ` · ${line.sku.variantLabel}` : ""}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-lg font-semibold tabular-nums">
+                        × {line.quantity}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="border-y py-4" aria-labelledby="shipping-proof-title">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 id="shipping-proof-title" className="text-base font-semibold">
+                      发货凭证
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      先查看委托方提供的二维码、付款码或取件截图；点击图片可打开原图。
+                    </p>
+                  </div>
+                  {selected.status === "IN_PROGRESS" && selected.isAssignedToMe !== false ? (
+                    <Label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Upload className="h-4 w-4" /> {uploading ? "上传中" : "补充凭证"}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/gif,image/webp"
+                        className="sr-only"
+                        disabled={uploading}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void upload(file);
+                          event.target.value = "";
+                        }}
+                      />
+                    </Label>
+                  ) : null}
+                </div>
+                {form.imageUrls.length ? (
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    {form.imageUrls.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="查看发货凭证原图"
+                        className="block rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt="发货凭证"
+                          className="h-24 w-24 rounded-md border bg-background object-cover sm:h-28 sm:w-28"
+                        />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-md bg-muted/35 px-3 py-2 text-sm text-muted-foreground">
+                    {selected.order.recipientVisible
+                      ? "委托方尚未上传凭证；如发货需要二维码或取件截图，请先联系委托方。"
+                      : "领取任务后可查看委托方提供的发货凭证。"}
+                  </p>
+                )}
+              </section>
+
               {mode === "workbench" ? (
                 <div className="flex flex-wrap gap-2">
                   <Link
@@ -452,33 +690,6 @@ export function ShippingTaskList({
                       为保护客户隐私，接受任务后才会显示姓名、电话和收货地址。
                     </p>
                   )}
-                </div>
-              </section>
-
-              <section>
-                <h3 className="text-sm font-semibold">库存明细</h3>
-                <div className="mt-2 divide-y rounded-lg border">
-                  {selected.order.lines.map((line) => (
-                    <div key={line.id} className="flex items-center gap-3 p-3">
-                      {line.sku.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={line.sku.imageUrl}
-                          alt=""
-                          className="h-12 w-12 rounded object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded bg-muted">
-                          <Box className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium">{line.sku.name}</p>
-                        <p className="text-xs text-muted-foreground">{line.sku.code}</p>
-                      </div>
-                      <p className="font-medium">× {line.quantity}</p>
-                    </div>
-                  ))}
                 </div>
               </section>
 
@@ -606,30 +817,33 @@ export function ShippingTaskList({
                   }}
                 >
                   <h3 className="text-sm font-semibold">回填发货结果</h3>
+                  <p className="text-xs text-muted-foreground">
+                    以下信息均为选填；确认提交本身会完成发货并扣减已分配库存。
+                  </p>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label>发货人</Label>
+                      <Label>发货人（选填）</Label>
                       <Input
                         value={form.shipper}
                         onChange={(e) => setForm({ ...form, shipper: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>承运商 / 发货方式</Label>
+                      <Label>承运商 / 发货方式（选填）</Label>
                       <Input
                         value={form.shippingMethod}
                         onChange={(e) => setForm({ ...form, shippingMethod: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>运单号</Label>
+                      <Label>运单号（选填）</Label>
                       <Input
                         value={form.trackingNo}
                         onChange={(e) => setForm({ ...form, trackingNo: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>取件码 / 交接码</Label>
+                      <Label>取件码 / 交接码（选填）</Label>
                       <Input
                         value={form.pickupCode}
                         onChange={(e) => setForm({ ...form, pickupCode: e.target.value })}
@@ -637,42 +851,25 @@ export function ShippingTaskList({
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <Label>凭证和备注</Label>
+                    <Label>凭证和备注（选填）</Label>
                     <Textarea
                       value={form.proofNote}
                       onChange={(e) => setForm({ ...form, proofNote: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                      <Upload className="h-4 w-4" /> {uploading ? "上传中" : "上传发货凭证"}
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/gif,image/webp"
-                        className="sr-only"
-                        disabled={uploading}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) void upload(file);
-                          event.target.value = "";
-                        }}
-                      />
-                    </Label>
-                    {form.imageUrls.length ? (
-                      <div className="flex flex-wrap gap-2">
-                        {form.imageUrls.map((url) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            key={url}
-                            src={url}
-                            alt="发货凭证"
-                            className="h-16 w-16 rounded border object-cover"
-                          />
-                        ))}
-                      </div>
-                    ) : null}
+                  <div className="rounded-lg border bg-muted/25 p-3">
+                    <p className="mb-2 text-sm font-medium">发货确认（必选）</p>
+                    <Checkbox
+                      checked={shipmentChecked}
+                      onChange={(event) => setShipmentChecked(event.target.checked)}
+                      label="我已按商品图、SKU、规格和数量核对，确认没有拿错货"
+                    />
                   </div>
-                  <Button type="submit" className="w-full" disabled={pending || uploading}>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={pending || uploading || !shipmentChecked}
+                  >
                     {pending ? "正在提交" : "确认已发货并回写订单"}
                   </Button>
                   <p className="text-center text-xs text-muted-foreground">

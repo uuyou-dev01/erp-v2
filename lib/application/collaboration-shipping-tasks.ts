@@ -89,6 +89,7 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
       completedById: true,
       fulfillmentLocationId: true,
       refId: true,
+      metadata: true,
       dispatch: {
         select: {
           id: true,
@@ -238,6 +239,11 @@ export async function getCollaborationShippingTasksForUser(userId: string) {
         dueAt: task.dueAt?.toISOString() ?? null,
         createdAt: task.createdAt.toISOString(),
         completedAt: task.completedAt?.toISOString() ?? null,
+        isBundleSale:
+          task.metadata !== null &&
+          typeof task.metadata === "object" &&
+          !Array.isArray(task.metadata) &&
+          task.metadata.bundleSale === true,
         organizationId: task.organizationId,
         fulfillmentLocationId: task.fulfillmentLocationId,
         assignedToId: task.assignedToId,

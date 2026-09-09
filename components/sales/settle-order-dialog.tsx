@@ -16,6 +16,8 @@ interface SettleOrderDialogProps {
   defaultPlatformFee?: string;
   defaultShippingFee?: string;
   defaultFeeRate?: string;
+  defaultFxRate?: string;
+  baseCurrency?: string;
   requireActualShippingFee?: boolean;
 }
 
@@ -26,16 +28,19 @@ export function SettleOrderDialog({
   defaultPlatformFee,
   defaultShippingFee,
   defaultFeeRate,
+  defaultFxRate,
+  baseCurrency = "CNY",
   requireActualShippingFee = false,
 }: SettleOrderDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    actualSalePrice: defaultSalePrice ?? "",
+    actualSalePrice: "",
     platformFee: defaultPlatformFee ?? "",
     shippingFee: defaultShippingFee ?? "",
     platformFeeRate: defaultFeeRate ?? "",
+    fxRate: defaultFxRate ?? (currency === baseCurrency ? "1" : ""),
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -54,6 +59,7 @@ export function SettleOrderDialog({
         platformFee: form.platformFee || undefined,
         shippingFee: form.shippingFee || undefined,
         platformFeeRate: form.platformFeeRate || undefined,
+        fxRate: form.fxRate || undefined,
       });
       if (!result.success) {
         setSubmitError(result.error);
@@ -83,6 +89,15 @@ export function SettleOrderDialog({
     );
   }
 
+  const salePrice = Number(form.actualSalePrice || defaultSalePrice || 0);
+  const platformFee = Number(form.platformFee || 0);
+  const shippingFee = Number(form.shippingFee || 0);
+  const fxRate = Number(form.fxRate || 0);
+  const netRevenue = salePrice - platformFee - shippingFee;
+  const requiresFxRate = currency !== baseCurrency;
+  const amount = (value: number, unit = currency) =>
+    `${unit} ${Number.isFinite(value) ? value.toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : "—"}`;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={() => !loading && setOpen(false)} />
@@ -98,20 +113,53 @@ export function SettleOrderDialog({
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              补充实际手续费和邮费，系统自动重算净利润。售出日期已自动记录。
+              成交金额已从订单带入；补充实际手续费、邮费和汇率后完成利润确认。
             </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2 md:col-span-2">
-                <Label>实际售价 ({currency})</Label>
+            <section
+              className="overflow-hidden rounded-lg border"
+              aria-labelledby="dialog-settlement-summary"
+            >
+              <div className="border-b bg-muted/30 px-3 py-2.5">
+                <h3 id="dialog-settlement-summary" className="text-sm font-semibold">
+                  待结算汇总
+                </h3>
+              </div>
+              <dl className="grid grid-cols-2 gap-3 px-3 py-3 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">成交金额</dt>
+                  <dd className="mt-0.5 font-medium tabular-nums">{amount(salePrice)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">预计净入账</dt>
+                  <dd className="mt-0.5 font-semibold tabular-nums">{amount(netRevenue)}</dd>
+                </div>
+                {fxRate > 0 ? (
+                  <div className="col-span-2 border-t pt-2">
+                    <dt className="text-xs text-muted-foreground">
+                      1 {currency} = {form.fxRate} {baseCurrency}
+                    </dt>
+                    <dd className="mt-0.5 tabular-nums">
+                      折合净入账 {amount(netRevenue * fxRate, baseCurrency)}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </section>
+            <details className="rounded-lg border px-3 py-2.5">
+              <summary className="cursor-pointer text-sm font-medium">修正已记录的成交金额</summary>
+              <div className="mt-3 space-y-2">
+                <Label>实际成交金额（选填）</Label>
                 <Input
                   type="number"
                   min="0.01"
                   step="0.01"
                   value={form.actualSalePrice}
                   onChange={(e) => updateForm({ actualSalePrice: e.target.value })}
-                  placeholder="实际成交金额"
+                  placeholder={`当前 ${amount(Number(defaultSalePrice || 0))}`}
                 />
               </div>
+            </details>
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>平台手续费 ({currency})</Label>
                 <Input
@@ -151,6 +199,25 @@ export function SettleOrderDialog({
                   </p>
                 ) : null}
               </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>
+                  结算汇率（{currency} → {baseCurrency}
+                  {requiresFxRate ? "，必填" : "，无需填写"}）
+                </Label>
+                <Input
+                  type="number"
+                  min="0.00000001"
+                  step="0.00000001"
+                  required={requiresFxRate}
+                  disabled={!requiresFxRate}
+                  value={form.fxRate}
+                  onChange={(e) => updateForm({ fxRate: e.target.value })}
+                  placeholder={`1 ${currency} 对应的 ${baseCurrency} 金额`}
+                />
+                <p className="text-xs text-muted-foreground">
+                  结算后保存本次汇率快照，不随之后的汇率变化。
+                </p>
+              </div>
             </div>
             {submitError ? (
               <div
@@ -170,7 +237,7 @@ export function SettleOrderDialog({
               >
                 取消
               </Button>
-              <Button type="submit" disabled={loading}>
+              <Button type="submit" disabled={loading || (requiresFxRate && !form.fxRate.trim())}>
                 {loading ? "结算中..." : "确认结算"}
               </Button>
             </div>

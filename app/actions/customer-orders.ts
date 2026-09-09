@@ -49,6 +49,7 @@ import {
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
 import { bindAssetReferences } from "@/lib/assets/references";
+import { getLatestFxRate } from "@/lib/fx";
 
 export type OrderStatus =
   | "DRAFT"
@@ -732,6 +733,7 @@ export async function saveOrderShippingProof(
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
   revalidatePath("/workbench");
+  revalidatePath("/collaboration/tasks");
 }
 
 export async function markOrderDelivered(orderId: string) {
@@ -1676,6 +1678,7 @@ export async function settleCustomerOrder(
     platformFee?: string;
     shippingFee?: string;
     platformFeeRate?: string;
+    fxRate?: string;
   }
 ) {
   const order = await prisma.customerOrder.findUnique({
@@ -1724,6 +1727,20 @@ export async function settleCustomerOrder(
     inventoryCost,
   });
   const feeStrings = feeResultToStrings(fees);
+  const baseCurrency = "CNY";
+  const orderCurrency = order.currency.trim().toUpperCase();
+  const settlementFxRate =
+    orderCurrency === baseCurrency
+      ? new Decimal(1)
+      : data.fxRate
+        ? parsePositiveSettlementDecimal(data.fxRate, "结算汇率")
+        : await getLatestFxRate(orderCurrency, baseCurrency, new Date());
+  if (!settlementFxRate) {
+    throw new Error(`缺少 ${orderCurrency} → ${baseCurrency} 结算汇率，请填写后再结算`);
+  }
+  const settlementNetRevenueBase = new Decimal(feeStrings.netRevenue)
+    .mul(settlementFxRate)
+    .toDecimalPlaces(4);
 
   await prisma.$transaction(async (tx) => {
     await tx.customerOrder.update({
@@ -1736,6 +1753,9 @@ export async function settleCustomerOrder(
         shippingFeeStatus: "ACTUAL",
         netRevenue: feeStrings.netRevenue,
         settledAt: new Date(),
+        settlementFxRate: settlementFxRate.toFixed(8),
+        settlementBaseCurrency: baseCurrency,
+        settlementNetRevenueBase: settlementNetRevenueBase.toFixed(4),
       },
     });
 
@@ -1802,6 +1822,7 @@ export async function settleCustomerOrderAction(
     platformFee?: string;
     shippingFee?: string;
     platformFeeRate?: string;
+    fxRate?: string;
   }
 ) {
   try {

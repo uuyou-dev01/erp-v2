@@ -26,8 +26,7 @@ export async function getCollaborationTaskSummaryForUser(
   const pendingTaskCount = await prisma.task.count({
     where: {
       assignedToId: userId,
-      type: TASK_TYPE.SHIP_ORDER,
-      refType: "CUSTOMER_ORDER",
+      type: { in: [TASK_TYPE.SHIP_ORDER, TASK_TYPE.CONFIRM_ARRIVAL] },
       status: { in: [...INCOMPLETE_TASK_STATUSES] },
       OR: roster.map((access) => ({
         organizationId: access.organizationId,

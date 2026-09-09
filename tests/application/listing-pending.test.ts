@@ -18,6 +18,7 @@ import {
   batchCreateListings,
   createListing,
   delistListingAction,
+  relistListingAction,
   updateListingAction,
 } from "@/app/actions/listings";
 
@@ -164,25 +165,20 @@ describe("listing pending platform eligibility", () => {
     const items = await getListingPendingItems(storeId);
     const item = items.find((entry) => entry.skuId === sku.id);
 
-    expect(platformCodes(item)).toEqual([
-      "MERCARI",
-      "YAHOO_AUCTION",
-      "SNKRDUNK",
-      "XIAN_YU",
-    ]);
+    expect(platformCodes(item)).toEqual(["MERCARI", "YAHOO_AUCTION", "SNKRDUNK", "XIAN_YU"]);
   });
 
   it("blocks creating a fulfillment-strict listing when the SKU has no sellable stock", async () => {
     const sku = await createLotStock("CREATE_TRANSIT_ONLY", transitLocationId, "1");
 
     const result = await createListing({
-        storeId,
-        platformId: mercariPlatformId,
-        listingType: "SKU",
-        skuId: sku.id,
-        listedPrice: "180",
-        currency: "JPY",
-      });
+      storeId,
+      platformId: mercariPlatformId,
+      listingType: "SKU",
+      skuId: sku.id,
+      listedPrice: "180",
+      currency: "JPY",
+    });
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -280,12 +276,12 @@ describe("listing pending platform eligibility", () => {
     const transitSku = await createLotStock("BATCH_TRANSIT_ONLY", transitLocationId, "1");
 
     const result = await batchCreateListings({
-        storeId,
-        platformId: mercariPlatformId,
-        skuIds: [sellableSku.id, transitSku.id],
-        listedPrice: "180",
-        currency: "JPY",
-      });
+      storeId,
+      platformId: mercariPlatformId,
+      skuIds: [sellableSku.id, transitSku.id],
+      listedPrice: "180",
+      currency: "JPY",
+    });
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -323,6 +319,57 @@ describe("listing pending platform eligibility", () => {
     }
   });
 
+  it("edits the price and currency of an active Listing without delisting it first", async () => {
+    const sku = await createLotStock("EDIT_ACTIVE", sellableLocationId, "1");
+    const listing = await prisma.listing.create({
+      data: {
+        storeId,
+        platformId: mercariPlatformId,
+        listingType: "SKU",
+        skuId: sku.id,
+        listedPrice: "180",
+        currency: "JPY",
+        status: "ACTIVE",
+        listedAt: new Date(),
+      },
+    });
+
+    const result = await updateListingAction(listing.id, {
+      listedPrice: "220",
+      currency: "CNY",
+      status: "ACTIVE",
+    });
+
+    expect(result.success).toBe(true);
+    const updated = await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } });
+    expect(updated.status).toBe("ACTIVE");
+    expect(updated.listedPrice?.toString()).toBe("220");
+    expect(updated.currency).toBe("CNY");
+  });
+
+  it("re-lists a delisted Listing when market-matching stock is available", async () => {
+    const sku = await createLotStock("RELIST", sellableLocationId, "1");
+    const listing = await prisma.listing.create({
+      data: {
+        storeId,
+        platformId: mercariPlatformId,
+        listingType: "SKU",
+        skuId: sku.id,
+        listedPrice: "180",
+        currency: "JPY",
+        status: "DELISTED",
+        delistedAt: new Date(),
+      },
+    });
+
+    const result = await relistListingAction(listing.id);
+
+    expect(result.success).toBe(true);
+    const updated = await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } });
+    expect(updated.status).toBe("ACTIVE");
+    expect(updated.delistedAt).toBeNull();
+  });
+
   it("keeps similarly named SIMPLE SKUs as separate searchable product cards", async () => {
     const first = await createLotStock("SEARCH_RED_42", sellableLocationId, "1");
     const second = await createLotStock("SEARCH_RED_43", sellableLocationId, "1");
@@ -332,13 +379,11 @@ describe("listing pending platform eligibility", () => {
     });
 
     const products = await getListingCoverageProducts(storeId);
-    const matching = products.filter((product) =>
-      [first.id, second.id].includes(product.skuId),
-    );
+    const matching = products.filter((product) => [first.id, second.id].includes(product.skuId));
 
     expect(matching).toHaveLength(2);
     expect(matching.map((product) => product.skuCode).sort()).toEqual(
-      [first.code, second.code].sort(),
+      [first.code, second.code].sort()
     );
   });
 });
@@ -353,11 +398,7 @@ function platformData(code: string, name: string, country: string) {
   };
 }
 
-async function createLotStock(
-  suffix: string,
-  locationId: string,
-  quantity: string,
-) {
+async function createLotStock(suffix: string, locationId: string, quantity: string) {
   const sku = await prisma.sKU.create({
     data: {
       storeId,
@@ -399,7 +440,7 @@ async function createStockForSku(
   skuId: string,
   locationId: string,
   quantity: string,
-  suffix: string,
+  suffix: string
 ) {
   const lot = await prisma.inventoryLot.create({
     data: {
@@ -428,6 +469,8 @@ async function createStockForSku(
   });
 }
 
-function platformCodes(item: Awaited<ReturnType<typeof getListingPendingItems>>[number] | undefined) {
+function platformCodes(
+  item: Awaited<ReturnType<typeof getListingPendingItems>>[number] | undefined
+) {
   return item?.availablePlatforms.map((platform) => platform.code) ?? [];
 }

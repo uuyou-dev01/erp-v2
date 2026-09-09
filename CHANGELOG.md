@@ -10,6 +10,32 @@ All notable changes to this project are documented here. The format follows
 
 - Future release changes are recorded here before they move into a versioned section.
 
+## [0.9.0-rc.8] - 2026-09-09
+
+### Added
+
+- Added lightweight transport-arrival collaboration tasks and completion-volume history for
+  external warehouse operators.
+- Added bundle-shipment manifests, SKU images, sender-provided shipment proofs and clipboard image
+  paste to the shipment workflow.
+- Added settlement exchange-rate snapshots with base-currency net-revenue totals.
+- Added direct editing for active Listings and one-click relisting for sold-out or delisted records.
+
+### Changed
+
+- Reworked sender and executor shipment panels around elapsed time, product verification and proof
+  visibility; unfinished tasks turn red after 20 hours instead of showing a countdown.
+- Split Listing management from sold-out/delisted history, reduced summary-card height and kept the
+  table header visible while scrolling.
+- Classified sellable inventory by its physical warehouse market rather than duplicating stock into
+  every market the warehouse can deliver to.
+
+### Fixed
+
+- Allowed an executor to submit a shipment with proofs already bound by the sender to the same order,
+  while continuing to reject unbound or cross-business assets.
+- Preserved stable client-generated identifiers across bundle-sale submissions and task creation.
+
 ## [0.9.0-rc.7] - 2026-09-09
 
 ### Added

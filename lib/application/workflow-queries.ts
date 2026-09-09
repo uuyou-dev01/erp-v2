@@ -22,6 +22,7 @@ import {
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
 import { deriveItemUnitOperationalState } from "@/lib/application/item-unit-operational-state";
+import { getLatestFxRate } from "@/lib/fx";
 
 const ACTIVE_QUEUES: WorkQueue[] = [
   "missingLogistics",
@@ -222,8 +223,9 @@ function deriveCustomerOrderItem(order: {
   createdAt: Date;
   platform: { name: string } | null;
   lines: Array<{
+    id: string;
     quantity: { toString(): string };
-    sku: { code: string; name: string };
+    sku: { code: string; name: string; imageUrl?: string | null };
     allocations: Array<{
       quantity: { toString(): string };
       status: string;
@@ -231,6 +233,13 @@ function deriveCustomerOrderItem(order: {
   }>;
 }): WorkItem | null {
   const sku = order.lines[0]?.sku;
+  const lineItems: WorkItemLine[] = order.lines.map((line) => ({
+    id: line.id,
+    title: line.sku.name,
+    skuCode: line.sku.code,
+    imageUrl: line.sku.imageUrl ?? null,
+    quantity: line.quantity.toString(),
+  }));
   const waitingSince = order.updatedAt ?? order.createdAt;
   const hasCompleteReservations =
     order.lines.length > 0 &&
@@ -253,6 +262,8 @@ function deriveCustomerOrderItem(order: {
     title: sku ? `${sku.code} · ${sku.name}` : order.orderNumber,
     subtitle: `${order.platform?.name ?? "直售"} · ${order.customerName}`,
     skuCode: sku?.code,
+    imageUrl: sku?.imageUrl ?? null,
+    lineItems,
     waitingSince: waitingSince.toISOString(),
     detailHref: `/sales/${order.id}`,
   };
@@ -1116,6 +1127,7 @@ export interface ShipmentFulfillmentAllocation {
   inventoryReference: string;
   skuCode: string;
   skuName: string;
+  imageUrl: string | null;
   quantity: string;
   locationId: string;
   locationCode: string;
@@ -1143,7 +1155,7 @@ type ShipmentAllocationSource = {
   allocationType: string;
   quantity: { toString(): string };
   status: string;
-  orderLine: { sku: { code: string; name: string } };
+  orderLine: { sku: { code: string; name: string; imageUrl?: string | null } };
   inventoryLot: {
     id: string;
     batchLabel: string | null;
@@ -1216,6 +1228,7 @@ export function buildShipmentFulfillmentContext(
           `单件 ${inventory.id.slice(-8)}`,
       skuCode: allocation.orderLine.sku.code,
       skuName: allocation.orderLine.sku.name,
+      imageUrl: allocation.orderLine.sku.imageUrl ?? null,
       quantity: new Decimal(allocation.quantity.toString()),
       locationId: inventory.location.id,
       locationCode: inventory.location.code,
@@ -1232,6 +1245,7 @@ export function buildShipmentFulfillmentContext(
       inventoryReference: allocation.inventoryReference,
       skuCode: allocation.skuCode,
       skuName: allocation.skuName,
+      imageUrl: allocation.imageUrl,
       quantity: compactQuantity(allocation.quantity),
       locationId: allocation.locationId,
       locationCode: allocation.locationCode,
@@ -1416,6 +1430,13 @@ export async function getWorkItemDetail(
           })
         : [];
     const fulfillmentContext = buildShipmentFulfillmentContext(allocationSources, inventoryLedgers);
+    const baseCurrency = "CNY";
+    const orderCurrency = order.currency.trim().toUpperCase();
+    const suggestedSettlementFxRate =
+      order.settlementFxRate ??
+      (orderCurrency === baseCurrency
+        ? new Decimal(1)
+        : await getLatestFxRate(orderCurrency, baseCurrency, new Date()));
     return {
       ...item,
       lifecycle: buildLifecycleEvents({
@@ -1431,8 +1452,16 @@ export async function getWorkItemDetail(
         orderNumber: order.orderNumber,
         shippingCountry: order.shippingCountry,
         currency: order.currency,
+        subtotal: order.subtotal.toString(),
+        totalPaid: order.totalPaid.toString(),
         platformFee: order.platformFee.toString(),
         shippingFee: order.shippingFee.toString(),
+        shippingFeeStatus: order.shippingFeeStatus,
+        netRevenue: order.netRevenue?.toString() ?? null,
+        settlementFxRate: order.settlementFxRate?.toString() ?? null,
+        settlementBaseCurrency: order.settlementBaseCurrency ?? baseCurrency,
+        settlementNetRevenueBase: order.settlementNetRevenueBase?.toString() ?? null,
+        suggestedSettlementFxRate: suggestedSettlementFxRate?.toString() ?? null,
         shippedAt: order.shippedAt?.toISOString() ?? null,
         shippingProofJson: order.shippingProof ? JSON.stringify(order.shippingProof) : null,
       },
@@ -1881,6 +1910,7 @@ export async function getProductTicketByEntity(
     title: detail.title,
     subtitle: detail.subtitle,
     skuCode: detail.skuCode,
+    imageUrl: detail.imageUrl,
     currentStatusLabel: detail.currentStatusLabel,
     lifecycleStage,
     lifecycleStageLabel:

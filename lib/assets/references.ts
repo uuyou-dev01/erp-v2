@@ -65,7 +65,7 @@ export async function bindAssetReferences(
   if (!ids.length) return [];
   if (!refType.trim() || !refId.trim()) throw new Error("资产缺少业务归属");
 
-  const result = await prisma.mobileAsset.updateMany({
+  await prisma.mobileAsset.updateMany({
     where: {
       id: { in: ids },
       organizationId: context.organizationId,
@@ -81,7 +81,25 @@ export async function bindAssetReferences(
     },
     data: { refType, refId },
   });
-  if (result.count !== ids.length) {
+
+  // A business object can contain evidence uploaded by more than one actor.
+  // For example, an order owner may provide a pickup QR code before the
+  // warehouse fulfiller adds a dispatch photo. Assets already bound to this
+  // exact object are safe to reuse; unbound assets still require uploader
+  // ownership in the update above and assets from other objects never match.
+  const boundCount = await prisma.mobileAsset.count({
+    where: {
+      id: { in: ids },
+      organizationId: context.organizationId,
+      storeId: context.storeId,
+      status: "READY",
+      visibility: "ORGANIZATION_PRIVATE",
+      purpose: { in: ["BUSINESS_EVIDENCE", "MOBILE_EVIDENCE"] },
+      refType,
+      refId,
+    },
+  });
+  if (boundCount !== ids.length) {
     throw new Error("部分凭证不存在、未上传完成、无权使用或已归属其他业务");
   }
   return ids;
@@ -180,12 +198,18 @@ export async function canReadPrivateAssetReference(
         storeId: asset.storeId,
         refType: asset.refType,
         refId: asset.refId,
-        status: { in: ["ASSIGNED", "IN_PROGRESS", "OVERDUE"] },
-        OR: [{ assignedToId: userId }, { delegatedToId: userId }, { createdById: userId }],
+        status: { in: ["ASSIGNED", "IN_PROGRESS", "OVERDUE", "DONE"] },
+        OR: [
+          { assignedToId: userId },
+          { delegatedToId: userId },
+          { completedById: userId },
+          { createdById: userId },
+        ],
       },
       select: {
         assignedToId: true,
         delegatedToId: true,
+        completedById: true,
         createdById: true,
         fulfillmentLocationId: true,
       },
@@ -199,7 +223,9 @@ export async function canReadPrivateAssetReference(
   if (storeAccess && memberIsInActiveOrganization) return true;
   if (
     !assignedTask?.fulfillmentLocationId ||
-    (assignedTask.assignedToId !== userId && assignedTask.delegatedToId !== userId)
+    (assignedTask.assignedToId !== userId &&
+      assignedTask.delegatedToId !== userId &&
+      assignedTask.completedById !== userId)
   ) {
     return false;
   }

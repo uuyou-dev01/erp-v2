@@ -1895,7 +1895,13 @@ export async function updateListing(
 ) {
   const existing = await prisma.listing.findUnique({
     where: { id },
-    select: { storeId: true },
+    select: {
+      storeId: true,
+      listedPrice: true,
+      feeRateOverride: true,
+      shippingFeeOverride: true,
+      platform: { select: { defaultFeeRate: true, defaultShippingFee: true } },
+    },
   });
   if (!existing) throw new Error("上架记录不存在或无权修改");
   await requireUserContext({ storeId: existing.storeId });
@@ -1907,17 +1913,30 @@ export async function updateListing(
     throw new Error(listedPriceInput.error);
   }
 
-  const updateData: Record<string, unknown> = {
-    status: data.status,
-    currency: data.currency,
-  };
+  if (data.status && !["ACTIVE", "DELISTED", "SOLD_OUT"].includes(data.status)) {
+    throw new Error("Listing 状态无效");
+  }
+
+  const updateData: Record<string, unknown> = {};
+  if (data.status) updateData.status = data.status;
+  if (data.currency) updateData.currency = data.currency;
 
   if (listedPriceInput.value) {
     updateData.listedPrice = listedPriceInput.value;
   }
 
+  const resolvedPrice = listedPriceInput.value ?? existing.listedPrice;
+  if (resolvedPrice) {
+    const feeRate = existing.feeRateOverride ?? existing.platform.defaultFeeRate ?? new Decimal(0);
+    const shippingFee =
+      existing.shippingFeeOverride ?? existing.platform.defaultShippingFee ?? new Decimal(0);
+    updateData.estimatedNet = resolvedPrice.mul(new Decimal(1).minus(feeRate)).minus(shippingFee);
+  }
+
   if (data.status === "DELISTED") {
     updateData.delistedAt = new Date();
+  } else if (data.status === "ACTIVE") {
+    updateData.delistedAt = null;
   }
 
   const listing = await prisma.listing.update({
@@ -1942,6 +1961,62 @@ export async function updateListingAction(
     return actionSuccess({ id: listing.id });
   } catch (error) {
     return toActionFailure(error, "更新 Listing 失败，请重试");
+  }
+}
+
+export async function relistListing(id: string) {
+  const existing = await prisma.listing.findUnique({
+    where: { id },
+    include: {
+      platform: { select: { code: true, name: true, country: true } },
+    },
+  });
+  if (!existing) throw new Error("上架记录不存在或无权再次上架");
+  await requireUserContext({ storeId: existing.storeId });
+  if (!["DELISTED", "SOLD_OUT"].includes(existing.status)) {
+    throw new Error("只有已售罄或已下架的 Listing 可以再次上架");
+  }
+
+  await assertListingHasSellableStock({
+    storeId: existing.storeId,
+    platformCode: existing.platform.code,
+    platformCountry: existing.platform.country,
+    platformName: existing.platform.name,
+    listingType: existing.listingType as "SKU" | "ITEM_UNIT",
+    skuId: existing.skuId ?? undefined,
+    itemUnitId: existing.itemUnitId ?? undefined,
+  });
+
+  const duplicate = await prisma.listing.findFirst({
+    where: {
+      id: { not: id },
+      storeId: existing.storeId,
+      platformId: existing.platformId,
+      salesChannelAccountId: existing.salesChannelAccountId,
+      listingType: existing.listingType,
+      status: "ACTIVE",
+      ...(existing.listingType === "ITEM_UNIT"
+        ? { itemUnitId: existing.itemUnitId }
+        : { skuId: existing.skuId }),
+    },
+    select: { id: true },
+  });
+  if (duplicate) throw new Error("相同商品已经在该平台账号上架，无需重复上架");
+
+  const listing = await prisma.listing.update({
+    where: { id },
+    data: { status: "ACTIVE", listedAt: new Date(), delistedAt: null },
+  });
+  revalidateListingSurfaces(id);
+  return listing;
+}
+
+export async function relistListingAction(id: string) {
+  try {
+    const listing = await relistListing(id);
+    return actionSuccess({ id: listing.id });
+  } catch (error) {
+    return toActionFailure(error, "再次上架失败，请重试");
   }
 }
 

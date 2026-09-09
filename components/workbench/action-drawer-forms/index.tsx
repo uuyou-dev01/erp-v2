@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import {
   AlertTriangle,
+  Clock3,
   ExternalLink,
   Loader2,
   ShieldCheck,
@@ -14,7 +15,6 @@ import {
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
 import type { WorkItem } from "@/lib/application/next-actions";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -42,7 +42,7 @@ import {
 } from "@/app/actions/workflow-actions";
 import { parseShippingProof } from "@/lib/application/shipping-proof";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   WorkbenchLocationSelect,
   findWorkbenchLocationId,
@@ -51,6 +51,7 @@ import {
 import { updateQuickEntry } from "@/app/actions/quick-entries";
 import { formatQuickEntryExceptionMessage, parseIncompleteReasons } from "@/lib/quick-entry-utils";
 import { itemFunctionStatusOptions, usedItemGradeOptions } from "@/lib/inventory/item-condition";
+import { getShippingTaskTiming } from "@/lib/application/shipping-task-timing";
 
 export type WorkbenchPlatformOption = {
   id: string;
@@ -1011,106 +1012,113 @@ function ShipmentFulfillmentSummary({
   }
 
   return (
-    <section
-      aria-labelledby="shipment-source-title"
-      className="overflow-hidden rounded-lg border border-blue-200 bg-blue-50/50"
-    >
-      <div className="flex items-start justify-between gap-3 border-b border-blue-100 px-3 py-3">
-        <div className="flex min-w-0 items-start gap-2">
-          <Warehouse className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
-          <div className="min-w-0">
-            <h3 id="shipment-source-title" className="text-sm font-semibold text-foreground">
-              本次出库
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              已按订单库存分配锁定，确认发货时将从以下库存扣减。
-            </p>
-          </div>
+    <section aria-labelledby="shipment-source-title" className="overflow-hidden rounded-lg border">
+      <div className="flex items-start justify-between gap-3 border-b bg-amber-50/60 px-3 py-3">
+        <div>
+          <h3 id="shipment-source-title" className="text-sm font-semibold text-foreground">
+            先核对本次要发的货
+          </h3>
+          <p className="mt-0.5 text-xs text-amber-900/80">
+            按商品图、SKU 和数量逐项取货，确认无误后再发出。
+          </p>
         </div>
-        <Badge variant="outline" className="shrink-0 border-blue-200 bg-background text-blue-700">
-          {context.isMultiLocation ? `${context.locations.length} 个仓库` : "单仓出库"}
-        </Badge>
+        <span className="shrink-0 text-base font-semibold tabular-nums">
+          共 {quantityLabel(context.totalQuantity)} 件
+        </span>
       </div>
 
-      <div className="divide-y divide-blue-100">
-        {context.locations.map((location) => (
-          <div
-            key={location.id}
-            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-          >
-            <div className="min-w-0">
-              <p className="truncate font-medium">{location.name}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">仓库编码 {location.code}</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-3">
-              <Link
-                href={`/inventory/locations/${location.id}?returnTo=${encodeURIComponent(returnTo)}`}
-                className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
+      <div className="divide-y">
+        {context.allocations.map((allocation) => (
+          <div key={allocation.id} className="flex items-center gap-3 px-3 py-3 text-xs">
+            {allocation.imageUrl ? (
+              <a
+                href={allocation.imageUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`查看 ${allocation.skuName} 商品原图`}
+                className="shrink-0 rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
               >
-                仓库设置
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-              <span className="font-semibold tabular-nums">
-                {quantityLabel(location.quantity)} 件
-              </span>
-            </div>
-          </div>
-        ))}
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-          <div className="flex items-center gap-2">
-            <UserRound className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">任务执行人</span>
-          </div>
-          <span className="font-medium">{assigneeName}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-emerald-700" />
-            <span className="text-muted-foreground">权限校验</span>
-          </div>
-          <span className="font-medium text-emerald-700">提交时按全部出库仓复核</span>
-        </div>
-      </div>
-
-      <details className="group border-t border-blue-100 bg-background/60">
-        <summary className="cursor-pointer list-none px-3 py-2.5 text-xs font-medium text-blue-800 [&::-webkit-details-marker]:hidden">
-          查看 {context.allocations.length} 条库存明细
-        </summary>
-        <div className="divide-y border-t border-blue-100">
-          {context.allocations.map((allocation) => (
-            <div key={allocation.id} className="px-3 py-2.5 text-xs">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">
-                    {allocation.skuCode} · {allocation.skuName}
-                  </p>
-                  <p className="mt-1 text-muted-foreground">
-                    {allocation.inventoryReference} · {allocation.locationName}
-                  </p>
-                </div>
-                <span className="shrink-0 font-medium tabular-nums">
-                  扣减 {quantityLabel(allocation.quantity)} 件
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={allocation.imageUrl}
+                  alt={`${allocation.skuName} 商品图`}
+                  className="h-20 w-20 rounded-md border bg-background object-cover"
+                />
+              </a>
+            ) : (
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md border bg-muted text-[10px] text-muted-foreground">
+                暂无图片
               </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{allocation.skuName}</p>
+              <p className="mt-1 text-muted-foreground">SKU {allocation.skuCode}</p>
+              <p className="mt-1 text-muted-foreground">
+                {allocation.inventoryReference} · {allocation.locationName}
+              </p>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-lg font-semibold tabular-nums">
+                × {quantityLabel(allocation.quantity)}
+              </p>
               {allocation.remainingAfterShipment !== null ? (
-                <p className="mt-1 text-muted-foreground">
-                  预计扣减后剩余 {quantityLabel(allocation.remainingAfterShipment)} 件
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  发出后余 {quantityLabel(allocation.remainingAfterShipment)}
                 </p>
               ) : null}
             </div>
-          ))}
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-2 border-t bg-muted/25 px-3 py-3 text-xs">
+        {context.locations.map((location) => (
+          <div key={location.id} className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Warehouse className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">
+                从 {location.name}（{location.code}）出库
+              </span>
+            </div>
+            <Link
+              href={`/inventory/locations/${location.id}?returnTo=${encodeURIComponent(returnTo)}`}
+              className="inline-flex shrink-0 items-center gap-1 font-medium text-blue-700 hover:text-blue-900"
+            >
+              查看仓库
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <UserRound className="h-4 w-4" />
+            <span>执行人</span>
+          </div>
+          <span className="font-medium">{assigneeName}</span>
         </div>
-      </details>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <ShieldCheck className="h-4 w-4 text-emerald-700" />
+            <span>提交校验</span>
+          </div>
+          <span className="font-medium text-emerald-700">按全部出库仓复核库存</span>
+        </div>
+      </div>
     </section>
   );
 }
 
-export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProps) {
+export function ShipOrderForm({
+  detail,
+  taskItem,
+  assignmentPanel,
+  pending,
+  run,
+}: ActionFormProps & { assignmentPanel?: ReactNode }) {
   const initialProof = proofFromDetail(detail);
   const initialShippingMethod = initialProof.shippingMethod ?? "";
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [confirmStep, setConfirmStep] = useState(false);
   const [draftHint, setDraftHint] = useState(initialProof.updatedAt ? "已加载暂存内容" : "");
   const [shippingMethodChoice, setShippingMethodChoice] = useState(
     SHIPPING_METHOD_OPTIONS.includes(
@@ -1121,11 +1129,7 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
         ? "OTHER"
         : ""
   );
-  const [checks, setChecks] = useState({
-    proofChecked: false,
-    sourceChecked: false,
-    shippedConfirmed: false,
-  });
+  const [shipmentChecked, setShipmentChecked] = useState(false);
   const [form, setForm] = useState({
     shipper: initialProof.shipper ?? "",
     shippingMethod: initialShippingMethod,
@@ -1135,46 +1139,96 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
     imageUrls: initialProof.imageUrls ?? [],
   });
 
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const persistDraft = useCallback(
+    (next: typeof form, options?: { successMessage?: string; silent?: boolean }) => {
+      run(
+        () =>
+          submitSaveShippingProof(detail.entityId, {
+            shipper: next.shipper,
+            shippingMethod: next.shippingMethod,
+            trackingNo: next.trackingNo,
+            pickupCode: next.pickupCode,
+            proofNote: next.proofNote,
+            imageUrls: next.imageUrls,
+          }),
+        {
+          keepOpen: true,
+          successMessage: options?.silent
+            ? undefined
+            : (options?.successMessage ?? "已暂存。代发方可查看凭证，发出后再点「确认已发货」。"),
+        }
+      );
+    },
+    [detail.entityId, run]
+  );
 
-    const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
-    if (!validTypes.includes(file.type)) {
-      setUploadError("不支持的文件类型。仅支持 JPEG、PNG、GIF 和 WebP。");
-      event.target.value = "";
-      return;
-    }
+  const uploadProofFiles = useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      setUploadError("文件过大，最大 5MB。");
-      event.target.value = "";
-      return;
-    }
-
-    setUploading(true);
-    setUploadError(null);
-    try {
-      const uploadFormData = new FormData();
-      uploadFormData.append("file", file);
-      uploadFormData.append("purpose", "BUSINESS_EVIDENCE");
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: uploadFormData,
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "上传失败");
+      const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+      if (files.some((file) => !validTypes.includes(file.type))) {
+        setUploadError("不支持的文件类型。仅支持 JPEG、PNG、GIF 和 WebP。");
+        return;
       }
-      const { url } = await response.json();
-      setForm((value) => ({ ...value, imageUrls: [...value.imageUrls, url] }));
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : "图片上传失败");
-    } finally {
-      setUploading(false);
-      event.target.value = "";
-    }
+
+      if (files.some((file) => file.size > 5 * 1024 * 1024)) {
+        setUploadError("文件过大，每张图片最大 5MB。");
+        return;
+      }
+
+      setUploading(true);
+      setUploadError(null);
+      try {
+        const urls = await Promise.all(
+          files.map(async (file) => {
+            const uploadFormData = new FormData();
+            uploadFormData.append("file", file);
+            uploadFormData.append("purpose", "BUSINESS_EVIDENCE");
+            const response = await fetch("/api/upload", {
+              method: "POST",
+              body: uploadFormData,
+            });
+            if (!response.ok) {
+              const error = await response.json();
+              throw new Error(error.error || "上传失败");
+            }
+            const result = (await response.json()) as { url: string };
+            return result.url;
+          })
+        );
+        const next = { ...form, imageUrls: [...form.imageUrls, ...urls] };
+        setForm(next);
+        setDraftHint("凭证图片已上传并暂存，代发方现在可以查看");
+        persistDraft(next, { successMessage: "发货凭证已上传并暂存，代发方现在可以查看。" });
+      } catch (error) {
+        setUploadError(error instanceof Error ? error.message : "图片上传失败");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [form, persistDraft]
+  );
+
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    await uploadProofFiles(files);
+    event.target.value = "";
   };
+
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      if (uploading) return;
+      const imageFiles = Array.from(event.clipboardData?.files ?? []).filter((file) =>
+        file.type.startsWith("image/")
+      );
+      if (!imageFiles.length) return;
+      event.preventDefault();
+      void uploadProofFiles(imageFiles);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [uploadProofFiles, uploading]);
 
   const payload = () => ({
     shipper: form.shipper,
@@ -1184,29 +1238,6 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
     proofNote: form.proofNote,
     imageUrls: form.imageUrls,
   });
-
-  const persistDraft = (
-    next: typeof form,
-    options?: { successMessage?: string; silent?: boolean }
-  ) => {
-    run(
-      () =>
-        submitSaveShippingProof(detail.entityId, {
-          shipper: next.shipper,
-          shippingMethod: next.shippingMethod,
-          trackingNo: next.trackingNo,
-          pickupCode: next.pickupCode,
-          proofNote: next.proofNote,
-          imageUrls: next.imageUrls,
-        }),
-      {
-        keepOpen: true,
-        successMessage: options?.silent
-          ? undefined
-          : (options?.successMessage ?? "已暂存。代发方可查看凭证，发出后再点「确认已发货」。"),
-      }
-    );
-  };
 
   const removeImage = (url: string) => {
     const next = {
@@ -1225,99 +1256,53 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
     taskItem?.taskAssignedToName ??
     detail.taskAssignedToName ??
     "未指派（提交人将记录为实际执行人）";
-  const allChecksPassed = checks.proofChecked && checks.sourceChecked && checks.shippedConfirmed;
-
-  const openConfirmStep = () => {
-    setChecks({ proofChecked: false, sourceChecked: false, shippedConfirmed: false });
-    setConfirmStep(true);
-  };
-
-  if (confirmStep) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-          <p className="font-medium">本次发货与库存扣减</p>
-          <ul className="mt-2 space-y-1 text-muted-foreground">
-            <li>
-              出库仓：
-              {fulfillmentContext?.locations.map((location) => location.name).join("、") ||
-                "未确定"}
-            </li>
-            <li>
-              扣减数量：
-              {fulfillmentContext
-                ? `${quantityLabel(fulfillmentContext.totalQuantity)} 件`
-                : "未确定"}
-            </li>
-            <li>任务执行人：{assigneeName}</li>
-            <li>现场交接联系人：{form.shipper.trim() || "未填写"}</li>
-            <li>发货方式：{form.shippingMethod.trim() || "未填写"}</li>
-            <li>取件码：{form.pickupCode.trim() || "未填写"}</li>
-            <li>凭证图片：{form.imageUrls.length} 张</li>
-            <li>运单号：{form.trackingNo.trim() || "未填写"}</li>
-          </ul>
-        </div>
-
-        <div className="space-y-2 rounded-lg border p-3">
-          <Checkbox
-            checked={checks.proofChecked}
-            onChange={(event) =>
-              setChecks((value) => ({ ...value, proofChecked: event.target.checked }))
-            }
-            label="我已核对取件码 / 二维码等发货凭证"
-          />
-          <Checkbox
-            checked={checks.sourceChecked}
-            onChange={(event) =>
-              setChecks((value) => ({ ...value, sourceChecked: event.target.checked }))
-            }
-            label="我已核对出库仓、库存明细和任务执行人"
-          />
-          <Checkbox
-            checked={checks.shippedConfirmed}
-            onChange={(event) =>
-              setChecks((value) => ({ ...value, shippedConfirmed: event.target.checked }))
-            }
-            label="我确认货物已由发货方发出，同意扣减库存"
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => setConfirmStep(false)}
-          >
-            返回修改
-          </Button>
-          <Button
-            type="button"
-            disabled={pending || !allChecksPassed || !hasCompleteFulfillmentSource}
-            onClick={() => run(() => submitShipOrder(detail.entityId, payload()))}
-          >
-            {pending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                提交中...
-              </>
-            ) : (
-              "确认已发货"
-            )}
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const taskTiming = getShippingTaskTiming({
+    createdAt: taskItem?.taskCreatedAt ?? detail.taskCreatedAt ?? detail.waitingSince,
+    dueAt: taskItem?.taskDueAt ?? detail.taskDueAt,
+    status: taskItem?.taskStatus ?? detail.taskStatus ?? detail.currentStatus,
+  });
 
   return (
     <form
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
-        openConfirmStep();
+        run(() => submitShipOrder(detail.entityId, payload()));
       }}
     >
+      <section
+        aria-label="发货时限"
+        className={cn(
+          "flex items-center justify-between gap-3 rounded-lg border px-3 py-3",
+          taskTiming.tone === "overdue" && "border-destructive/30 bg-destructive/5",
+          taskTiming.tone === "warning" && "border-amber-200 bg-amber-50/60"
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-2.5">
+          <Clock3
+            className={cn(
+              "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
+              taskTiming.tone === "overdue" && "text-destructive",
+              taskTiming.tone === "warning" && "text-amber-700"
+            )}
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{taskTiming.scheduleLabel}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{taskTiming.createdLabel}</p>
+          </div>
+        </div>
+        <p
+          className={cn(
+            "shrink-0 text-sm font-semibold tabular-nums",
+            taskTiming.tone === "overdue" && "text-destructive",
+            taskTiming.tone === "warning" && "text-amber-700"
+          )}
+        >
+          {taskTiming.urgencyLabel}
+        </p>
+      </section>
+
       {draftHint ? (
         <p className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-800">
           {draftHint}
@@ -1325,6 +1310,12 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
       ) : null}
 
       <ShipmentFulfillmentSummary detail={detail} assigneeName={assigneeName} />
+
+      {assignmentPanel}
+
+      <p className="text-xs text-muted-foreground">
+        物流与凭证信息均为选填；最后只需完成一次发货核对。
+      </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
@@ -1338,7 +1329,7 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
           <p className="text-xs text-muted-foreground">任务执行人以上方指派记录为准。</p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="shipping-method">发货方式</Label>
+          <Label htmlFor="shipping-method">发货方式（选填）</Label>
           <Select
             id="shipping-method"
             value={shippingMethodChoice}
@@ -1372,7 +1363,7 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
         </div>
       </div>
       <div className="space-y-2">
-        <Label htmlFor="shipping-tracking-no">运单号</Label>
+        <Label htmlFor="shipping-tracking-no">运单号（选填）</Label>
         <Input
           id="shipping-tracking-no"
           value={form.trackingNo}
@@ -1381,7 +1372,7 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="shipping-pickup-code">取件码 / 交接码</Label>
+        <Label htmlFor="shipping-pickup-code">取件码 / 交接码（选填）</Label>
         <Input
           id="shipping-pickup-code"
           value={form.pickupCode}
@@ -1390,23 +1381,32 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="shipping-proof-images">发货凭证图片</Label>
+        <Label htmlFor="shipping-proof-images">发货凭证图片（选填）</Label>
         <p className="text-xs text-muted-foreground">
-          可上传平台二维码、取件截图等；可先暂存，发给代发方后再确认发货
+          可上传平台二维码、便利店付款码或取件截图。上传后会立即暂存，代发方可查看原图。
         </p>
         {form.imageUrls.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {form.imageUrls.map((url) => (
               <div key={url} className="relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={url}
-                  alt="发货凭证"
-                  className="h-20 w-20 rounded-md border object-cover"
-                />
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="查看发货凭证原图"
+                  className="block rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt="发货凭证"
+                    className="h-20 w-20 rounded-md border object-cover"
+                  />
+                </a>
                 <button
                   type="button"
                   className="absolute -right-1 -top-1 z-10 rounded-full bg-destructive px-1.5 text-[10px] text-destructive-foreground shadow"
+                  aria-label="删除发货凭证"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1419,13 +1419,19 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
             ))}
           </div>
         ) : null}
-        <Input
-          id="shipping-proof-images"
-          type="file"
-          accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
-          disabled={pending || uploading}
-          onChange={handleImageUpload}
-        />
+        <div className="rounded-lg border border-dashed bg-muted/20 p-3">
+          <Input
+            id="shipping-proof-images"
+            type="file"
+            multiple
+            accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+            disabled={pending || uploading}
+            onChange={handleImageUpload}
+          />
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            也可以直接按 ⌘V / Ctrl+V 粘贴剪贴板中的图片
+          </p>
+        </div>
         {uploading ? <p className="text-xs text-muted-foreground">图片上传中...</p> : null}
         {uploadError ? (
           <p role="alert" className="text-xs text-destructive">
@@ -1434,12 +1440,20 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
         ) : null}
       </div>
       <div className="space-y-2">
-        <Label htmlFor="shipping-proof-note">发货凭证备注</Label>
+        <Label htmlFor="shipping-proof-note">发货凭证备注（选填）</Label>
         <Textarea
           id="shipping-proof-note"
           value={form.proofNote}
           onChange={(event) => setForm((value) => ({ ...value, proofNote: event.target.value }))}
           placeholder="补充说明，如取件时间、联系人等"
+        />
+      </div>
+      <div className="rounded-lg border bg-muted/25 p-3">
+        <p className="mb-2 text-sm font-medium">发货确认（必选）</p>
+        <Checkbox
+          checked={shipmentChecked}
+          onChange={(event) => setShipmentChecked(event.target.checked)}
+          label="我已按商品图、SKU、数量和出库仓核对，确认货物已经发出"
         />
       </div>
       <div className="sticky bottom-0 z-10 -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur">
@@ -1455,7 +1469,10 @@ export function ShipOrderForm({ detail, taskItem, pending, run }: ActionFormProp
           >
             暂存
           </Button>
-          <SubmitButton pending={pending || uploading} disabled={!hasCompleteFulfillmentSource}>
+          <SubmitButton
+            pending={pending || uploading}
+            disabled={!hasCompleteFulfillmentSource || !shipmentChecked}
+          >
             确认已发货
           </SubmitButton>
         </div>
@@ -1813,11 +1830,27 @@ export function ReturnInspectionForm({ detail, pending, run }: ActionFormProps) 
 }
 
 export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
+  const currency = detail.actionContext.currency ?? "CNY";
+  const baseCurrency = detail.actionContext.settlementBaseCurrency ?? "CNY";
+  const originalSalePrice = detail.actionContext.totalPaid ?? detail.actionContext.subtotal ?? "0";
   const [form, setForm] = useState({
     actualSalePrice: "",
     platformFee: detail.actionContext.platformFee ?? "",
     shippingFee: detail.actionContext.shippingFee ?? "",
+    fxRate:
+      detail.actionContext.settlementFxRate ??
+      detail.actionContext.suggestedSettlementFxRate ??
+      (currency === baseCurrency ? "1" : ""),
   });
+  const salePrice = Number(form.actualSalePrice || originalSalePrice || 0);
+  const platformFee = Number(form.platformFee || 0);
+  const shippingFee = Number(form.shippingFee || 0);
+  const fxRate = Number(form.fxRate || 0);
+  const netRevenue = salePrice - platformFee - shippingFee;
+  const formatAmount = (amount: number, amountCurrency = currency) =>
+    `${amountCurrency} ${Number.isFinite(amount) ? amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : "—"}`;
+  const requiresFxRate = currency !== baseCurrency;
+  const shippingFeeRequired = detail.actionContext.shippingFeeStatus === "PENDING";
 
   return (
     <form
@@ -1827,9 +1860,49 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
         run(() => submitSettleOrder(detail.entityId, form));
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>实际售价</Label>
+      <section className="overflow-hidden rounded-lg border" aria-labelledby="settlement-summary">
+        <div className="border-b bg-muted/30 px-3 py-2.5">
+          <h3 id="settlement-summary" className="text-sm font-semibold">
+            待结算汇总
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            成交金额已从销售订单带入，本次主要核对费用与汇率。
+          </p>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 px-3 py-3 text-sm">
+          <div>
+            <dt className="text-xs text-muted-foreground">已记录成交金额</dt>
+            <dd className="mt-0.5 font-medium tabular-nums">{formatAmount(salePrice)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">预计净入账</dt>
+            <dd className="mt-0.5 font-semibold tabular-nums">{formatAmount(netRevenue)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">平台手续费</dt>
+            <dd className="mt-0.5 tabular-nums">{formatAmount(platformFee)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">实际邮费</dt>
+            <dd className="mt-0.5 tabular-nums">{formatAmount(shippingFee)}</dd>
+          </div>
+          {fxRate > 0 ? (
+            <div className="col-span-2 border-t pt-2">
+              <dt className="text-xs text-muted-foreground">
+                汇率快照 · 1 {currency} = {form.fxRate} {baseCurrency}
+              </dt>
+              <dd className="mt-0.5 font-medium tabular-nums">
+                折合净入账 {formatAmount(netRevenue * fxRate, baseCurrency)}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      </section>
+
+      <details className="rounded-lg border bg-background px-3 py-2.5">
+        <summary className="cursor-pointer text-sm font-medium">修正已记录的成交金额</summary>
+        <div className="mt-3 space-y-2">
+          <Label>实际成交金额（选填）</Label>
           <Input
             type="number"
             min="0.01"
@@ -1838,10 +1911,15 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
             onChange={(event) =>
               setForm((value) => ({ ...value, actualSalePrice: event.target.value }))
             }
+            placeholder={`当前 ${formatAmount(Number(originalSalePrice || 0))}`}
           />
+          <p className="text-xs text-muted-foreground">只有实际到账与原订单不一致时才需要填写。</p>
         </div>
+      </details>
+
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>实际手续费</Label>
+          <Label>实际手续费（选填）</Label>
           <Input
             type="number"
             min="0"
@@ -1853,19 +1931,41 @@ export function SettleOrderForm({ detail, pending, run }: ActionFormProps) {
           />
         </div>
         <div className="space-y-2">
-          <Label>实际邮费</Label>
+          <Label>实际邮费{shippingFeeRequired ? "（必填）" : "（选填）"}</Label>
           <Input
             type="number"
             min="0"
             step="0.01"
+            required={shippingFeeRequired}
             value={form.shippingFee}
             onChange={(event) =>
               setForm((value) => ({ ...value, shippingFee: event.target.value }))
             }
           />
         </div>
+        <div className="space-y-2 sm:col-span-2">
+          <Label>
+            结算汇率（{currency} → {baseCurrency}
+            {requiresFxRate ? "，必填" : "，无需填写"}）
+          </Label>
+          <Input
+            type="number"
+            min="0.00000001"
+            step="0.00000001"
+            required={requiresFxRate}
+            disabled={!requiresFxRate}
+            value={form.fxRate}
+            onChange={(event) => setForm((value) => ({ ...value, fxRate: event.target.value }))}
+            placeholder={`1 ${currency} 对应的 ${baseCurrency} 金额`}
+          />
+          <p className="text-xs text-muted-foreground">
+            结算时会保存这次汇率快照，后续汇率变化不会改写本单。
+          </p>
+        </div>
       </div>
-      <SubmitButton pending={pending}>完成结算</SubmitButton>
+      <SubmitButton pending={pending} disabled={requiresFxRate && !form.fxRate.trim()}>
+        完成结算
+      </SubmitButton>
 
       <OrderReturnSection detail={detail} pending={pending} run={run} />
     </form>

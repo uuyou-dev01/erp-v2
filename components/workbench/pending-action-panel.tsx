@@ -212,7 +212,21 @@ export function PendingActionPanel({
       );
     }
     if (detail.primaryAction === "shipOrder") {
-      return <ShipOrderForm detail={detail} taskItem={taskItem} pending={pending} run={run} />;
+      return (
+        <ShipOrderForm
+          detail={detail}
+          taskItem={taskItem}
+          pending={pending}
+          run={run}
+          assignmentPanel={
+            <TaskAssignmentCard
+              item={taskItem}
+              members={assignableMembers}
+              onAssigned={onComplete}
+            />
+          }
+        />
+      );
     }
     if (detail.primaryAction === "confirmDelivery") {
       return <ShippedOrderForm detail={detail} pending={pending} run={run} />;
@@ -249,6 +263,7 @@ export function PendingActionPanel({
   const isQuickEntryException =
     detail.entityType === "quickEntry" &&
     (detail.primaryAction === "resolveException" || detail.primaryAction === "retryProcess");
+  const isShippingAction = detail.primaryAction === "shipOrder";
   const actionTitle = isQuickEntryException
     ? "补齐录入信息"
     : detail.primaryAction === "viewDetails"
@@ -317,23 +332,33 @@ export function PendingActionPanel({
         />
       }
       context={
-        <>
-          <TaskAssignmentCard item={taskItem} members={assignableMembers} onAssigned={onComplete} />
-          <ContextSummaryCard detail={detail} />
-          <PurchaseLinesCard detail={detail} />
-        </>
+        isShippingAction ? undefined : (
+          <>
+            <TaskAssignmentCard
+              item={taskItem}
+              members={assignableMembers}
+              onAssigned={onComplete}
+            />
+            <ContextSummaryCard detail={detail} />
+            <PurchaseLinesCard detail={detail} />
+          </>
+        )
       }
-      suggestions={<SmartSuggestionPanel suggestions={suggestions} />}
+      suggestions={
+        isShippingAction ? undefined : <SmartSuggestionPanel suggestions={suggestions} />
+      }
       footer={<ActionFooter detailHref={detailHref} />}
     >
       <div className="mb-3">
         <h3 className="text-sm font-semibold">
-          {isQuickEntryException ? "需要补充的信息" : "操作表单"}
+          {isQuickEntryException ? "需要补充的信息" : isShippingAction ? "发货核对" : "操作表单"}
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
           {isQuickEntryException
             ? "这里只显示本次处理缺少的字段。"
-            : "只填写完成当前动作所需的信息。"}
+            : isShippingAction
+              ? "先确认商品与发货时限，再填写需要交给仓库的信息。"
+              : "只填写完成当前动作所需的信息。"}
         </p>
       </div>
       {noticePanel}

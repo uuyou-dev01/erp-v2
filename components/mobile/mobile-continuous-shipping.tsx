@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MobileBarcodeScanner } from "@/components/mobile/mobile-barcode-scanner";
 import { uploadMobileAsset } from "@/lib/mobile/client-upload";
+import { createClientId } from "@/lib/client-id";
 
 type ShippingTask = { id: string; title: string; subtitle: string | null };
 
@@ -30,7 +31,7 @@ export function MobileContinuousShipping({ tasks }: { tasks: ShippingTask[] }) {
       if (!detailResponse.ok || !detail.expectedVersion) throw new Error(detail.error?.message || "任务已变化，请刷新");
       const response = await fetch(`/api/v1/mobile/tasks/${encodeURIComponent(task.id)}/actions/shipOrder`, {
         method: "POST",
-        headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
+        headers: { "content-type": "application/json", "idempotency-key": createClientId() },
         body: JSON.stringify({ expectedVersion: detail.expectedVersion, fields: { trackingNo, shippingMethod, imageUrls: assets.map((asset) => asset.url), assetIds: assets.map((asset) => asset.assetId) }, confirmation: { acceptedImpact: true } }),
       });
       const body = await response.json() as { error?: { message?: string } };

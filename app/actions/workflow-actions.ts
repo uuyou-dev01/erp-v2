@@ -137,6 +137,7 @@ export interface SettleOrderPayload {
   actualSalePrice?: string;
   platformFee?: string;
   shippingFee?: string;
+  fxRate?: string;
 }
 
 function clean(value?: string | null) {
@@ -313,7 +314,7 @@ export async function submitFillLogistics(
     if (!order) throw new Error("采购单不存在");
     const shippingCost = normalizeLogisticsCostInput(
       { amount: payload.shippingCost, currency: payload.shippingCurrency },
-      order.currency,
+      order.currency
     );
 
     const shippedAt = new Date();
@@ -857,6 +858,7 @@ export async function submitSettleOrder(entityId: string, payload: SettleOrderPa
     actualSalePrice: clean(payload.actualSalePrice),
     platformFee: clean(payload.platformFee),
     shippingFee: clean(payload.shippingFee),
+    fxRate: clean(payload.fxRate),
   });
   return { success: true };
 }

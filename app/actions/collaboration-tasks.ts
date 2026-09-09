@@ -21,6 +21,9 @@ import {
   withdrawShipOrderTask,
 } from "@/lib/application/shipping-dispatch-lifecycle";
 import { capabilitiesForLocationFulfillerRole } from "@/lib/application/collaboration-capabilities";
+import { getCollaborationArrivalTasksForUser } from "@/lib/application/collaboration-arrival-tasks";
+import { updateConsolidationStatus } from "@/app/actions/consolidations";
+import { completeTask, TASK_TYPE } from "@/lib/application/tasks";
 
 const ACTIVE_TASK_STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "OVERDUE"];
 const VISIBLE_CREATED_TASK_STATUSES = [...ACTIVE_TASK_STATUSES, "DONE", "CANCELLED"];
@@ -103,6 +106,65 @@ export async function getMyCollaborationWorkMetrics() {
   return getMyWorkMetrics({ userId: user.id });
 }
 
+export async function getCollaborationArrivalTasks() {
+  const user = await requireAuthenticatedUser();
+  return getCollaborationArrivalTasksForUser(user.id);
+}
+
+export async function completeCollaborationArrivalTaskAction(taskId: string) {
+  try {
+    const user = await requireAuthenticatedUser();
+    const task = await prisma.task.findFirst({
+      where: {
+        id: taskId,
+        assignedToId: user.id,
+        type: TASK_TYPE.CONFIRM_ARRIVAL,
+        refType: "CONSOLIDATION_BATCH",
+        status: { in: ACTIVE_TASK_STATUSES },
+        fulfillmentLocationId: { not: null },
+      },
+    });
+    if (!task?.fulfillmentLocationId) throw new Error("到仓任务不存在或已经完成");
+
+    const roster = await prisma.locationFulfiller.findFirst({
+      where: {
+        organizationId: task.organizationId,
+        locationId: task.fulfillmentLocationId,
+        userId: user.id,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    if (!roster) throw new Error("你已不在该仓库的协作范围内");
+
+    const batch = await prisma.consolidationBatch.findUnique({
+      where: { id: task.refId },
+      select: { status: true, storeId: true, toLocationId: true },
+    });
+    if (!batch) throw new Error("集运批次不存在");
+    if (batch.storeId !== task.storeId || batch.toLocationId !== task.fulfillmentLocationId) {
+      throw new Error("到仓任务与集运批次不匹配");
+    }
+    if (batch.status === "SHIPPED") {
+      await updateConsolidationStatus(task.refId, "RECEIVED");
+    } else if (batch.status !== "RECEIVED") {
+      throw new Error("当前集运状态不能确认到货");
+    }
+
+    await completeTask({ taskId: task.id, completedById: user.id });
+    revalidateCollaborationTaskViews();
+    revalidatePath(`/logistics/consolidations/${task.refId}`);
+    revalidatePath("/logistics/consolidations");
+    revalidatePath("/inventory/lots");
+    revalidatePath("/inventory/items");
+    revalidatePath("/inventory/sellable");
+    revalidatePath("/notifications");
+    return actionSuccess({ taskId, outcome: "arrival_confirmed" });
+  } catch (error) {
+    return toActionFailure(error, "确认集运到货失败，请重试");
+  }
+}
+
 /**
  * Dashboard members need both sides of a warehouse hand-off: work assigned to
  * them and work they initiated for somebody else. The standalone collaborator
@@ -131,6 +193,7 @@ export async function getWarehouseCollaborationTaskInbox() {
       assignedToId: true,
       fulfillmentLocationId: true,
       refId: true,
+      metadata: true,
     },
     orderBy: [{ dueAt: "asc" }, { createdAt: "desc" }],
   });
@@ -241,6 +304,11 @@ export async function getWarehouseCollaborationTaskInbox() {
         dueAt: task.dueAt?.toISOString() ?? null,
         createdAt: task.createdAt.toISOString(),
         completedAt: task.completedAt?.toISOString() ?? null,
+        isBundleSale:
+          task.metadata !== null &&
+          typeof task.metadata === "object" &&
+          !Array.isArray(task.metadata) &&
+          task.metadata.bundleSale === true,
         organizationId: task.organizationId,
         fulfillmentLocationId: task.fulfillmentLocationId,
         organizationName: organizationById.get(task.organizationId)?.name || "当前企业",

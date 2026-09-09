@@ -143,6 +143,7 @@ describe("listing quick sell reservations", () => {
       externalOrderNo: `SO_${runId}_1`,
     });
 
+    if (!firstSale.success) throw new Error(firstSale.error);
     expect(firstSale.success).toBe(true);
     await expectLotQuantity(lotId, "1");
     expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(0);
@@ -184,6 +185,7 @@ describe("listing quick sell reservations", () => {
       shipFromLocationId: locationId,
       externalOrderNo: `SO_${runId}_multi_1`,
     });
+    if (!firstSale.success) throw new Error(firstSale.error);
     expect(firstSale.success).toBe(true);
     expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(1);
     expect(
@@ -590,8 +592,8 @@ describe("listing quick sell reservations", () => {
       shipFromLocationId: locationId,
       externalOrderNo: `SO_${runId}_cancel_1`,
     });
-    expect(sale.success).toBe(true);
     if (!sale.success) throw new Error(sale.error);
+    expect(sale.success).toBe(true);
 
     await cancelCustomerOrder(sale.orderId, "buyer cancelled");
     await expectLotQuantity(lotId, "1");
@@ -682,8 +684,8 @@ describe("listing quick sell reservations", () => {
       shipFromLocationId: locationId,
       externalOrderNo: `SO_${runId}_return`,
     });
-    expect(sale.success).toBe(true);
     if (!sale.success) throw new Error(sale.error);
+    expect(sale.success).toBe(true);
 
     await markOrderShipped(sale.orderId, { trackingNo: `TRK_${runId}` });
     await expectLotQuantity(lotId, "0");

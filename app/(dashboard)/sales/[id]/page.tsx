@@ -29,6 +29,7 @@ import {
 import { BackButton } from "@/components/shared/back-button";
 import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 import { canShipOrders } from "@/lib/auth/permissions";
+import { getLatestFxRate } from "@/lib/fx";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +98,12 @@ export default async function CustomerOrderDetailPage({
         .reduce((sum, allocation) => sum.plus(allocation.quantity.toString()), new Decimal(0));
       return allocatedQuantity.eq(line.quantity.toString());
     });
+  const settlementBaseCurrency = order.settlementBaseCurrency ?? "CNY";
+  const suggestedSettlementFxRate =
+    order.settlementFxRate ??
+    (order.currency === settlementBaseCurrency
+      ? new Decimal(1)
+      : await getLatestFxRate(order.currency, settlementBaseCurrency, new Date()));
 
   // --- Profit breakdown ---
   const totalPaid = new Decimal(order.totalPaid.toString());
@@ -178,6 +185,8 @@ export default async function CustomerOrderDetailPage({
                 order.shippingFeeStatus === "PENDING" ? "" : order.shippingFee.toString()
               }
               defaultFeeRate={order.platform?.defaultFeeRate?.toString()}
+              defaultFxRate={suggestedSettlementFxRate?.toString()}
+              baseCurrency={settlementBaseCurrency}
               requireActualShippingFee={order.shippingFeeStatus === "PENDING"}
             />
           )}

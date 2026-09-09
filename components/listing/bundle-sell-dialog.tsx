@@ -19,6 +19,7 @@ import {
   bundleAllocationDifference,
 } from "@/lib/application/bundle-sale";
 import { resolveBundleFulfillmentEligibility } from "@/lib/application/bundle-fulfillment-eligibility";
+import { createClientId } from "@/lib/client-id";
 import { FULFILLMENT_DESTINATIONS } from "@/lib/inventory/location-fulfillment";
 
 interface BundleSellDialogProps {
@@ -127,7 +128,7 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
     setAllocationMode("PROPORTIONAL");
     setFulfillmentPreview(EMPTY_FULFILLMENT_PREVIEW);
     setError("");
-    setRequestId(crypto.randomUUID());
+    setRequestId(createClientId());
     setForm({
       platformFeeRate: listings[0].platformFeeRate || "",
       platformFeeAmount: "",

@@ -127,7 +127,8 @@ describe("workbench interaction source hygiene", () => {
     expect(settleForm).toContain("platformFee");
     expect(settleForm).toContain("shippingFee");
     expect(settleForm).not.toContain("actualReceived");
-    expect(settleForm).not.toContain("fxRate");
+    expect(settleForm).toContain("fxRate");
+    expect(settleForm).toContain("settlementBaseCurrency");
   });
 
   it("persists purchase and transfer postage from workbench forms", () => {
