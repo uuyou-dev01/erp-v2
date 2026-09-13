@@ -388,22 +388,25 @@ export async function confirmInboundShipmentDelivered(
 
 export async function bulkConfirmInboundShipmentsDelivered(
   shipmentIds: string[],
-  receivedAt = new Date()
+  receivedAt = new Date(),
+  arrivalLocationId?: string
 ) {
   const uniqueIds = Array.from(new Set(shipmentIds)).filter(Boolean);
   if (uniqueIds.length === 0) return { success: 0, failed: 0 };
 
   let success = 0;
   let failed = 0;
+  const errors: string[] = [];
   for (const id of uniqueIds) {
     try {
-      await confirmInboundShipmentDelivered(id, receivedAt);
+      await confirmInboundShipmentDelivered(id, receivedAt, undefined, arrivalLocationId);
       success += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      errors.push(error instanceof Error ? error.message : "确认到货失败，请重试");
     }
   }
 
   revalidatePath("/workbench");
-  return { success, failed };
+  return { success, failed, errors };
 }

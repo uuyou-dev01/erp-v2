@@ -380,7 +380,7 @@ function deriveShipmentItem(shipment: {
     lines?: Array<{ quantity: { toString(): string } }>;
   } | null;
   fromLocation: { name: string } | null;
-  toLocation: { name: string } | null;
+  toLocation: { id: string; name: string } | null;
 }): WorkItem | null {
   const waitingSince = shipment.updatedAt ?? shipment.createdAt;
   const legLabel = shipment.legIndex <= 1 ? "购买地在途" : "转运在途";
@@ -398,6 +398,8 @@ function deriveShipmentItem(shipment: {
     waitingSince: waitingSince.toISOString(),
     metadata: {
       trackingNo: shipment.trackingNo,
+      destinationLocationId: shipment.toLocation?.id ?? null,
+      destinationLocationName: shipment.toLocation?.name ?? null,
       totalQty:
         shipment.purchaseOrder?.lines?.reduce(
           (sum, line) => sum + Number(line.quantity.toString()),
@@ -780,7 +782,7 @@ export async function collectWorkItems(
           },
         },
         fromLocation: { select: { name: true } },
-        toLocation: { select: { name: true } },
+        toLocation: { select: { id: true, name: true } },
       },
       orderBy: { updatedAt: "asc" },
     }),
@@ -1607,7 +1609,9 @@ export async function getWorkItemDetail(
         ? { orderNo: shipment.purchaseOrder.orderNo, status: shipment.purchaseOrder.status }
         : null,
       fromLocation: shipment.fromLocation ? { name: shipment.fromLocation.name } : null,
-      toLocation: shipment.toLocation ? { name: shipment.toLocation.name } : null,
+      toLocation: shipment.toLocation
+        ? { id: shipment.toLocation.id, name: shipment.toLocation.name }
+        : null,
     });
     if (!item) return null;
     const sku = shipment.purchaseOrder?.lines[0]?.sku;
@@ -1642,6 +1646,7 @@ export async function getWorkItemDetail(
         purchaseOrderId: shipment.purchaseOrderId,
         currentLocationText: shipment.toLocation?.name ?? null,
         location: shipment.toLocation?.name ?? null,
+        destinationLocationId: shipment.toLocationId,
       },
     };
   }

@@ -96,6 +96,8 @@ test("blank tracking needs explicit shipping intent and stays visible through ar
   ).toBeNull();
 
   await row().getByRole("checkbox").check();
+  await expect(page.getByRole("button", { name: "批量确认到货", exact: true })).toBeDisabled();
+  await page.locator("#bulk-arrival-mode").selectOption("expected");
   await page.getByRole("button", { name: "批量确认到货", exact: true }).click();
   await expect(page).toHaveURL(/queue=pendingDisposition/);
   await expect(row()).toBeVisible();
@@ -116,6 +118,70 @@ test("blank tracking needs explicit shipping intent and stays visible through ar
   });
   expect(ledger).toHaveLength(1);
   expect(ledger[0].deltaQty.toString()).toBe("2");
+});
+
+test("batch arrival can choose the actual warehouse instead of the expected one", async ({ page }) => {
+  const supplier = `E2E 实际到货位置 ${runId}`;
+  const order = await prisma.purchaseOrder.create({
+    data: {
+      storeId: "store_1",
+      orderNo: `${runId}_actual`,
+      supplierName: supplier,
+      currency: "CNY",
+      status: "SHIPPED",
+      destinationLocationId: sourceId,
+      subtotal: "10",
+      totalAmount: "10",
+      lines: { create: { skuId, quantity: "1", unitPrice: "10", lineAmount: "10" } },
+    },
+  });
+  await page.goto("/workbench?queue=pendingArrival");
+  const row = () => page.locator('[role="button"]').filter({ hasText: supplier }).first();
+  await row().getByRole("checkbox").check();
+  await page.locator("#bulk-arrival-mode").selectOption("actual");
+  await page.locator("#bulk-actual-arrival-location").selectOption(otherId);
+  await page.getByRole("button", { name: "批量确认到货", exact: true }).click();
+  await expect(page).toHaveURL(/queue=pendingDisposition/);
+  await expect(page.getByText("按各单已确认的收货位置入库")).toHaveCount(0);
+  await row().getByRole("checkbox").check();
+  await expect(page.getByText("连续流转另一个仓 · " + `${runId}_other`)).toBeVisible();
+  await page.getByRole("button", { name: "批量确认入库", exact: true }).click();
+  await expect(row()).toHaveCount(0);
+  const line = await prisma.purchaseLine.findFirstOrThrow({ where: { purchaseOrderId: order.id } });
+  expect(
+    await prisma.inventoryLot.findFirstOrThrow({
+      where: { sourceType: "PURCHASE", sourceId: line.id },
+    })
+  ).toMatchObject({ locationId: otherId });
+});
+
+test("single arrival preselects the exact location ID when warehouse names repeat", async ({ page }) => {
+  const duplicate = await prisma.location.create({
+    data: {
+      storeId: "store_1",
+      name: "连续流转收货仓",
+      code: `${runId}_same_name`,
+      type: "WAREHOUSE",
+    },
+  });
+  const supplier = `E2E 同名位置 ${runId}`;
+  await prisma.purchaseOrder.create({
+    data: {
+      storeId: "store_1",
+      orderNo: `${runId}_same_name`,
+      supplierName: supplier,
+      currency: "CNY",
+      status: "SHIPPED",
+      destinationLocationId: duplicate.id,
+      subtotal: "10",
+      totalAmount: "10",
+      lines: { create: { skuId, quantity: "1", unitPrice: "10", lineAmount: "10" } },
+    },
+  });
+  await page.goto("/workbench?queue=pendingArrival");
+  await page.locator('[role="button"]').filter({ hasText: supplier }).first().click();
+  await expect(page.locator("#arrivalLocationId")).toHaveValue(duplicate.id);
+  await expect(page.getByText(`预计到货位置：连续流转收货仓 · ${runId}_same_name`, { exact: false })).toBeVisible();
 });
 
 test("single disposition shows the recorded warehouse and reserves other destinations for transfer", async ({

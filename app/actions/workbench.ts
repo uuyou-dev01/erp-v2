@@ -456,17 +456,27 @@ export async function bulkUpdatePurchaseOrderLogistics(
 export async function bulkConfirmArrivals(input: {
   shipmentIds?: string[];
   purchaseOrderIds?: string[];
+  arrivalLocationId?: string;
+  useExpectedLocations?: boolean;
 }) {
   const shipmentIds = Array.from(new Set(input.shipmentIds ?? [])).filter(Boolean);
   const purchaseOrderIds = Array.from(new Set(input.purchaseOrderIds ?? [])).filter(Boolean);
+  const arrivalLocationId = input.arrivalLocationId?.trim();
+  if (arrivalLocationId && input.useExpectedLocations) {
+    throw new Error("请选择统一实际到货位置，或确认沿用各单预计位置");
+  }
+  if ((shipmentIds.length || purchaseOrderIds.length) && !arrivalLocationId && !input.useExpectedLocations) {
+    throw new Error("请先确认各单预计到货位置，或选择统一实际到货位置");
+  }
   let success = 0;
   let failed = 0;
   const errors: string[] = [];
 
   if (shipmentIds.length > 0) {
-    const result = await bulkConfirmInboundShipmentsDelivered(shipmentIds, new Date());
+    const result = await bulkConfirmInboundShipmentsDelivered(shipmentIds, new Date(), arrivalLocationId);
     success += result.success;
     failed += result.failed;
+    errors.push(...(result.errors ?? []));
   }
 
   for (const id of purchaseOrderIds) {
@@ -475,12 +485,16 @@ export async function bulkConfirmArrivals(input: {
         where: { id },
         select: { id: true, destinationLocationId: true },
       });
-      if (!order?.destinationLocationId) {
+      if (!order) {
+        throw new Error("采购单不存在");
+      }
+      const locationId = arrivalLocationId || order.destinationLocationId;
+      if (!locationId) {
         throw new Error("采购单尚未登记预计到货位置，请先补充物流信息");
       }
       await markPurchaseOrderArrived({
         purchaseOrderId: order.id,
-        locationId: order.destinationLocationId,
+        locationId,
         receivedAt: new Date(),
       });
       success += 1;

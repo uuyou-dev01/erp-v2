@@ -59,6 +59,8 @@ export function BulkActionToolbar({
   const [bulkPurchaseShippingCost, setBulkPurchaseShippingCost] = useState("");
   const [bulkPurchaseShippingCurrency, setBulkPurchaseShippingCurrency] = useState("CNY");
   const [shippedWithoutTracking, setShippedWithoutTracking] = useState(false);
+  const [arrivalMode, setArrivalMode] = useState<"" | "expected" | "actual">("");
+  const [actualArrivalLocationId, setActualArrivalLocationId] = useState("");
   const [bulkBatchMode, setBulkBatchMode] = useState<"existing" | "new">(
     consolidationBatches.length > 0 ? "existing" : "new"
   );
@@ -94,15 +96,33 @@ export function BulkActionToolbar({
     )
   );
 
+  const locationLabel = (id: unknown, fallback: string) => {
+    if (typeof id !== "string" || !id) return fallback;
+    const location = locations.find((option) => option.id === id);
+    return location ? `${location.name} · ${location.code}` : fallback;
+  };
+
   const inboundLocations = Array.from(
     new Set(
       selectedItems
         .filter((item) => item.entityType === "purchaseOrder")
-        .map((item) => String(item.metadata?.destinationLocationName || "尚未登记收货位置"))
+        .map((item) =>
+          locationLabel(item.metadata?.destinationLocationId, "尚未登记收货位置")
+        )
     )
   );
   const missingInboundLocation = selectedItems.some(
     (item) => item.entityType === "purchaseOrder" && !item.metadata?.destinationLocationId
+  );
+  const expectedArrivalLocations = Array.from(
+    new Set(
+      selectedItems.map((item) =>
+        locationLabel(item.metadata?.destinationLocationId, "未登记预计位置")
+      )
+    )
+  );
+  const missingExpectedArrivalLocation = selectedItems.some(
+    (item) => !item.metadata?.destinationLocationId
   );
 
   if (selectedIds.length === 0) return null;
@@ -117,12 +137,16 @@ export function BulkActionToolbar({
           setNotice(bulkNotice);
           if (bulkNotice.shouldClearSelection) {
             onClear();
+            setArrivalMode("");
+            setActualArrivalLocationId("");
             if (nextQueue) onQueueChange?.(nextQueue);
           }
           if (bulkNotice.shouldRefresh) router.refresh();
           return;
         }
         onClear();
+        setArrivalMode("");
+        setActualArrivalLocationId("");
         router.refresh();
       } catch (error) {
         setNotice({
@@ -138,7 +162,75 @@ export function BulkActionToolbar({
   const clearSelection = () => {
     setNotice(null);
     onClear();
+    setArrivalMode("");
+    setActualArrivalLocationId("");
   };
+
+  const confirmArrivals = (nextQueue?: WorkQueue) =>
+    run(
+      () =>
+        bulkConfirmArrivals({
+          shipmentIds,
+          purchaseOrderIds,
+          ...(arrivalMode === "expected"
+            ? { useExpectedLocations: true }
+            : { arrivalLocationId: actualArrivalLocationId }),
+        }),
+      nextQueue
+    );
+
+  const arrivalControls = (
+    <div className="mt-3 space-y-3 rounded-md border bg-muted/30 p-3">
+      <div className="space-y-1">
+        <Label htmlFor="bulk-arrival-mode">确认实际到货位置</Label>
+        <Select
+          id="bulk-arrival-mode"
+          value={arrivalMode}
+          onChange={(event) => setArrivalMode(event.target.value as typeof arrivalMode)}
+        >
+          <option value="">请选择确认方式</option>
+          <option value="expected">各单确实到达各自预计位置</option>
+          <option value="actual">所选任务全部到达同一位置</option>
+        </Select>
+      </div>
+      {arrivalMode === "expected" && (
+        <div className="text-xs text-muted-foreground">
+          各单预计位置：{expectedArrivalLocations.join("、")}
+          {missingExpectedArrivalLocation && (
+            <p role="alert" className="mt-1 text-destructive">
+              部分任务没有预计位置，请选择统一实际到货位置，或逐单确认。
+            </p>
+          )}
+        </div>
+      )}
+      {arrivalMode === "actual" && (
+        <div className="space-y-1">
+          <Label htmlFor="bulk-actual-arrival-location">统一实际到货位置</Label>
+          <WorkbenchLocationSelect
+            id="bulk-actual-arrival-location"
+            value={actualArrivalLocationId}
+            locations={locations}
+            onChange={setActualArrivalLocationId}
+            placeholder="请选择实物到达的仓库或位置"
+            required
+          />
+        </div>
+      )}
+      <Button
+        disabled={
+          pending ||
+          (shipmentIds.length === 0 && purchaseOrderIds.length === 0) ||
+          !arrivalMode ||
+          (arrivalMode === "expected" && missingExpectedArrivalLocation) ||
+          (arrivalMode === "actual" && !actualArrivalLocationId)
+        }
+        onClick={() => confirmArrivals(queue === "pendingArrival" ? "pendingDisposition" : undefined)}
+      >
+        <PackageCheck className="h-4 w-4" />
+        批量确认到货
+      </Button>
+    </div>
+  );
 
   return (
     <div className="mb-3 rounded-lg border bg-muted/30 p-3">
@@ -288,22 +380,7 @@ export function BulkActionToolbar({
         </div>
       )}
 
-      {queue === "pendingArrival" && (
-        <div className="mt-3">
-          <Button
-            disabled={pending || (shipmentIds.length === 0 && purchaseOrderIds.length === 0)}
-            onClick={() =>
-              run(
-                () => bulkConfirmArrivals({ shipmentIds, purchaseOrderIds }),
-                "pendingDisposition"
-              )
-            }
-          >
-            <PackageCheck className="h-4 w-4" />
-            批量确认到货
-          </Button>
-        </div>
-      )}
+      {queue === "pendingArrival" && arrivalControls}
 
       {queue === "inTransit" && consolidationBatchIds.length === 1 && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -319,17 +396,7 @@ export function BulkActionToolbar({
         </div>
       )}
 
-      {queue === "inTransit" && consolidationBatchIds.length === 0 && (
-        <div className="mt-3">
-          <Button
-            disabled={pending || (shipmentIds.length === 0 && purchaseOrderIds.length === 0)}
-            onClick={() => run(() => bulkConfirmArrivals({ shipmentIds, purchaseOrderIds }))}
-          >
-            <PackageCheck className="h-4 w-4" />
-            批量确认到货
-          </Button>
-        </div>
-      )}
+      {queue === "inTransit" && consolidationBatchIds.length === 0 && arrivalControls}
 
       {queue === "pendingDisposition" && (
         <div className="mt-3 space-y-3">

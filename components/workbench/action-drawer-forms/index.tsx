@@ -109,7 +109,9 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
   const [form, setForm] = useState({
     destinationLocationId: findWorkbenchLocationId(
       locations,
-      detail.actionContext.currentLocationText ?? detail.actionContext.location
+      detail.actionContext.destinationLocationId ??
+        detail.actionContext.currentLocationText ??
+        detail.actionContext.location
     ),
     purchaseTrackingNo:
       detail.actionContext.purchaseTrackingNo ?? detail.actionContext.trackingNo ?? "",
@@ -212,11 +214,16 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
 }
 
 export function ConfirmArrivalForm({ detail, locations, pending, run }: ActionFormProps) {
+  const expectedLocation = locations?.find(
+    (location) => location.id === detail.actionContext.destinationLocationId
+  );
   const [form, setForm] = useState({
     arrivedAt: todayDateValue(),
     arrivalLocationId: findWorkbenchLocationId(
       locations,
-      detail.actionContext.currentLocationText ?? detail.actionContext.location
+      detail.actionContext.destinationLocationId ??
+        detail.actionContext.currentLocationText ??
+        detail.actionContext.location
     ),
     isComplete: true,
     note: "",
@@ -240,14 +247,20 @@ export function ConfirmArrivalForm({ detail, locations, pending, run }: ActionFo
           />
         </div>
         <div className="space-y-2">
-          <Label>到货位置</Label>
+          <Label htmlFor="arrivalLocationId">实际到货位置</Label>
           <WorkbenchLocationSelect
             id="arrivalLocationId"
             value={form.arrivalLocationId}
             locations={locations}
             onChange={(arrivalLocationId) => setForm((value) => ({ ...value, arrivalLocationId }))}
             placeholder="请选择到货地区或仓库"
+            required
           />
+          <p className="text-xs text-muted-foreground">
+            预计到货位置：{expectedLocation
+              ? `${expectedLocation.name} · ${expectedLocation.code}`
+              : detail.actionContext.currentLocationText ?? "未登记"}。请按实物实际到达的位置确认。
+          </p>
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
@@ -279,7 +292,9 @@ export function ShipmentArrivalProcessingForm({
 }: ActionFormProps) {
   const defaultLocationId = findWorkbenchLocationId(
     locations,
-    detail.actionContext.currentLocationText ?? detail.actionContext.location
+    detail.actionContext.destinationLocationId ??
+      detail.actionContext.currentLocationText ??
+      detail.actionContext.location
   );
   const hasUsedLine = detail.lineItems?.some((line) =>
     /中古|二手|used/i.test(line.conditionType ?? "")
@@ -510,7 +525,9 @@ export function InboundForm({ detail, locations, pending, run }: ActionFormProps
   const [form, setForm] = useState({
     locationId: findWorkbenchLocationId(
       locations,
-      detail.actionContext.currentLocationText ?? detail.actionContext.location
+      detail.actionContext.destinationLocationId ??
+        detail.actionContext.currentLocationText ??
+        detail.actionContext.location
     ),
     note: "",
   });
@@ -558,6 +575,7 @@ export function DispositionForm({
       locations,
       detail.actionContext.currentLocationText ?? detail.actionContext.location
     );
+  const confirmedLocation = locations?.find((location) => location.id === defaultLocationId);
   const [mode, setMode] = useState<"inbound" | "consolidate" | "transfer" | "return">("inbound");
   const [inboundForm, setInboundForm] = useState({ locationId: defaultLocationId, note: "" });
   const [consolidationForm, setConsolidationForm] = useState<{
@@ -645,7 +663,11 @@ export function DispositionForm({
         <div className="space-y-3">
           <div className="rounded-md border p-3 text-sm">
             <p className="font-medium">在已确认的收货位置入库</p>
-            <p className="mt-1">{detail.actionContext.currentLocationText || "尚未登记收货位置"}</p>
+            <p className="mt-1">
+              {confirmedLocation
+                ? `${confirmedLocation.name} · ${confirmedLocation.code}`
+                : detail.actionContext.currentLocationText || "尚未登记收货位置"}
+            </p>
             <p className="mt-2 text-xs text-muted-foreground">
               入库不会改变商品所在仓库。要发往其他位置，请选择「立即发起转仓」。
             </p>

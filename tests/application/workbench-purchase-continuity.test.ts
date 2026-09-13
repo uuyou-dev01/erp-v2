@@ -11,6 +11,7 @@ const context = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth/user-context", () => ({ requireUserContext: async () => context }));
 import {
+  bulkConfirmArrivals,
   bulkInboundPurchases,
   bulkUpdatePurchaseOrderLogistics,
   getWorkbenchWorkItems,
@@ -201,6 +202,76 @@ describe("workbench purchase continuity", () => {
         })
       ).toBe(1);
     }
+  });
+
+  it("requires an explicit arrival decision and keeps inbound at the actual warehouse", async () => {
+    const shipped = await order("actual_arrival", "SHIPPED", sourceId);
+    await expect(
+      bulkConfirmArrivals({ purchaseOrderIds: [shipped.id] })
+    ).rejects.toThrow("请先确认各单预计到货位置");
+    expect(
+      (await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: shipped.id } })).status
+    ).toBe("SHIPPED");
+
+    expect(
+      await bulkConfirmArrivals({ purchaseOrderIds: [shipped.id], arrivalLocationId: otherId })
+    ).toMatchObject({ success: 1, failed: 0 });
+    expect(
+      await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: shipped.id } })
+    ).toMatchObject({ status: "RECEIVED", destinationLocationId: otherId });
+    expect(await bulkInboundPurchases({ purchaseOrderIds: [shipped.id] })).toMatchObject({
+      success: 1,
+      failed: 0,
+    });
+    const line = await prisma.purchaseLine.findFirstOrThrow({
+      where: { purchaseOrderId: shipped.id },
+    });
+    expect(
+      await prisma.inventoryLot.findFirstOrThrow({
+        where: { sourceType: "PURCHASE", sourceId: line.id },
+      })
+    ).toMatchObject({ locationId: otherId });
+  });
+
+  it("confirms mixed expected locations per order only when explicitly chosen", async () => {
+    const first = await order("expected_a", "SHIPPED", sourceId);
+    const second = await order("expected_b", "SHIPPED", otherId);
+    expect(
+      await bulkConfirmArrivals({
+        purchaseOrderIds: [first.id, second.id],
+        useExpectedLocations: true,
+      })
+    ).toMatchObject({ success: 2, failed: 0 });
+    expect(
+      (await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: first.id } }))
+        .destinationLocationId
+    ).toBe(sourceId);
+    expect(
+      (await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: second.id } }))
+        .destinationLocationId
+    ).toBe(otherId);
+  });
+
+  it("records a shipment's selected actual arrival on both shipment and purchase order", async () => {
+    const shipped = await order("shipment_arrival", "SHIPPED", sourceId);
+    const shipment = await prisma.inboundShipment.create({
+      data: {
+        storeId: context.activeStoreId,
+        purchaseOrderId: shipped.id,
+        status: "IN_TRANSIT",
+        toLocationId: sourceId,
+      },
+    });
+    expect(
+      await bulkConfirmArrivals({ shipmentIds: [shipment.id], arrivalLocationId: otherId })
+    ).toMatchObject({ success: 1, failed: 0 });
+    expect(await prisma.inboundShipment.findUniqueOrThrow({ where: { id: shipment.id } })).toMatchObject({
+      status: "DELIVERED",
+      toLocationId: otherId,
+    });
+    expect(
+      await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: shipped.id } })
+    ).toMatchObject({ status: "RECEIVED", destinationLocationId: otherId });
   });
 
   it("reports the real mismatch error and creates no stock for the failed order", async () => {
