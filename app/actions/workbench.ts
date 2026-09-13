@@ -382,6 +382,7 @@ export async function bulkUpdatePurchaseOrderLogistics(
   purchaseOrderIds: string[],
   payload: {
     purchaseTrackingNo?: string;
+    shippedWithoutTracking?: boolean;
     carrier?: string;
     etaDate?: string;
     destinationLocationId?: string;
@@ -398,10 +399,15 @@ export async function bulkUpdatePurchaseOrderLogistics(
     throw new Error("请选择预计到货位置");
   }
 
+  if (!payload.purchaseTrackingNo?.trim() && payload.shippedWithoutTracking !== true) {
+    throw new Error("请填写采购物流单号，或明确勾选「暂无单号，确认已发货」");
+  }
+
   const etaDate = payload.etaDate?.trim() ? new Date(payload.etaDate) : undefined;
 
   let success = 0;
   let failed = 0;
+  const errors: string[] = [];
   for (const id of ids) {
     try {
       const order = await prisma.purchaseOrder.findUnique({
@@ -437,13 +443,14 @@ export async function bulkUpdatePurchaseOrderLogistics(
         });
       }
       success += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      errors.push(error instanceof Error ? error.message : "登记发货失败，请重试");
     }
   }
 
   revalidatePath("/workbench");
-  return { success, failed };
+  return { success, failed, errors };
 }
 
 export async function bulkConfirmArrivals(input: {
@@ -454,6 +461,7 @@ export async function bulkConfirmArrivals(input: {
   const purchaseOrderIds = Array.from(new Set(input.purchaseOrderIds ?? [])).filter(Boolean);
   let success = 0;
   let failed = 0;
+  const errors: string[] = [];
 
   if (shipmentIds.length > 0) {
     const result = await bulkConfirmInboundShipmentsDelivered(shipmentIds, new Date());
@@ -468,8 +476,7 @@ export async function bulkConfirmArrivals(input: {
         select: { id: true, destinationLocationId: true },
       });
       if (!order?.destinationLocationId) {
-        failed += 1;
-        continue;
+        throw new Error("采购单尚未登记预计到货位置，请先补充物流信息");
       }
       await markPurchaseOrderArrived({
         purchaseOrderId: order.id,
@@ -477,13 +484,14 @@ export async function bulkConfirmArrivals(input: {
         receivedAt: new Date(),
       });
       success += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      errors.push(error instanceof Error ? error.message : "确认到货失败，请重试");
     }
   }
 
   revalidatePath("/workbench");
-  return { success, failed };
+  return { success, failed, errors };
 }
 
 export async function bulkInboundPurchases(input: {
@@ -492,16 +500,18 @@ export async function bulkInboundPurchases(input: {
 }) {
   const ids = Array.from(new Set(input.purchaseOrderIds)).filter(Boolean);
   if (ids.length === 0) return { success: 0, failed: 0 };
-  if (!input.locationId) throw new Error("请选择入库位置");
 
   let success = 0;
   let failed = 0;
+  const errors: string[] = [];
   for (const id of ids) {
     try {
       const order = await prisma.purchaseOrder.findUnique({
         where: { id },
         select: {
           id: true,
+          orderNo: true,
+          destinationLocationId: true,
           storeId: true,
           status: true,
           receivedAt: true,
@@ -509,12 +519,15 @@ export async function bulkInboundPurchases(input: {
         },
       });
       if (!order || order.status !== "RECEIVED") {
-        failed += 1;
-        continue;
+        throw new Error(
+          order ? `${order.orderNo}：只有已到货待分流的采购单可以入库` : "采购单不存在"
+        );
       }
+      const locationId = input.locationId?.trim() || order.destinationLocationId;
+      if (!locationId) throw new Error(`${order.orderNo}：尚未登记收货仓，请先确认到货位置`);
       await receivePurchaseOrder({
         purchaseOrderId: order.id,
-        locationId: input.locationId,
+        locationId,
         receivedAt: order.receivedAt ?? new Date(),
       });
       if (order.lines.length > 0) {
@@ -523,20 +536,21 @@ export async function bulkInboundPurchases(input: {
             storeId: order.storeId,
             refType: "PURCHASE_LINE",
             refId: line.id,
-            locationId: input.locationId,
+            locationId,
             result: "PASSED",
             inspectedAt: new Date(),
           })),
         });
       }
       success += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      errors.push(error instanceof Error ? error.message : "确认入库失败，请重试");
     }
   }
 
   revalidatePath("/workbench");
-  return { success, failed };
+  return { success, failed, errors };
 }
 
 export async function bulkConsolidatePurchases(input: {

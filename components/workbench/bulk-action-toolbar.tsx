@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { WorkItem, WorkQueue } from "@/lib/application/next-actions";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -38,6 +39,7 @@ interface BulkActionToolbarProps {
   }>;
   selectedIds: string[];
   onClear: () => void;
+  onQueueChange?: (queue: WorkQueue) => void;
 }
 
 export function BulkActionToolbar({
@@ -47,6 +49,7 @@ export function BulkActionToolbar({
   consolidationBatches,
   selectedIds,
   onClear,
+  onQueueChange,
 }: BulkActionToolbarProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -55,7 +58,7 @@ export function BulkActionToolbar({
   const [logisticsNote, setLogisticsNote] = useState("");
   const [bulkPurchaseShippingCost, setBulkPurchaseShippingCost] = useState("");
   const [bulkPurchaseShippingCurrency, setBulkPurchaseShippingCurrency] = useState("CNY");
-  const [bulkInboundLocationId, setBulkInboundLocationId] = useState("");
+  const [shippedWithoutTracking, setShippedWithoutTracking] = useState(false);
   const [bulkBatchMode, setBulkBatchMode] = useState<"existing" | "new">(
     consolidationBatches.length > 0 ? "existing" : "new"
   );
@@ -91,9 +94,20 @@ export function BulkActionToolbar({
     )
   );
 
+  const inboundLocations = Array.from(
+    new Set(
+      selectedItems
+        .filter((item) => item.entityType === "purchaseOrder")
+        .map((item) => String(item.metadata?.destinationLocationName || "尚未登记收货位置"))
+    )
+  );
+  const missingInboundLocation = selectedItems.some(
+    (item) => item.entityType === "purchaseOrder" && !item.metadata?.destinationLocationId
+  );
+
   if (selectedIds.length === 0) return null;
 
-  const run = (fn: () => Promise<unknown>) => {
+  const run = (fn: () => Promise<unknown>, nextQueue?: WorkQueue) => {
     startTransition(async () => {
       try {
         setNotice(null);
@@ -101,7 +115,10 @@ export function BulkActionToolbar({
         const bulkNotice = describeBulkActionResult(result);
         if (bulkNotice) {
           setNotice(bulkNotice);
-          if (bulkNotice.shouldClearSelection) onClear();
+          if (bulkNotice.shouldClearSelection) {
+            onClear();
+            if (nextQueue) onQueueChange?.(nextQueue);
+          }
           if (bulkNotice.shouldRefresh) router.refresh();
           return;
         }
@@ -189,6 +206,15 @@ export function BulkActionToolbar({
               </p>
             </div>
           </div>
+          <Checkbox
+            id="bulk-shipped-without-tracking"
+            checked={shippedWithoutTracking}
+            onChange={(event) => setShippedWithoutTracking(event.target.checked)}
+            label="暂无单号，确认已发货"
+          />
+          <p className="text-xs text-muted-foreground">
+            保存成功后自动打开「待确认收货」；无单号的订单会标注「运单待补」。
+          </p>
           <div className="grid gap-2 sm:grid-cols-[1fr_100px]">
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="bulk-purchase-shipping-cost">
@@ -230,16 +256,24 @@ export function BulkActionToolbar({
             </div>
             <Button
               className="self-end"
-              disabled={pending || purchaseOrderIds.length === 0 || !destinationLocationId}
+              disabled={
+                pending ||
+                purchaseOrderIds.length === 0 ||
+                !destinationLocationId ||
+                (!purchaseTrackingNo.trim() && !shippedWithoutTracking)
+              }
               onClick={() =>
-                run(() =>
-                  bulkUpdatePurchaseOrderLogistics(purchaseOrderIds, {
-                    purchaseTrackingNo,
-                    destinationLocationId,
-                    shippingCost: bulkPurchaseShippingCost,
-                    shippingCurrency: bulkPurchaseShippingCurrency,
-                    note: logisticsNote,
-                  })
+                run(
+                  () =>
+                    bulkUpdatePurchaseOrderLogistics(purchaseOrderIds, {
+                      purchaseTrackingNo,
+                      shippedWithoutTracking,
+                      destinationLocationId,
+                      shippingCost: bulkPurchaseShippingCost,
+                      shippingCurrency: bulkPurchaseShippingCurrency,
+                      note: logisticsNote,
+                    }),
+                  "pendingArrival"
                 )
               }
             >
@@ -258,7 +292,12 @@ export function BulkActionToolbar({
         <div className="mt-3">
           <Button
             disabled={pending || (shipmentIds.length === 0 && purchaseOrderIds.length === 0)}
-            onClick={() => run(() => bulkConfirmArrivals({ shipmentIds, purchaseOrderIds }))}
+            onClick={() =>
+              run(
+                () => bulkConfirmArrivals({ shipmentIds, purchaseOrderIds }),
+                "pendingDisposition"
+              )
+            }
           >
             <PackageCheck className="h-4 w-4" />
             批量确认到货
@@ -319,32 +358,22 @@ export function BulkActionToolbar({
           </div>
 
           {bulkDispositionMode === "inbound" && (
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <div className="space-y-1">
-                <Label className="text-xs">批量入库位置</Label>
-                <Select
-                  value={bulkInboundLocationId}
-                  onChange={(event) => setBulkInboundLocationId(event.target.value)}
-                >
-                  <option value="">请选择入库位置</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name} · {loc.code}
-                    </option>
-                  ))}
-                </Select>
+            <div className="space-y-3">
+              <div className="rounded-md border bg-background p-3 text-sm">
+                <p className="font-medium">按各单已确认的收货位置入库</p>
+                <p className="mt-1 text-muted-foreground">{inboundLocations.join("、")}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  入库不会改变商品所在仓库。要发往其他位置，请选择「立即发起转仓」。
+                </p>
               </div>
+              {missingInboundLocation ? (
+                <p role="alert" className="text-xs text-destructive">
+                  部分采购单尚未登记收货位置，请先打开采购单确认。
+                </p>
+              ) : null}
               <Button
-                className="self-end"
-                disabled={pending || purchaseOrderIds.length === 0 || !bulkInboundLocationId}
-                onClick={() =>
-                  run(() =>
-                    bulkInboundPurchases({
-                      purchaseOrderIds,
-                      locationId: bulkInboundLocationId,
-                    })
-                  )
-                }
+                disabled={pending || purchaseOrderIds.length === 0 || missingInboundLocation}
+                onClick={() => run(() => bulkInboundPurchases({ purchaseOrderIds }))}
               >
                 批量确认入库
               </Button>

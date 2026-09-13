@@ -392,6 +392,7 @@ export function NextActionWorkbench({
             consolidationBatches={consolidationBatches}
             selectedIds={checkedIds}
             onClear={() => setCheckedIds([])}
+            onQueueChange={handleSelectQueue}
           />
           <WorkQueueList
             items={filteredItems}

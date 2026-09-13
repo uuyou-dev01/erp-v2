@@ -86,7 +86,7 @@ export default async function WorkbenchPage({
     setupStatus,
   ] = await Promise.all([
     getWorkbenchQueueCounts(storeId),
-    getWorkbenchWorkItems(storeId, undefined, 120),
+    getWorkbenchWorkItems(storeId, undefined, Number.POSITIVE_INFINITY),
     getWorkbenchRecentActivity(storeId),
     getQuickEntries(storeId, 20),
     getSKUs(storeId),

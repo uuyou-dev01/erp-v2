@@ -69,13 +69,15 @@ export async function createOrganizationCategoryAction(input: {
       ? await prisma.productCategory.findFirst({
           where: {
             id: input.parentId,
-            scope: "ORGANIZATION",
-            organizationId: context.organizationId,
+            OR: [
+              { scope: "SYSTEM", organizationId: null },
+              { scope: "ORGANIZATION", organizationId: context.organizationId },
+            ],
             status: "ACTIVE",
           },
         })
       : null;
-    if (input.parentId && !parent) throw new Error("企业父品类不存在或不可用");
+    if (input.parentId && !parent) throw new Error("父品类不存在或不可用");
     if ((parent?.level ?? -1) >= 3) throw new Error("品类最多支持 4 层");
 
     const canonical = input.canonicalCategoryId
@@ -119,7 +121,10 @@ export async function createOrganizationCategoryAction(input: {
         scope: "ORGANIZATION",
         organizationId: context.organizationId,
         parentId: parent?.id ?? null,
-        canonicalCategoryId: canonical?.id ?? parent?.canonicalCategoryId ?? null,
+        canonicalCategoryId:
+          canonical?.id ??
+          (parent?.scope === "SYSTEM" ? parent.id : parent?.canonicalCategoryId) ??
+          null,
         code,
         name,
         aliases: aliasesFromInput(input.aliases),
@@ -163,17 +168,48 @@ export async function updateOrganizationCategoryAction(input: {
       ? await prisma.productCategory.findFirst({
           where: {
             id: parentId,
-            scope: "ORGANIZATION",
-            organizationId: context.organizationId,
+            OR: [
+              { scope: "SYSTEM", organizationId: null },
+              { scope: "ORGANIZATION", organizationId: context.organizationId },
+            ],
             status: "ACTIVE",
           },
         })
       : null;
-    if (parentId && !parent) throw new Error("企业父品类不存在或不可用");
-    if (parent && parent.path.startsWith(`${existing.path} /`)) {
+    if (parentId && !parent) throw new Error("父品类不存在或不可用");
+    if ((parent?.level ?? -1) >= 3) throw new Error("品类最多支持 4 层");
+
+    const organizationCategories = await prisma.productCategory.findMany({
+      where: { organizationId: context.organizationId },
+      select: { id: true, parentId: true },
+    });
+    const descendantIds = new Set<string>();
+    const subtreeDepthOf = (id: string): number => {
+      let depth = 0;
+      for (const child of organizationCategories.filter((category) => category.parentId === id)) {
+        if (descendantIds.has(child.id)) continue;
+        descendantIds.add(child.id);
+        depth = Math.max(depth, 1 + subtreeDepthOf(child.id));
+      }
+      return depth;
+    };
+    const subtreeDepth = subtreeDepthOf(existing.id);
+    if (parent && descendantIds.has(parent.id)) {
       throw new Error("不能把品类移动到自己的下级");
     }
-    if ((parent?.level ?? -1) >= 3) throw new Error("品类最多支持 4 层");
+    if ((parent ? parent.level + 1 : 0) + subtreeDepth > 3) {
+      throw new Error("移动后子品类将超过 4 层，请先调整子品类");
+    }
+    const duplicate = await prisma.productCategory.findFirst({
+      where: {
+        id: { not: existing.id },
+        organizationId: context.organizationId,
+        parentId: parent?.id ?? null,
+        name: { equals: name, mode: "insensitive" },
+        status: { not: "MERGED" },
+      },
+    });
+    if (duplicate) throw new Error("同一层级已经存在同名品类");
 
     const canonical = input.canonicalCategoryId
       ? await prisma.productCategory.findFirst({
@@ -194,7 +230,7 @@ export async function updateOrganizationCategoryAction(input: {
         data: {
           name,
           parentId: parent?.id ?? null,
-          canonicalCategoryId: canonical?.id ?? null,
+          canonicalCategoryId: canonical?.id ?? (parent?.scope === "SYSTEM" ? parent.id : null),
           aliases: aliasesFromInput(input.aliases),
           path: parent ? `${parent.path} / ${name}` : name,
           level: parent ? parent.level + 1 : 0,
@@ -268,5 +304,49 @@ export async function mergeOrganizationCategoryAction(input: {
     return actionSuccess({ id: target.id });
   } catch (error) {
     return toActionFailure(error, "合并品类失败，请重试");
+  }
+}
+
+export async function deleteOrganizationCategoryAction(id: string) {
+  try {
+    const context = await requireUserContext();
+    await prisma.$transaction(async (tx) => {
+      // Lock the category before checking references; concurrent FK inserts must wait.
+      const rows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM product_categories
+        WHERE id = ${id} AND scope = 'ORGANIZATION'
+          AND "organizationId" = ${context.organizationId}
+        FOR UPDATE
+      `;
+      if (rows.length === 0) throw new Error("企业品类不存在或无权删除");
+      const category = await tx.productCategory.findUniqueOrThrow({
+        where: { id },
+        include: {
+          _count: {
+            select: {
+              children: true,
+              skus: true,
+              intelligenceItems: true,
+              mergedCategories: true,
+              mappedCategories: true,
+            },
+          },
+        },
+      });
+      if (category._count.children > 0) {
+        throw new Error("该品类下还有子品类，请先移动或删除子品类");
+      }
+      if (category._count.skus + category._count.intelligenceItems > 0) {
+        throw new Error("该品类已被商品引用，请先调整商品分类，或将品类设为停用");
+      }
+      if (category._count.mergedCategories + category._count.mappedCategories > 0) {
+        throw new Error("该品类仍被其他品类关联，请先解除关联或将品类设为停用");
+      }
+      await tx.productCategory.delete({ where: { id } });
+    });
+    revalidateCategoryConsumers();
+    return actionSuccess({ id });
+  } catch (error) {
+    return toActionFailure(error, "删除品类失败，请重试");
   }
 }

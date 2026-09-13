@@ -527,6 +527,246 @@ export function SKUForm({
         </Card>
       ) : null}
 
+      {!isVariant ? (
+        <Card>
+          <CardHeader className={cardHeaderClass}>
+            <CardTitle className={cardTitleClass}>商品基础信息</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="name">
+                  {isVariant ? "自定义展示名" : `${labelForRole(formData.catalogRole)}名称 *`}
+                </Label>
+                <Input
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) =>
+                    updateFormData({
+                      name: e.target.value,
+                      nameSource:
+                        isVariant && e.target.value.trim() ? "MANUAL" : formData.nameSource,
+                    })
+                  }
+                  placeholder={
+                    isVariant && selectedParent
+                      ? `${selectedParent.name} · ${formData.variantLabel || "42码"}`
+                      : isGroup
+                        ? "例如：AJ1 芝加哥 2015"
+                        : "例如：竹筐"
+                  }
+                  required={!isVariant}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {isVariant
+                    ? "通常不用填；留空时系统会用「商品组 · 规格名称」。"
+                    : "填写用户最自然会记住的商品名称。"}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="manufacturerCode">官方货号 / 型号</Label>
+                <Input
+                  id="manufacturerCode"
+                  value={formData.manufacturerCode}
+                  onChange={(e) => updateFormData({ manufacturerCode: e.target.value })}
+                  placeholder="例如：555088-101"
+                />
+                <p className="text-xs text-muted-foreground">
+                  这是品牌或平台识别商品的原始货号，不等于我们系统里的 SKU 编码。
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label>{t("sku.category")}</Label>
+                <ProductCategoryPicker
+                  value={formData.categoryId}
+                  legacyValue={formData.category}
+                  onChange={(categoryId, category) =>
+                    updateFormData({
+                      categoryId: categoryId ?? "",
+                      category,
+                    })
+                  }
+                  placeholder="搜索鞋服、首饰、生活用品等"
+                  compact={compact}
+                  inheritedHint={
+                    isVariant &&
+                    selectedParent?.category &&
+                    formData.categoryId === selectedParent.categoryId
+                      ? "已从商品组继承"
+                      : undefined
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="brand">{t("sku.brand")}</Label>
+                <Input
+                  id="brand"
+                  value={formData.brand}
+                  onChange={(e) => updateFormData({ brand: e.target.value })}
+                  placeholder={t("sku.brand_placeholder")}
+                />
+                {isVariant && selectedParent?.brand && formData.brand === selectedParent.brand && (
+                  <p className="text-xs text-green-600">已从商品组继承</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="series">系列</Label>
+                <Input
+                  id="series"
+                  value={catalog.series}
+                  onChange={(e) => setCatalog((c) => ({ ...c, series: e.target.value }))}
+                  placeholder="例如：晓组织、AJ1"
+                />
+              </div>
+            </div>
+
+            {isGroup ? (
+              <div className="space-y-3 border-t pt-4">
+                <div>
+                  <Label>规格类型（可选）</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    只选择一种主要区分方式。以后添加的每个具体规格将分别管理库存和销售。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="选择一种规格类型">
+                  {VARIANT_AXIS_PRESETS.map((preset) => {
+                    const selected = selectedVariantAxis === preset.value;
+                    return (
+                      <Button
+                        key={preset.value}
+                        type="button"
+                        variant={selected ? "secondary" : "outline"}
+                        size="sm"
+                        aria-pressed={selected}
+                        onClick={() =>
+                          updateFormData({
+                            variantAxesInput: selected ? "" : preset.value,
+                          })
+                        }
+                      >
+                        {preset.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+                <div className="grid gap-2 md:grid-cols-[minmax(0,360px)_minmax(0,1fr)] md:items-end">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="customVariantAxis">其他规格类型</Label>
+                    <Input
+                      id="customVariantAxis"
+                      value={selectedVariantAxisPreset ? "" : selectedVariantAxis}
+                      onChange={(event) => updateFormData({ variantAxesInput: event.target.value })}
+                      placeholder="例如：版本、香型"
+                    />
+                  </div>
+                  <p className="pb-2 text-xs text-muted-foreground">
+                    例如选择“尺码”后，再创建 41码、42码、43码等具体规格。
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <Label htmlFor="description">{t("sku.description")}</Label>
+              <Textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) => updateFormData({ description: e.target.value })}
+                placeholder={t("sku.description_placeholder")}
+                rows={3}
+              />
+            </div>
+
+            <details className="rounded-md border bg-muted/20 px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium">
+                更多信息
+                <span className="ml-2 font-normal text-muted-foreground">
+                  状态、标签、备注和内部编码
+                </span>
+              </summary>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="catalogStatus">档案状态</Label>
+                  <Select
+                    id="catalogStatus"
+                    value={catalog.catalogStatus}
+                    onChange={(e) =>
+                      setCatalog((c) => ({
+                        ...c,
+                        catalogStatus: e.target.value as CatalogStatus,
+                      }))
+                    }
+                  >
+                    <option value="active">启用</option>
+                    <option value="disabled">停用</option>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    停用后保留历史记录，但不再用于新的业务单据。
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="code">系统 SKU 编码</Label>
+                  <Input
+                    id="code"
+                    value={formData.code}
+                    onChange={(e) =>
+                      updateFormData({
+                        code: e.target.value,
+                        codeSource: e.target.value.trim() ? "MANUAL" : "AUTO",
+                      })
+                    }
+                    placeholder={
+                      isVariant ? "留空自动生成，例如 NIKE-555088-101-42" : "留空自动生成"
+                    }
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={formData.nameSource === "MANUAL" ? "secondary" : "outline"}>
+                      名称{formData.nameSource === "MANUAL" ? "手动" : "自动"}
+                    </Badge>
+                    <Badge variant={formData.codeSource === "MANUAL" ? "secondary" : "outline"}>
+                      编码{formData.codeSource === "MANUAL" ? "手动" : "自动"}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="catalogTags">标签</Label>
+                  <Input
+                    id="catalogTags"
+                    value={catalog.tagsInput}
+                    onChange={(e) =>
+                      setCatalog((c) => ({
+                        ...c,
+                        tagsInput: e.target.value,
+                      }))
+                    }
+                    placeholder="多个标签用逗号分隔"
+                  />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="catalogNotes">内部备注</Label>
+                  <Textarea
+                    id="catalogNotes"
+                    value={catalog.notes}
+                    onChange={(e) => setCatalog((c) => ({ ...c, notes: e.target.value }))}
+                    rows={2}
+                    placeholder="仅用于内部补充说明"
+                  />
+                </div>
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="border-primary/30 bg-primary/[0.02]">
         <CardHeader className={cardHeaderClass}>
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -875,245 +1115,7 @@ export function SKUForm({
         </details>
       ) : null}
 
-      {!isVariant ? (
-        <Card>
-          <CardHeader className={cardHeaderClass}>
-            <CardTitle className={cardTitleClass}>商品基础信息</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="name">
-                  {isVariant ? "自定义展示名" : `${labelForRole(formData.catalogRole)}名称 *`}
-                </Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) =>
-                    updateFormData({
-                      name: e.target.value,
-                      nameSource:
-                        isVariant && e.target.value.trim() ? "MANUAL" : formData.nameSource,
-                    })
-                  }
-                  placeholder={
-                    isVariant && selectedParent
-                      ? `${selectedParent.name} · ${formData.variantLabel || "42码"}`
-                      : isGroup
-                        ? "例如：AJ1 芝加哥 2015"
-                        : "例如：竹筐"
-                  }
-                  required={!isVariant}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {isVariant
-                    ? "通常不用填；留空时系统会用「商品组 · 规格名称」。"
-                    : "填写用户最自然会记住的商品名称。"}
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="manufacturerCode">官方货号 / 型号</Label>
-                <Input
-                  id="manufacturerCode"
-                  value={formData.manufacturerCode}
-                  onChange={(e) => updateFormData({ manufacturerCode: e.target.value })}
-                  placeholder="例如：555088-101"
-                />
-                <p className="text-xs text-muted-foreground">
-                  这是品牌或平台识别商品的原始货号，不等于我们系统里的 SKU 编码。
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <Label>{t("sku.category")}</Label>
-                <ProductCategoryPicker
-                  value={formData.categoryId}
-                  legacyValue={formData.category}
-                  onChange={(categoryId, category) =>
-                    updateFormData({
-                      categoryId: categoryId ?? "",
-                      category,
-                    })
-                  }
-                  placeholder="搜索鞋服、首饰、生活用品等"
-                  compact={compact}
-                  inheritedHint={
-                    isVariant &&
-                    selectedParent?.category &&
-                    formData.categoryId === selectedParent.categoryId
-                      ? "已从商品组继承"
-                      : undefined
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="brand">{t("sku.brand")}</Label>
-                <Input
-                  id="brand"
-                  value={formData.brand}
-                  onChange={(e) => updateFormData({ brand: e.target.value })}
-                  placeholder={t("sku.brand_placeholder")}
-                />
-                {isVariant && selectedParent?.brand && formData.brand === selectedParent.brand && (
-                  <p className="text-xs text-green-600">已从商品组继承</p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="series">系列</Label>
-                <Input
-                  id="series"
-                  value={catalog.series}
-                  onChange={(e) => setCatalog((c) => ({ ...c, series: e.target.value }))}
-                  placeholder="例如：晓组织、AJ1"
-                />
-              </div>
-            </div>
-
-            {isGroup ? (
-              <div className="space-y-3 border-t pt-4">
-                <div>
-                  <Label>规格类型（可选）</Label>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    只选择一种主要区分方式。以后添加的每个具体规格将分别管理库存和销售。
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="选择一种规格类型">
-                  {VARIANT_AXIS_PRESETS.map((preset) => {
-                    const selected = selectedVariantAxis === preset.value;
-                    return (
-                      <Button
-                        key={preset.value}
-                        type="button"
-                        variant={selected ? "secondary" : "outline"}
-                        size="sm"
-                        aria-pressed={selected}
-                        onClick={() =>
-                          updateFormData({
-                            variantAxesInput: selected ? "" : preset.value,
-                          })
-                        }
-                      >
-                        {preset.label}
-                      </Button>
-                    );
-                  })}
-                </div>
-                <div className="grid gap-2 md:grid-cols-[minmax(0,360px)_minmax(0,1fr)] md:items-end">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="customVariantAxis">其他规格类型</Label>
-                    <Input
-                      id="customVariantAxis"
-                      value={selectedVariantAxisPreset ? "" : selectedVariantAxis}
-                      onChange={(event) => updateFormData({ variantAxesInput: event.target.value })}
-                      placeholder="例如：版本、香型"
-                    />
-                  </div>
-                  <p className="pb-2 text-xs text-muted-foreground">
-                    例如选择“尺码”后，再创建 41码、42码、43码等具体规格。
-                  </p>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="space-y-2">
-              <Label htmlFor="description">{t("sku.description")}</Label>
-              <Textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) => updateFormData({ description: e.target.value })}
-                placeholder={t("sku.description_placeholder")}
-                rows={3}
-              />
-            </div>
-
-            <details className="rounded-md border bg-muted/20 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium">
-                更多信息
-                <span className="ml-2 font-normal text-muted-foreground">
-                  状态、标签、备注和内部编码
-                </span>
-              </summary>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="catalogStatus">档案状态</Label>
-                  <Select
-                    id="catalogStatus"
-                    value={catalog.catalogStatus}
-                    onChange={(e) =>
-                      setCatalog((c) => ({
-                        ...c,
-                        catalogStatus: e.target.value as CatalogStatus,
-                      }))
-                    }
-                  >
-                    <option value="active">启用</option>
-                    <option value="disabled">停用</option>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    停用后保留历史记录，但不再用于新的业务单据。
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="code">系统 SKU 编码</Label>
-                  <Input
-                    id="code"
-                    value={formData.code}
-                    onChange={(e) =>
-                      updateFormData({
-                        code: e.target.value,
-                        codeSource: e.target.value.trim() ? "MANUAL" : "AUTO",
-                      })
-                    }
-                    placeholder={
-                      isVariant ? "留空自动生成，例如 NIKE-555088-101-42" : "留空自动生成"
-                    }
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant={formData.nameSource === "MANUAL" ? "secondary" : "outline"}>
-                      名称{formData.nameSource === "MANUAL" ? "手动" : "自动"}
-                    </Badge>
-                    <Badge variant={formData.codeSource === "MANUAL" ? "secondary" : "outline"}>
-                      编码{formData.codeSource === "MANUAL" ? "手动" : "自动"}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="catalogTags">标签</Label>
-                  <Input
-                    id="catalogTags"
-                    value={catalog.tagsInput}
-                    onChange={(e) =>
-                      setCatalog((c) => ({
-                        ...c,
-                        tagsInput: e.target.value,
-                      }))
-                    }
-                    placeholder="多个标签用逗号分隔"
-                  />
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="catalogNotes">内部备注</Label>
-                  <Textarea
-                    id="catalogNotes"
-                    value={catalog.notes}
-                    onChange={(e) => setCatalog((c) => ({ ...c, notes: e.target.value }))}
-                    rows={2}
-                    placeholder="仅用于内部补充说明"
-                  />
-                </div>
-              </div>
-            </details>
-          </CardContent>
-        </Card>
-      ) : (
+      {isVariant ? (
         <Card>
           <CardHeader className={cardHeaderClass}>
             <CardTitle className={cardTitleClass}>继承商品信息</CardTitle>
@@ -1286,7 +1288,7 @@ export function SKUForm({
             </details>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       <details className="rounded-lg border bg-background" data-testid="supplemental-attributes">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 [&::-webkit-details-marker]:hidden">

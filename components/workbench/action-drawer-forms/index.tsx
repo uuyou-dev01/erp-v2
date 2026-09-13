@@ -113,6 +113,7 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
     ),
     purchaseTrackingNo:
       detail.actionContext.purchaseTrackingNo ?? detail.actionContext.trackingNo ?? "",
+    shippedWithoutTracking: false,
     shippingCost: "",
     shippingCurrency:
       detail.actionContext.currency ?? detail.actionContext.purchaseCurrency ?? "CNY",
@@ -131,7 +132,7 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
         登记卖家已发货：填写采购物流单号并选择预计到货位置，保存后进入待确认收货。
       </p>
       <div className="space-y-2">
-        <Label htmlFor="purchase-tracking-no">采购物流单号 *</Label>
+        <Label htmlFor="purchase-tracking-no">采购物流单号</Label>
         <Input
           id="purchase-tracking-no"
           value={form.purchaseTrackingNo}
@@ -139,9 +140,20 @@ export function FillLogisticsForm({ detail, locations, pending, run }: ActionFor
             setForm((value) => ({ ...value, purchaseTrackingNo: event.target.value }))
           }
           placeholder="购买地发出的物流单号"
-          required
+          required={!form.shippedWithoutTracking}
         />
       </div>
+      <Checkbox
+        id="shipped-without-tracking"
+        checked={form.shippedWithoutTracking}
+        onChange={(event) =>
+          setForm((value) => ({ ...value, shippedWithoutTracking: event.target.checked }))
+        }
+        label="暂无单号，确认已发货"
+      />
+      <p className="text-xs text-muted-foreground">
+        无单号也会进入「待确认收货」，并标注「运单待补」。
+      </p>
       <div className="space-y-2">
         <Label htmlFor="destination-location-id">预计到货位置 *</Label>
         <WorkbenchLocationSelect
@@ -253,7 +265,7 @@ export function ConfirmArrivalForm({ detail, locations, pending, run }: ActionFo
         />
       </div>
       <SubmitButton pending={pending}>
-        {detail.primaryAction === "receivePurchase" ? "确认收货并创建库存" : "确认到货并处理库存"}
+        {detail.primaryAction === "receivePurchase" ? "确认收货并进入待分流" : "确认到货并处理库存"}
       </SubmitButton>
     </form>
   );
@@ -540,10 +552,12 @@ export function DispositionForm({
   pending,
   run,
 }: ActionFormProps) {
-  const defaultLocationId = findWorkbenchLocationId(
-    locations,
-    detail.actionContext.currentLocationText ?? detail.actionContext.location
-  );
+  const defaultLocationId =
+    detail.actionContext.destinationLocationId ||
+    findWorkbenchLocationId(
+      locations,
+      detail.actionContext.currentLocationText ?? detail.actionContext.location
+    );
   const [mode, setMode] = useState<"inbound" | "consolidate" | "transfer" | "return">("inbound");
   const [inboundForm, setInboundForm] = useState({ locationId: defaultLocationId, note: "" });
   const [consolidationForm, setConsolidationForm] = useState<{
@@ -629,15 +643,12 @@ export function DispositionForm({
 
       {mode === "inbound" && (
         <div className="space-y-3">
-          <div className="space-y-2">
-            <Label>入库位置</Label>
-            <WorkbenchLocationSelect
-              id="dispositionInboundLocationId"
-              value={inboundForm.locationId}
-              locations={locations}
-              onChange={(locationId) => setInboundForm((value) => ({ ...value, locationId }))}
-              placeholder="请选择入库地区或仓库"
-            />
+          <div className="rounded-md border p-3 text-sm">
+            <p className="font-medium">在已确认的收货位置入库</p>
+            <p className="mt-1">{detail.actionContext.currentLocationText || "尚未登记收货位置"}</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              入库不会改变商品所在仓库。要发往其他位置，请选择「立即发起转仓」。
+            </p>
           </div>
           <div className="space-y-2">
             <Label>备注</Label>
@@ -648,7 +659,9 @@ export function DispositionForm({
               }
             />
           </div>
-          <SubmitButton pending={pending}>确认入库</SubmitButton>
+          <SubmitButton pending={pending} disabled={!inboundForm.locationId}>
+            确认入库
+          </SubmitButton>
         </div>
       )}
 

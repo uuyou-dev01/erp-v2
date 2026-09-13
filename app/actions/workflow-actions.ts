@@ -40,6 +40,7 @@ import {
 } from "@/lib/application/logistics-cost";
 
 export interface FillLogisticsPayload {
+  shippedWithoutTracking?: boolean;
   carrier?: string;
   etaDate?: string;
   destinationLocationId?: string;
@@ -301,8 +302,8 @@ export async function submitFillLogistics(
   payload: FillLogisticsPayload
 ) {
   if (entityType === "purchaseOrder") {
-    if (!clean(payload.purchaseTrackingNo)) {
-      throw new Error("请填写采购物流单号");
+    if (!clean(payload.purchaseTrackingNo) && payload.shippedWithoutTracking !== true) {
+      throw new Error("请填写采购物流单号，或明确勾选「暂无单号，确认已发货」");
     }
     if (!clean(payload.destinationLocationId)) {
       throw new Error("请选择预计到货位置");

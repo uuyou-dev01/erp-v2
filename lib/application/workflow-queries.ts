@@ -46,6 +46,7 @@ export function derivePurchaseOrderItem(order: {
   orderNo: string;
   status: string;
   trackingNo: string | null;
+  destinationLocationId?: string | null;
   supplierName: string | null;
   currency: string;
   totalAmount: { toString(): string };
@@ -97,6 +98,7 @@ export function derivePurchaseOrderItem(order: {
       totalAmount: order.totalAmount.toString(),
       trackingNo: order.trackingNo,
       destinationLocationName: order.destinationLocation?.name ?? null,
+      destinationLocationId: order.destinationLocationId ?? null,
     },
   };
 
@@ -741,7 +743,6 @@ export async function collectWorkItems(
         workflowStage: { notIn: ["SETTLED", "CLOSED"] },
       },
       orderBy: { updatedAt: "asc" },
-      take: 80,
     }),
     prisma.purchaseOrder.findMany({
       where: { storeId, status: { in: ["ORDERED", "SHIPPED", "RECEIVED"] } },
@@ -751,7 +752,6 @@ export async function collectWorkItems(
         destinationLocation: { select: { name: true, isSellableDefault: true } },
       },
       orderBy: { updatedAt: "asc" },
-      take: 40,
     }),
     prisma.customerOrder.findMany({
       where: {
@@ -768,7 +768,6 @@ export async function collectWorkItems(
         lines: { include: { sku: true, allocations: true } },
       },
       orderBy: { updatedAt: "asc" },
-      take: 40,
     }),
     prisma.inboundShipment.findMany({
       where: { storeId, status: { in: ["IN_TRANSIT", "DELIVERED", "EXCEPTION"] } },
@@ -784,7 +783,6 @@ export async function collectWorkItems(
         toLocation: { select: { name: true } },
       },
       orderBy: { updatedAt: "asc" },
-      take: 40,
     }),
     prisma.inventoryLot.findMany({
       where: { storeId, status: "ACTIVE" },
@@ -793,7 +791,6 @@ export async function collectWorkItems(
         location: { select: { name: true, isSellableDefault: true } },
       },
       orderBy: { updatedAt: "asc" },
-      take: 80,
     }),
     prisma.itemUnit.findMany({
       where: {
@@ -807,7 +804,6 @@ export async function collectWorkItems(
         location: { select: { name: true, isSellableDefault: true } },
       },
       orderBy: { updatedAt: "asc" },
-      take: 30,
     }),
     prisma.itemUnit.findMany({
       where: { storeId, status: "RETURN_CHECK" },
@@ -816,7 +812,6 @@ export async function collectWorkItems(
         location: { select: { name: true, isSellableDefault: true } },
       },
       orderBy: { updatedAt: "asc" },
-      take: 40,
     }),
   ]);
 
@@ -1041,7 +1036,7 @@ export async function collectWorkItems(
 }
 
 export async function getQueueCounts(storeId: string): Promise<QueueCounts> {
-  const items = await collectWorkItems(storeId, undefined, 500);
+  const items = await collectWorkItems(storeId, undefined, Number.POSITIVE_INFINITY);
   return countWorkItems(items);
 }
 
@@ -1583,6 +1578,7 @@ export async function getWorkItemDetail(
         currency: order.currency,
         etaDate: iso(order.etaDate) ?? null,
         currentLocationText: order.destinationLocation?.name ?? null,
+        destinationLocationId: order.destinationLocationId,
       },
     };
   }
