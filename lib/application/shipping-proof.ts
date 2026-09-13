@@ -1,4 +1,6 @@
+import type { ShipmentConfirmation } from "./shipment-confirmation";
 export interface ShippingProof {
+  dispatchConfirmation?: ShipmentConfirmation;
   shipper?: string;
   shippingMethod?: string;
   pickupCode?: string;
@@ -30,9 +32,9 @@ export function parseShippingProof(value: unknown): ShippingProof {
 
   const record = value as Record<string, unknown>;
   return {
+    dispatchConfirmation: parseDispatchConfirmation(record.dispatchConfirmation),
     shipper: typeof record.shipper === "string" ? record.shipper : undefined,
-    shippingMethod:
-      typeof record.shippingMethod === "string" ? record.shippingMethod : undefined,
+    shippingMethod: typeof record.shippingMethod === "string" ? record.shippingMethod : undefined,
     pickupCode: typeof record.pickupCode === "string" ? record.pickupCode : undefined,
     proofNote: typeof record.proofNote === "string" ? record.proofNote : undefined,
     imageUrls: Array.isArray(record.imageUrls)
@@ -84,6 +86,7 @@ export function mergeShippingProof(
 
 export function shippingProofToJson(proof: ShippingProof) {
   const payload: ShippingProof = {};
+  if (proof.dispatchConfirmation) payload.dispatchConfirmation = proof.dispatchConfirmation;
   if (proof.shipper?.trim()) payload.shipper = proof.shipper.trim();
   if (proof.shippingMethod?.trim()) payload.shippingMethod = proof.shippingMethod.trim();
   if (proof.pickupCode?.trim()) payload.pickupCode = proof.pickupCode.trim();
@@ -102,9 +105,31 @@ export function shippingProofToJson(proof: ShippingProof) {
 export function hasShippingProofContent(proof: ShippingProof) {
   return Boolean(
     proof.shipper ||
-      proof.shippingMethod ||
-      proof.pickupCode ||
-      proof.proofNote ||
-      (proof.imageUrls && proof.imageUrls.length > 0)
+    proof.shippingMethod ||
+    proof.pickupCode ||
+    proof.proofNote ||
+    (proof.imageUrls && proof.imageUrls.length > 0)
   );
+}
+
+function parseDispatchConfirmation(value: unknown): ShipmentConfirmation | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  if (
+    !["SELF", "ON_BEHALF"].includes(String(v.mode)) ||
+    !["SELF", "WECHAT", "PHONE", "OTHER"].includes(String(v.basis)) ||
+    ![v.actualShipper, v.confirmedById, v.confirmedByName, v.confirmedAt].every(
+      (x) => typeof x === "string"
+    )
+  )
+    return undefined;
+  return {
+    mode: v.mode as ShipmentConfirmation["mode"],
+    basis: v.basis as ShipmentConfirmation["basis"],
+    actualShipper: v.actualShipper as string,
+    confirmedById: v.confirmedById as string,
+    confirmedByName: v.confirmedByName as string,
+    confirmedAt: v.confirmedAt as string,
+    note: typeof v.note === "string" ? v.note : undefined,
+  };
 }

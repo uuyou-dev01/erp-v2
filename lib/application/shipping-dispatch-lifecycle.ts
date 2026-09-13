@@ -1,3 +1,4 @@
+import { notifyShippingTaskProgress } from "./shipping-notifications";
 import type { Prisma } from "@prisma/client";
 import { capabilitiesForLocationFulfillerRole } from "@/lib/application/collaboration-capabilities";
 import {
@@ -182,6 +183,7 @@ export async function claimShipOrderTask(input: { taskId: string; userId: string
   });
 
   if (result.outcome === "claimed") {
+    await notifyShippingTaskProgress(input.taskId, input.userId, "CLAIMED");
     await prisma.notification.updateMany({
       where: { taskId: input.taskId, resolvedAt: null },
       data: {
@@ -246,6 +248,7 @@ export async function declineShipOrderTask(input: { taskId: string; userId: stri
       notificationKey: `assignment-declined:${Date.now()}`,
     });
   }
+  await notifyShippingTaskProgress(input.taskId, input.userId, "DECLINED");
   return { outcome: result.outcome };
 }
 
@@ -416,6 +419,7 @@ export async function returnShipOrderTask(input: { taskId: string; userId: strin
     title: `任务已退回队列：${task.title}`,
     notificationKey: `returned:${Date.now()}`,
   });
+  await notifyShippingTaskProgress(input.taskId, input.userId, "RETURNED");
   return { outcome: "returned" as const };
 }
 

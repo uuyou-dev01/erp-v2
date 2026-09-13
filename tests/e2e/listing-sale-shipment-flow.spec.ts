@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
@@ -192,18 +193,40 @@ test.describe("listing sale and shipment flow", () => {
     await page.getByRole("button", { name: "确认登记" }).click();
 
     await expect(page).toHaveURL(/\/sales\/[^/]+$/);
-    await expect(page.getByRole("heading", { name: /订单:/ })).toBeVisible();
+    await expect(page.getByTestId("order-detail-workspace")).toBeVisible();
     await expect(page.getByText("已成交 · 待发货", { exact: true })).toBeVisible();
-    await expect(page.getByText("净利润")).toBeVisible();
-    await expect(page.getByText("CNY 50.00")).toBeVisible();
-
-    await page.getByRole("button", { name: "确认已发货" }).click();
-    await expect(page.getByRole("heading", { name: "确认已发货" })).toBeVisible();
-    await page.getByLabel("物流单号（选填）").fill(`TRK_${runId}`);
-    await page.getByRole("button", { name: "确认发货" }).click();
-
+    const orderUrl = page.url();
+    mkdirSync("/tmp/erp-rc12-ui", { recursive: true });
+    await page.screenshot({ path: "/tmp/erp-rc12-ui/order-desktop.png", fullPage: true });
+    const workspace = await page.getByTestId("order-detail-workspace").boundingBox();
+    expect(workspace!.width).toBeLessThanOrEqual(1024);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true
+    );
+    await page.screenshot({ path: "/tmp/erp-rc12-ui/order-mobile.png", fullPage: true });
+    await page.getByTestId("order-financial-details").locator("summary").click();
+    await expect(page.getByText("净利润", { exact: true })).toBeVisible();
+    await expect(page.getByText("CNY 50.00", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("link", { name: "去发货", exact: true }).click();
+    await expect(page.getByLabel("运单号（选填）")).toBeVisible();
+    await page.getByLabel("运单号（选填）").fill(`TRK_${runId}`);
+    await page.getByRole("button", { name: "暂存", exact: true }).click();
+    await expect(page.getByRole("status", { name: "操作结果" })).toContainText("已暂存");
+    const before = await prisma.customerOrder.findFirstOrThrow({ where: { externalOrderNo } });
+    expect(before.orderStatus).toBe("CONFIRMED");
+    await page.getByLabel("替发货方确认", { exact: true }).check();
+    await page.getByLabel("实际发货人", { exact: true }).fill("日本仓 刘");
+    await page.getByLabel("确认依据", { exact: true }).selectOption("WECHAT");
+    await page.getByLabel("我已按商品图、SKU、数量和出库仓核对，确认货物已经发出").check();
+    await page.getByRole("button", { name: "确认已发货", exact: true }).click();
+    await expect(page.getByRole("status", { name: "操作结果" })).toContainText("已确认发货");
+    await page.goto(orderUrl);
     await expect(page.getByText("已发货", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(`物流单号：TRK_${runId}`, { exact: false })).toBeVisible();
+    await expect(page.getByText("代确认依据：微信告知", { exact: false })).toBeVisible();
+    await expect(page.getByText("实际发货：日本仓 刘", { exact: true })).toBeVisible();
+    await expect(page.getByText(`运单号 TRK_${runId}`, { exact: false })).toBeVisible();
 
     await page.goto("/reports?range=custom&from=2020-01-01&to=2030-12-31");
     await expect(page.getByRole("heading", { name: "报表分析" })).toBeVisible();

@@ -118,7 +118,11 @@ export function deriveSalesOrderWorkbenchState(
   } else if (isTodo) {
     nextAction = { label: "继续处理", href: `/sales/${order.id}`, emphasis: "primary" };
   } else if (isPendingShipment) {
-    nextAction = { label: "确认发货", href: `/sales/${order.id}`, emphasis: "primary" };
+    nextAction = {
+      label: "去发货",
+      href: `/workbench?open=customerOrder:${order.id}`,
+      emphasis: "primary",
+    };
   } else if (isPendingSettlement) {
     nextAction = { label: "登记结算", href: `/sales/${order.id}`, emphasis: "primary" };
   }

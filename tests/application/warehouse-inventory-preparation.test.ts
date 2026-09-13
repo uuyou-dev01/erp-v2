@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { getManagedWarehouseInventory } from "@/lib/application/warehouse-inventory";
+import {
+  notifyShippingParticipants,
+  notifyShippingTaskProgress,
+} from "@/lib/application/shipping-notifications";
 import { resolveInventoryAcquisitions } from "@/lib/application/inventory-acquisition";
 
 const auth = vi.hoisted(() => ({ id: "" }));
@@ -57,6 +61,7 @@ describe("warehouse inventory and pre-shipment collaboration", () => {
     await prisma.membership.create({
       data: { organizationId: orgId, userId: ownerId, role: "OWNER", status: "ACTIVE" },
     });
+    await prisma.storeAccess.create({ data: { storeId, userId: ownerId, role: "OWNER" } });
     const locations = await Promise.all(
       ["managed", "private"].map((code) =>
         prisma.location.create({ data: { storeId, code, name: code, type: "WAREHOUSE" } })
@@ -361,6 +366,44 @@ describe("warehouse inventory and pre-shipment collaboration", () => {
     expect((updated.shippingProof as { imageUrls: string[] }).imageUrls).not.toContain(urls[0]);
     expect((updated.shippingProof as { imageUrls: string[] }).imageUrls).toContain(urls[1]);
     expect(updated.orderStatus).toBe("CONFIRMED");
+  });
+
+  it("notifies the active other party once, excludes unrelated operators, and never revives revoked recipients", async () => {
+    await prisma.notification.deleteMany({ where: { refId: orderId } });
+    await notifyShippingParticipants({ orderId, actorId: ownerId, event: "PREPARATION" });
+    await notifyShippingParticipants({ orderId, actorId: ownerId, event: "PREPARATION" });
+    expect(
+      await prisma.notification.count({ where: { refId: orderId, recipientId: managerId } })
+    ).toBe(1);
+    expect(
+      await prisma.notification.count({ where: { refId: orderId, recipientId: operatorId } })
+    ).toBe(0);
+    expect(
+      await prisma.notification.count({ where: { refId: orderId, recipientId: ownerId } })
+    ).toBe(0);
+    const external = await prisma.notification.findFirstOrThrow({
+      where: { recipientId: managerId, refId: orderId },
+    });
+    expect(external.actionUrl).toBe(`/collaboration/tasks?task=${taskId}`);
+    expect(external.resolutionCode).toBe("INFORMATIONAL");
+    await notifyShippingTaskProgress(taskId, managerId, "CLAIMED");
+    const owner = await prisma.notification.findFirstOrThrow({
+      where: { recipientId: ownerId, refId: orderId },
+    });
+    expect(owner.actionUrl).toBe(`/sales/${orderId}`);
+    const suspended = await prisma.membership.create({
+      data: { organizationId: orgId, userId: managerId, role: "OPERATOR", status: "SUSPENDED" },
+    });
+    try {
+      await notifyShippingParticipants({ orderId, actorId: ownerId, event: "SHIPPED" });
+      expect(
+        await prisma.notification.count({
+          where: { recipientId: managerId, refId: orderId, type: "ORDER_SHIPPED" },
+        })
+      ).toBe(0);
+    } finally {
+      await prisma.membership.delete({ where: { id: suspended.id } });
+    }
   });
 
   afterAll(async () => {

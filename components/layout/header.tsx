@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
-import { Bell, Building2, LogIn, LogOut, Menu, Search, Settings2, UserRound } from "lucide-react";
-import { getMyNotificationSummary } from "@/app/actions/notifications";
+import { Building2, LogIn, LogOut, Menu, Search, Settings2, UserRound } from "lucide-react";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { cn } from "@/lib/utils";
 import {
   clearCurrentUser,
@@ -41,24 +41,9 @@ export function Header({
   account,
 }: HeaderProps) {
   const router = useRouter();
-  const [unreadCount, setUnreadCount] = useState(0);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getMyNotificationSummary()
-      .then((summary) => {
-        if (!cancelled) setUnreadCount(summary.unreadCount);
-      })
-      .catch(() => {
-        if (!cancelled) setUnreadCount(0);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -163,21 +148,7 @@ export function Header({
             {storeError ? <span className="text-xs text-destructive">{storeError}</span> : null}
           </label>
         ) : null}
-        <Link
-          href="/notifications"
-          aria-label="通知"
-          className={cn(
-            buttonVariants({ variant: "ghost", size: "icon" }),
-            "relative h-8 w-8 text-muted-foreground"
-          )}
-        >
-          <Bell className="h-4 w-4" />
-          {unreadCount > 0 ? (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground">
-              {unreadCount > 9 ? "9+" : unreadCount}
-            </span>
-          ) : null}
-        </Link>
+        <NotificationBell />
         <div ref={accountMenuRef} className="relative">
           <button
             type="button"

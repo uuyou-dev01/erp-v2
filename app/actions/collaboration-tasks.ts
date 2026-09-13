@@ -1,4 +1,5 @@
 "use server";
+import { notifyShippingParticipants } from "@/lib/application/shipping-notifications";
 
 import type { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
@@ -542,17 +543,10 @@ export async function saveCollaborationShippingPreparationAction(
       });
       return imageUrls;
     });
-    await notifyOrganizationAdministrators({
-      organizationId: task.organizationId,
+    await notifyShippingParticipants({
+      orderId: task.refId,
       actorId: user.id,
-      includeUserIds: task.createdById ? [task.createdById] : [],
-      type: "SHIPPING_PREPARATION_UPDATED",
-      refType: "CUSTOMER_ORDER",
-      refId: task.refId,
-      title: "发货方补充了发货前资料",
-      body: "请查看二维码、取件码或说明；订单仍在待发货。",
-      actionUrl: `/sales/${task.refId}`,
-      dedupeKey: `shipping-preparation:${task.id}:${saved.join(",")}:${input.proofNote ?? ""}`,
+      event: "PREPARATION",
     });
     revalidateCollaborationTaskViews();
     revalidatePath(`/sales/${task.refId}`);

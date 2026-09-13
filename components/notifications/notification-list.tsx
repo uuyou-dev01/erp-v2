@@ -1,5 +1,6 @@
 "use client";
 
+import { showActionSuccess } from "@/components/feedback/action-feedback";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Bell, Check, CheckCircle2, ExternalLink } from "lucide-react";
@@ -23,6 +24,12 @@ interface NotificationRow {
 }
 
 const TYPE_LABELS: Record<string, string> = {
+  ORDER_SHIPPED: "订单发货",
+  SHIPPING_PROGRESS_UPDATED: "发货进度",
+  SHIPPING_PREPARATION_UPDATED: "发货前资料",
+  WAREHOUSE_TASK_ASSIGNED: "发货指派",
+  TASK_HANDOFF_REQUESTED: "任务转交",
+  WAREHOUSE_STOCKTAKE_REQUEST: "库存核对",
   TASK_ASSIGNED: "任务指派",
   TASK_DONE: "任务完成",
   WAREHOUSE_TASK_AVAILABLE: "仓库任务",
@@ -171,6 +178,7 @@ export function NotificationList({ notifications }: { notifications: Notificatio
                       setNotificationError(result.error);
                       return;
                     }
+                    showActionSuccess("已标记为已读");
                     router.refresh();
                   } catch (error) {
                     setNotificationError(

@@ -16,7 +16,7 @@ let batchId = "",
   storeId = "",
   ownerId = "",
   skuId = "";
-const shots = "/tmp/erp-rc11-ui";
+const shots = "/tmp/erp-rc12-ui";
 mkdirSync(shots, { recursive: true });
 
 test.beforeAll(async () => {
@@ -209,10 +209,15 @@ test("warehouse manager sees read-only stock and can photograph shared preparati
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true
   );
+  await ownerPage.clock.install();
+  await ownerPage.goto("/notifications");
+  await expect(ownerPage.getByText(run, { exact: false })).toHaveCount(0);
   const camera = page.getByLabel("拍摄发货前资料");
   await expect(camera).toHaveAttribute("capture", "environment");
   await camera.setInputFiles("public/uploads/1780277819644-5x8heb.JPG");
   await expect(page.getByText("发货前资料已保存并通知货主，订单仍为待发货。")).toBeVisible();
+  await ownerPage.clock.fastForward(31000);
+  await expect(ownerPage.getByText(run, { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByRole("img", { name: "发货前资料", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
@@ -228,6 +233,27 @@ test("warehouse manager sees read-only stock and can photograph shared preparati
     .getByRole("img", { name: "发货前资料", exact: true })
     .getAttribute("src");
   expect((await ownerPage.request.get(url!)).status()).toBe(200);
+  await page.getByLabel("我已按商品图、SKU、规格和数量核对，确认没有拿错货").check();
+  await page.getByRole("button", { name: "确认已发货并回写订单", exact: true }).click();
+  await expect(page.getByRole("status", { name: "操作结果" })).toContainText("已确认发货");
+  const dispatched = await prisma.customerOrder.findUniqueOrThrow({ where: { id: orderId } });
+  expect(dispatched.orderStatus).toBe("SHIPPED");
+  expect(dispatched.shippingProof).toMatchObject({
+    dispatchConfirmation: {
+      mode: "SELF",
+      confirmedById: managerId,
+      actualShipper: "UI 仓库负责人",
+    },
+  });
+  await ownerPage.goto("/notifications");
+  await expect(ownerPage.getByText("订单已发货", { exact: true }).first()).toBeVisible();
+  const notifications = await prisma.notification.findMany({
+    where: { recipientId: ownerId, refId: orderId, type: "ORDER_SHIPPED" },
+  });
+  expect(notifications).toHaveLength(1);
+  await ownerPage.goto(`/notifications/open/${notifications[0].id}`);
+  await expect(ownerPage).toHaveURL(new RegExp(`/sales/${orderId}$`));
+  await expect(ownerPage.getByText("实际发货：UI 仓库负责人", { exact: true })).toBeVisible();
   await context.close();
 });
 

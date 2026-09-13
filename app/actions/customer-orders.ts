@@ -1,4 +1,10 @@
 "use server";
+import { getOrderShippingProgress } from "@/lib/application/order-shipping-progress";
+import { notifyShippingParticipants } from "@/lib/application/shipping-notifications";
+import {
+  buildShipmentConfirmation,
+  type ShipmentConfirmationInput,
+} from "@/lib/application/shipment-confirmation";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
@@ -29,7 +35,6 @@ import {
   completeTasksForRef,
   completeTasksForRefInTransaction,
   createTaskIfMissing,
-  notifyTaskCompleted,
   TASK_TYPE,
 } from "@/lib/application/tasks";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
@@ -157,7 +162,7 @@ const salesOrderBusinessInclude = {
 
 export async function getCustomerOrders(storeId: string, platformId?: string) {
   const context = await requireUserContext({ storeId });
-  return await prisma.customerOrder.findMany({
+  const orders = await prisma.customerOrder.findMany({
     where: {
       storeId: context.activeStoreId,
       ...(platformId ? { platformId } : {}),
@@ -173,6 +178,11 @@ export async function getCustomerOrders(storeId: string, platformId?: string) {
     },
     orderBy: { createdAt: "desc" },
   });
+  const shipping = await getOrderShippingProgress(
+    context.activeStoreId,
+    orders.map((o) => o.id)
+  );
+  return orders.map((order) => ({ ...order, shippingProgress: shipping.get(order.id)! }));
 }
 
 export async function getCustomerOrderById(id: string) {
@@ -200,7 +210,8 @@ export async function getCustomerOrderById(id: string) {
   });
   if (!order) return null;
   await requireUserContext({ storeId: order.storeId });
-  return order;
+  const shipping = await getOrderShippingProgress(order.storeId, [order.id]);
+  return { ...order, shippingProgress: shipping.get(order.id)! };
 }
 
 export async function updateOrderNetRevenue(orderId: string, netRevenue: string) {
@@ -671,11 +682,24 @@ export async function saveOrderShippingProof(
   if (order.orderStatus !== "CONFIRMED") {
     throw new Error("只有待发货订单可以暂存发货凭证");
   }
+  if (!order.store.organizationId) throw new Error("订单店铺尚未绑定经营主体");
   const user = await requireAuthenticatedUser();
   const internalAccess = await prisma.storeAccess.findFirst({
     where: { storeId: order.storeId, userId: user.id },
     select: { id: true },
   });
+  if (internalAccess) await requireUserContext({ storeId: order.storeId });
+  if (
+    await prisma.membership.findFirst({
+      where: {
+        organizationId: order.store.organizationId,
+        userId: user.id,
+        status: { not: "ACTIVE" },
+      },
+      select: { id: true },
+    })
+  )
+    throw new Error("该企业的访问权限已失效");
   if (!internalAccess) {
     const assignedTask = await prisma.task.findFirst({
       where: {
@@ -729,7 +753,13 @@ export async function saveOrderShippingProof(
     const imageUrls = [
       ...new Set([...(existing.imageUrls ?? []), ...(proof.imageUrls ?? [])]),
     ].filter((url) => !removed.has(url));
-    const merged = shippingProofToJson(mergeShippingProof(existing, { ...proof, imageUrls }));
+    const merged = shippingProofToJson(
+      mergeShippingProof(existing, {
+        ...proof,
+        imageUrls,
+        dispatchConfirmation: existing.dispatchConfirmation,
+      })
+    );
     await tx.customerOrder.update({
       where: { id: orderId },
       data: {
@@ -741,6 +771,7 @@ export async function saveOrderShippingProof(
     });
   });
 
+  await notifyShippingParticipants({ orderId, actorId: user.id, event: "PREPARATION" });
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
   revalidatePath("/workbench");
@@ -1305,7 +1336,13 @@ export async function markOrderReturned(orderId: string, data?: RegisterReturnIn
 
 async function performOrderShipment(
   orderId: string,
-  options: { trackingNo?: string; shippingProof?: ShippingProof } | undefined,
+  options:
+    | {
+        trackingNo?: string;
+        shippingProof?: ShippingProof;
+        confirmation?: ShipmentConfirmationInput;
+      }
+    | undefined,
   actor: { userId: string; organizationId: string }
 ) {
   const order = await prisma.customerOrder.findUnique({
@@ -1348,7 +1385,15 @@ async function performOrderShipment(
     "CUSTOMER_ORDER",
     order.id
   );
-  const completedTasks = await prisma.$transaction(async (tx) => {
+  const confirmingUser = await prisma.user.findUniqueOrThrow({
+    where: { id: actor.userId },
+    select: { id: true, name: true, email: true },
+  });
+  const confirmation = buildShipmentConfirmation(options?.confirmation, {
+    id: actor.userId,
+    name: confirmingUser.name || confirmingUser.email,
+  });
+  await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${orderId} FOR UPDATE`;
     const orderForLock = await tx.customerOrder.findUnique({
       where: { id: orderId },
@@ -1491,9 +1536,19 @@ async function performOrderShipment(
       });
     }
 
-    const mergedProof = options?.shippingProof
-      ? shippingProofToJson(mergeShippingProof(lockedOrder.shippingProof, options.shippingProof))
-      : shippingProofToJson(parseShippingProof(lockedOrder.shippingProof));
+    const existingProof = parseShippingProof(lockedOrder.shippingProof);
+    const mergedProof = shippingProofToJson(
+      mergeShippingProof(existingProof, {
+        ...options?.shippingProof,
+        imageUrls: [
+          ...new Set([
+            ...(existingProof.imageUrls ?? []),
+            ...(options?.shippingProof?.imageUrls ?? []),
+          ]),
+        ],
+        dispatchConfirmation: confirmation,
+      })
+    );
 
     await tx.customerOrder.update({
       where: { id: orderId },
@@ -1515,7 +1570,7 @@ async function performOrderShipment(
       completedById: actor.userId,
       work: {
         code: "SHIP_ORDER",
-        name: "订单发货",
+        name: confirmation.mode === "ON_BEHALF" ? "订单发货（代确认）" : "订单发货",
         quantity: lockedOrder.lines.reduce(
           (sum, line) => sum.plus(line.quantity.toString()),
           new Decimal(0)
@@ -1524,6 +1579,7 @@ async function performOrderShipment(
         metadata: {
           orderId: lockedOrder.id,
           platformId: lockedOrder.platformId,
+          dispatchConfirmation: confirmation,
         },
       },
     });
@@ -1537,7 +1593,9 @@ async function performOrderShipment(
   });
 
   await syncQuickEntryFromOrder(orderId, "SHIPPED");
-  await Promise.all(completedTasks.map((task) => notifyTaskCompleted(task, actor.userId)));
+  await notifyShippingParticipants({ orderId, actorId: actor.userId, event: "SHIPPED" });
+  revalidatePath("/collaboration/tasks");
+  revalidatePath("/notifications");
 
   revalidatePath("/sales");
   revalidatePath(`/sales/${orderId}`);
@@ -1548,7 +1606,11 @@ async function performOrderShipment(
 
 export async function markOrderShipped(
   orderId: string,
-  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+  options?: {
+    trackingNo?: string;
+    shippingProof?: ShippingProof;
+    confirmation?: ShipmentConfirmationInput;
+  }
 ) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
@@ -1571,7 +1633,11 @@ export async function markOrderShipped(
 
 export async function markOrderShippedAsLocationFulfiller(
   taskId: string,
-  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+  options?: {
+    trackingNo?: string;
+    shippingProof?: ShippingProof;
+    confirmation?: ShipmentConfirmationInput;
+  }
 ) {
   const user = await requireAuthenticatedUser();
   const task = await prisma.task.findFirst({
@@ -1597,6 +1663,7 @@ export async function markOrderShippedAsLocationFulfiller(
       locationId: task.fulfillmentLocationId,
       userId: user.id,
       status: "ACTIVE",
+      organization: { memberships: { none: { userId: user.id, status: { not: "ACTIVE" } } } },
     },
     select: { id: true },
   });
@@ -1607,15 +1674,23 @@ export async function markOrderShippedAsLocationFulfiller(
     throw new Error("订单库存不完全属于你负责的仓库，请联系订单负责人处理");
   }
 
-  return performOrderShipment(task.refId, options, {
-    userId: user.id,
-    organizationId: task.organizationId,
-  });
+  return performOrderShipment(
+    task.refId,
+    { ...options, confirmation: { mode: "SELF" } },
+    {
+      userId: user.id,
+      organizationId: task.organizationId,
+    }
+  );
 }
 
 export async function markOrderShippedAction(
   orderId: string,
-  options?: { trackingNo?: string; shippingProof?: ShippingProof }
+  options?: {
+    trackingNo?: string;
+    shippingProof?: ShippingProof;
+    confirmation?: ShipmentConfirmationInput;
+  }
 ) {
   try {
     await markOrderShipped(orderId, options);

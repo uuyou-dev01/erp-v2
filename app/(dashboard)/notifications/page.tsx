@@ -1,3 +1,4 @@
+import { NotificationRefresh } from "@/components/notifications/notification-refresh";
 import { getMyNotifications } from "@/app/actions/notifications";
 import { NotificationList } from "@/components/notifications/notification-list";
 import { PageHeader } from "@/components/ui/page-header";
@@ -27,6 +28,7 @@ export default async function NotificationsPage() {
         title="通知"
         description="查看当前账号在各企业中的任务指派、外部任务协作和异常提醒。"
       />
+      <NotificationRefresh />
       <NotificationList notifications={rows} />
     </div>
   );

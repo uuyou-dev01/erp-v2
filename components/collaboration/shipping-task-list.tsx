@@ -1,4 +1,5 @@
 "use client";
+import { showActionSuccess } from "@/components/feedback/action-feedback";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
@@ -184,6 +185,7 @@ export function ShippingTaskList({
         if (!saved.success) throw new Error(saved.error);
         setForm((value) => ({ ...value, imageUrls: saved.imageUrls }));
         setNotice("发货前资料已保存并通知货主，订单仍为待发货。");
+        showActionSuccess("发货前资料已保存，尚未确认发货。");
       }
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "图片上传失败");
@@ -202,6 +204,9 @@ export function ShippingTaskList({
       try {
         const result = await action();
         if (!result.success) return setError(result.error || "操作失败");
+        showActionSuccess(
+          (result.outcome && OUTCOME_MESSAGES[result.outcome]) || fallbackNotice || "操作成功"
+        );
         setNotice(
           (result.outcome && OUTCOME_MESSAGES[result.outcome]) || fallbackNotice || "操作成功"
         );
@@ -873,7 +878,10 @@ export function ShippingTaskList({
                   className="space-y-4 border-t pt-5"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    run(() => completeCollaborationShippingTaskAction(selected.id, form));
+                    run(
+                      () => completeCollaborationShippingTaskAction(selected.id, form),
+                      "已确认发货，库存已更新并通知货主。"
+                    );
                   }}
                 >
                   <h3 className="text-sm font-semibold">回填发货结果</h3>
@@ -882,7 +890,7 @@ export function ShippingTaskList({
                   </p>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label>发货人（选填）</Label>
+                      <Label>现场交接联系人（选填）</Label>
                       <Input
                         value={form.shipper}
                         onChange={(e) => setForm({ ...form, shipper: e.target.value })}

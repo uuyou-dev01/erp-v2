@@ -36,7 +36,8 @@ describe("sales order workbench", () => {
 
     expect(state.businessMode).toBe("DIRECT");
     expect(state.isPendingShipment).toBe(true);
-    expect(state.nextAction.label).toBe("确认发货");
+    expect(state.nextAction.label).toBe("去发货");
+    expect(state.nextAction.href).toBe(`/workbench?open=customerOrder:${order.id}`);
     expect(orderMatchesSalesWorkbenchView(order, "shipment")).toBe(true);
   });
 

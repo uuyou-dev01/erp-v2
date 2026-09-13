@@ -127,6 +127,9 @@ export async function notifyUser(input: {
     input.actionUrl ||
     (input.taskId ? `/m/tasks/${encodeURIComponent(input.taskId)}` : "/m/notifications");
   const informationalTypes = new Set([
+    "ORDER_SHIPPED",
+    "SHIPPING_PROGRESS_UPDATED",
+    "SHIPPING_PREPARATION_UPDATED",
     "TASK_DONE",
     "LOCATION_ACCESS_ADDED",
     "ORGANIZATION_CONNECTION_ACCEPTED",

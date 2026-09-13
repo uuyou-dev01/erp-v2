@@ -1,4 +1,6 @@
 "use client";
+import { ShipmentConfirmationFields } from "@/components/sales/shipment-confirmation-fields";
+import type { ShipmentConfirmationInput } from "@/lib/application/shipment-confirmation";
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -71,7 +73,7 @@ interface ActionFormProps {
   pending: boolean;
   run: (
     fn: () => Promise<unknown>,
-    options?: { keepOpen?: boolean; successMessage?: string }
+    options?: { keepOpen?: boolean; successMessage?: string; onSuccess?: () => void }
   ) => void;
 }
 
@@ -1152,6 +1154,7 @@ export function ShipOrderForm({
   pending,
   run,
 }: ActionFormProps & { assignmentPanel?: ReactNode }) {
+  const [confirmation, setConfirmation] = useState<ShipmentConfirmationInput>({ mode: "SELF" });
   const initialProof = proofFromDetail(detail);
   const initialShippingMethod = initialProof.shippingMethod ?? "";
   const [uploading, setUploading] = useState(false);
@@ -1194,6 +1197,8 @@ export function ShipOrderForm({
           }),
         {
           keepOpen: true,
+          onSuccess: () =>
+            setDraftHint(`已保存于 ${new Date().toLocaleTimeString("zh-CN")}，尚未确认发货。`),
           successMessage: options?.silent
             ? undefined
             : (options?.successMessage ?? "已暂存。代发方可查看凭证，发出后再点「确认已发货」。"),
@@ -1240,7 +1245,7 @@ export function ShipOrderForm({
         );
         const next = { ...form, imageUrls: [...form.imageUrls, ...urls] };
         setForm(next);
-        setDraftHint("凭证图片已上传并暂存，代发方现在可以查看");
+        setDraftHint("");
         persistDraft(next, { successMessage: "发货前资料已上传并暂存，代发方现在可以查看。" });
       } catch (error) {
         setUploadError(error instanceof Error ? error.message : "图片上传失败");
@@ -1294,9 +1299,7 @@ export function ShipOrderForm({
     fulfillmentContext?.allocations.length && fulfillmentContext.isComplete
   );
   const assigneeName =
-    taskItem?.taskAssignedToName ??
-    detail.taskAssignedToName ??
-    "未指派（提交人将记录为实际执行人）";
+    taskItem?.taskAssignedToName ?? detail.taskAssignedToName ?? "未指派（可在下方记录实际发货人）";
   const taskTiming = getShippingTaskTiming({
     createdAt: taskItem?.taskCreatedAt ?? detail.taskCreatedAt ?? detail.waitingSince,
     dueAt: taskItem?.taskDueAt ?? detail.taskDueAt,
@@ -1308,7 +1311,7 @@ export function ShipOrderForm({
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
-        run(() => submitShipOrder(detail.entityId, payload()));
+        run(() => submitShipOrder(detail.entityId, { ...payload(), confirmation }));
       }}
     >
       <section
@@ -1489,6 +1492,7 @@ export function ShipOrderForm({
           placeholder="补充说明，如取件时间、联系人等"
         />
       </div>
+      <ShipmentConfirmationFields value={confirmation} onChange={setConfirmation} />
       <div className="rounded-lg border bg-muted/25 p-3">
         <p className="mb-2 text-sm font-medium">发货确认（必选）</p>
         <Checkbox
@@ -1504,7 +1508,7 @@ export function ShipOrderForm({
             variant="outline"
             disabled={pending || uploading}
             onClick={() => {
-              setDraftHint("已暂存，可继续编辑；代发方发出后再确认发货");
+              setDraftHint("");
               persistDraft(form);
             }}
           >

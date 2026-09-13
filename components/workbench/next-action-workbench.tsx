@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { QueueCounts, WorkItem, WorkQueue } from "@/lib/application/next-actions";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
@@ -137,6 +137,7 @@ export function NextActionWorkbench({
   const [selectedQueue, setSelectedQueue] = useState<WorkQueue | "all">(
     parseQueue(searchParams.get("queue"))
   );
+  const handledOpen = useRef<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<WorkItemDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -265,7 +266,10 @@ export function NextActionWorkbench({
       openQuickEntry();
     }
     const openParam = searchParams.get("open");
-    if (openParam) {
+    if (!openParam) handledOpen.current = null;
+    // A data refresh must not reopen the drawer and discard the current draft.
+    if (openParam && handledOpen.current !== openParam) {
+      handledOpen.current = openParam;
       const [type, id] = openParam.split(":");
       if (type && id) {
         const matchedItem = initialItems.find(

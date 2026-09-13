@@ -1,3 +1,4 @@
+import { shippingTaskStatusLabels } from "@/lib/application/order-shipping-progress";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -288,7 +289,11 @@ export default async function SalesPage({
         return (
           <div className="space-y-1">
             <p className="font-medium">
-              {fulfillmentModeLabels[state.fulfillmentMode] || state.fulfillmentMode}
+              {state.businessMode === "DIRECT"
+                ? order.shippingProgress.location
+                  ? `仓库发货 · ${order.shippingProgress.location.name}`
+                  : "待安排发货"
+                : fulfillmentModeLabels[state.fulfillmentMode] || state.fulfillmentMode}
             </p>
             <p
               className={cn(
@@ -299,7 +304,7 @@ export default async function SalesPage({
               {request
                 ? fulfillmentStatusLabels[request.status] || request.status
                 : state.businessMode === "DIRECT"
-                  ? "内部履约"
+                  ? `${order.shippingProgress.assigneeName || "未指定执行人"} · ${shippingTaskStatusLabels[order.shippingProgress.status ?? ""] || "待安排"}`
                   : "履约请求待建立"}
             </p>
           </div>

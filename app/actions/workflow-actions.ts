@@ -116,6 +116,7 @@ export interface CreateListingPayload {
 }
 
 export interface ShipOrderPayload {
+  confirmation?: import("@/lib/application/shipment-confirmation").ShipmentConfirmationInput;
   trackingNo?: string;
   shipper?: string;
   shippingMethod?: string;
@@ -853,6 +854,7 @@ export async function submitShipOrder(entityId: string, payload: ShipOrderPayloa
   await markOrderShipped(entityId, {
     trackingNo: clean(payload.trackingNo),
     shippingProof: buildShippingProof(payload),
+    confirmation: payload.confirmation,
   });
   revalidatePath("/workbench");
   return { success: true };

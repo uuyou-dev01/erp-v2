@@ -1,5 +1,6 @@
 "use client";
 
+import { showActionSuccess } from "@/components/feedback/action-feedback";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { WorkItemDetail } from "@/lib/application/workflow-queries";
@@ -84,7 +85,7 @@ export function PendingActionPanel({
 
   const run = (
     fn: () => Promise<unknown>,
-    options?: { keepOpen?: boolean; successMessage?: string }
+    options?: { keepOpen?: boolean; successMessage?: string; onSuccess?: () => void }
   ) => {
     startTransition(async () => {
       try {
@@ -94,6 +95,11 @@ export function PendingActionPanel({
           setNotice({ tone: "error", message: result.error });
           return;
         }
+        options?.onSuccess?.();
+        showActionSuccess(
+          options?.successMessage ??
+            (detail.primaryAction === "shipOrder" ? "已确认发货，库存已更新。" : "操作已保存。")
+        );
         if (result && typeof result === "object") {
           if (
             detail.primaryAction === "createListing" &&

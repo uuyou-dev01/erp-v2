@@ -1,3 +1,4 @@
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Building2, LogOut, PackageCheck, UserRound } from "lucide-react";
@@ -61,6 +62,7 @@ export async function PersonalWorkspaceShell({ children }: { children: React.Rea
                 {membership ? `进入 ${membership.organization.name}` : "创建自己的企业"}
               </Link>
             </Button>
+            <NotificationBell href="/collaboration/notifications" />
             <form action={clearCurrentUser}>
               <Button type="submit" variant="ghost" size="sm" aria-label="退出登录">
                 <LogOut className="h-4 w-4" />
