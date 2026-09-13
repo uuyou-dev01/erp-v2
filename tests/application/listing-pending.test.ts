@@ -365,7 +365,12 @@ describe("listing pending platform eligibility", () => {
     const result = await relistListingAction(listing.id);
 
     expect(result.success).toBe(true);
-    const updated = await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } });
+    if (!result.success) throw new Error(result.error);
+    expect(result.id).not.toBe(listing.id);
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe(
+      "DELISTED"
+    );
+    const updated = await prisma.listing.findUniqueOrThrow({ where: { id: result.id } });
     expect(updated.status).toBe("ACTIVE");
     expect(updated.delistedAt).toBeNull();
   });

@@ -56,7 +56,7 @@ export function DashboardShell({
   }, []);
 
   return (
-    <div className="flex h-screen bg-muted/30">
+    <div className="flex h-dvh overflow-hidden bg-muted/30">
       <Suspense fallback={<SidebarFallback />}>
         <Sidebar
           storeId={activeStoreId}
@@ -67,7 +67,7 @@ export function DashboardShell({
           setupStatus={setupStatus}
         />
       </Suspense>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Header
           role={role}
           stores={stores}
@@ -78,7 +78,9 @@ export function DashboardShell({
           onMenuClick={() => setMobileMenuOpen(true)}
           onCommandOpen={() => setCommandOpen(true)}
         />
-        <main className="flex-1 overflow-y-auto bg-background p-4 md:p-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background p-4 md:p-6">
+          {children}
+        </main>
       </div>
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} role={role} />
     </div>

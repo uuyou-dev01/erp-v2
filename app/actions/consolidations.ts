@@ -1,6 +1,7 @@
 "use server";
 
 import Decimal from "decimal.js";
+import { resolveInventoryAcquisitions } from "@/lib/application/inventory-acquisition";
 import type { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { receivePurchaseOrder } from "@/app/actions/purchase-orders";
@@ -735,6 +736,7 @@ export async function getConsolidationBatchById(id: string) {
       (originQuantityByPurchaseLineId.get(unit.sourceId) ?? new Decimal(0)).plus(1)
     );
   }
+  const acquisitions = await resolveInventoryAcquisitions(batch.storeId, batch.lines);
   const purchaseLineById = new Map(purchaseLines.map((line) => [line.id, line]));
   const lotById = new Map(lots.map((lot) => [lot.id, lot]));
   const itemUnitById = new Map(itemUnits.map((unit) => [unit.id, unit]));
@@ -774,6 +776,8 @@ export async function getConsolidationBatchById(id: string) {
         displayTitle: sku?.name ?? "未识别商品",
         skuCode: sku?.code ?? null,
         imageUrl: sku?.imageUrl ?? null,
+        purchasedAt: acquisitions.get(`${line.sourceType}:${line.sourceId}`)?.purchasedAt ?? null,
+        purchaseOrderNo: acquisitions.get(`${line.sourceType}:${line.sourceId}`)?.orderNo ?? null,
         sourceReference:
           purchaseLine?.purchaseOrder.orderNo ?? itemUnit?.unitCode ?? line.sourceId.slice(0, 10),
         inventoryIssue,
@@ -1805,6 +1809,7 @@ async function validateConsolidationInventory(
   if (errors.length > 0) return errors;
   const sourceName = source?.name ?? "未知仓库";
 
+  const acquisitions = await resolveInventoryAcquisitions(batch.storeId, batch.lines);
   const purchaseLineById = new Map(purchaseLines.map((line) => [line.id, line]));
   const inventoryByPurchaseLine = await resolvePurchaseLineInventory(tx, {
     storeId: batch.storeId,
@@ -2069,6 +2074,7 @@ export async function repairConsolidationOriginInventory(id: string) {
       sku: { select: { code: true, name: true } },
     },
   });
+  const acquisitions = await resolveInventoryAcquisitions(batch.storeId, batch.lines);
   const purchaseLineById = new Map(purchaseLines.map((line) => [line.id, line]));
   const purchaseOrders = new Map(
     purchaseLines.map((line) => [line.purchaseOrder.id, line.purchaseOrder])

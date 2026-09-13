@@ -277,7 +277,7 @@ export function QuickSellButton({
                             成交与费用
                           </h3>
                           <p className="text-xs text-muted-foreground">
-                            先确认成交金额，费用默认沿用平台设置。
+                            确认成交后立即占用库存并结束本次上架，订单进入待发货。剩余商品在平台重新上架后，请新增上架记录。
                           </p>
                         </div>
                       </div>

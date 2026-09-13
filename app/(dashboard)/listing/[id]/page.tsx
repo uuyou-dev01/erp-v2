@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 function statusLabel(status: string) {
   if (status === "ACTIVE") return "在售中";
   if (status === "DELISTED") return "已下架";
-  if (status === "SOLD_OUT") return "已售罄";
+  if (status === "SOLD_OUT") return "已成交";
   return status;
 }
 
@@ -74,10 +74,7 @@ export default async function ListingDetailPage({
           />
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <ListingPlatformMark
-                code={listing.platform.code}
-                name={listing.platform.name}
-              />
+              <ListingPlatformMark code={listing.platform.code} name={listing.platform.name} />
               <Badge>{statusLabel(listing.status)}</Badge>
               <Badge variant="secondary">
                 {listing.listingType === "ITEM_UNIT" ? "中古单品" : "SKU"}

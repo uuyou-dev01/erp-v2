@@ -242,7 +242,7 @@ export default async function ListingPage({
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
-          售罄 / 下架
+          成交 / 下架
           <span className="ml-2 text-xs tabular-nums text-muted-foreground">{soldOutCount}</span>
         </Link>
       </nav>

@@ -1,12 +1,19 @@
 "use server";
 
+import type { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import {
   getCollaborationShippingTasksForUser,
   type CollaborationShippingTask,
 } from "@/lib/application/collaboration-shipping-tasks";
-import { parseShippingProof, type ShippingProof } from "@/lib/application/shipping-proof";
+import {
+  parseShippingProof,
+  shippingProofToJson,
+  type ShippingProof,
+} from "@/lib/application/shipping-proof";
+import { bindAssetReferences } from "@/lib/assets/references";
+import { notifyOrganizationAdministrators } from "@/lib/application/collaboration-notifications";
 import { requireAuthenticatedUser } from "@/lib/auth/user-context";
 import { prisma } from "@/lib/prisma";
 import { markOrderShippedAsLocationFulfiller } from "@/app/actions/customer-orders";
@@ -451,6 +458,107 @@ export async function withdrawCollaborationShippingTaskAction(taskId: string, re
     return actionSuccess({ taskId, outcome: result.outcome });
   } catch (error) {
     return toActionFailure(error, "撤回任务失败，请重试");
+  }
+}
+
+export async function saveCollaborationShippingPreparationAction(
+  taskId: string,
+  input: { imageUrls: string[]; proofNote?: string }
+) {
+  try {
+    const user = await requireAuthenticatedUser();
+    if (input.imageUrls.length > 30 || (input.proofNote?.length ?? 0) > 2000)
+      throw new Error("资料过多，请限制在 30 张图片和 2000 字以内");
+    const task = await prisma.task.findFirst({
+      where: {
+        id: taskId,
+        assignedToId: user.id,
+        status: "IN_PROGRESS",
+        type: TASK_TYPE.SHIP_ORDER,
+        refType: "CUSTOMER_ORDER",
+        fulfillmentLocationId: { not: null },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        storeId: true,
+        refId: true,
+        fulfillmentLocationId: true,
+        createdById: true,
+      },
+    });
+    if (!task?.fulfillmentLocationId) throw new Error("请先领取发货任务，或刷新查看当前执行人");
+    const roster = await prisma.locationFulfiller.findFirst({
+      where: {
+        userId: user.id,
+        organizationId: task.organizationId,
+        locationId: task.fulfillmentLocationId,
+        status: "ACTIVE",
+        organization: { memberships: { none: { userId: user.id, status: { not: "ACTIVE" } } } },
+      },
+      select: { id: true },
+    });
+    if (!roster) throw new Error("仓库合作权限已失效");
+    const snapshot = await prisma.customerOrder.findFirst({
+      where: { id: task.refId, storeId: task.storeId, orderStatus: "CONFIRMED" },
+      select: { shippingProof: true },
+    });
+    if (!snapshot) throw new Error("订单已不在待发货状态");
+    const knownUrls = new Set(parseShippingProof(snapshot.shippingProof).imageUrls ?? []);
+    const newUrls = [...new Set(input.imageUrls)].filter((url) => !knownUrls.has(url));
+    const assetIds = await bindAssetReferences(
+      newUrls,
+      { organizationId: task.organizationId, storeId: task.storeId, userId: user.id },
+      "CUSTOMER_ORDER",
+      task.refId
+    );
+    if (assetIds.length !== newUrls.length) throw new Error("请使用本任务上传的图片");
+    const saved = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "tasks" WHERE "id" = ${task.id} FOR UPDATE`;
+      const freshTask = await tx.task.findFirst({
+        where: { id: task.id, assignedToId: user.id, status: "IN_PROGRESS" },
+        select: { id: true },
+      });
+      if (!freshTask) throw new Error("任务已转交或完成，请刷新查看");
+      await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${task.refId} FOR UPDATE`;
+      const order = await tx.customerOrder.findFirst({
+        where: { id: task.refId, storeId: task.storeId, orderStatus: "CONFIRMED" },
+        select: { shippingProof: true },
+      });
+      if (!order) throw new Error("订单已不在待发货状态，请刷新查看");
+      const existing = parseShippingProof(order.shippingProof);
+      const imageUrls = [...new Set([...(existing.imageUrls ?? []), ...input.imageUrls])];
+      if (imageUrls.length > 30) throw new Error("发货前资料最多保留 30 张图片");
+      await tx.customerOrder.update({
+        where: { id: task.refId },
+        data: {
+          shippingProof: shippingProofToJson({
+            ...existing,
+            imageUrls,
+            ...(input.proofNote !== undefined ? { proofNote: input.proofNote } : {}),
+            updatedAt: new Date().toISOString(),
+          }) as Prisma.InputJsonValue,
+        },
+      });
+      return imageUrls;
+    });
+    await notifyOrganizationAdministrators({
+      organizationId: task.organizationId,
+      actorId: user.id,
+      includeUserIds: task.createdById ? [task.createdById] : [],
+      type: "SHIPPING_PREPARATION_UPDATED",
+      refType: "CUSTOMER_ORDER",
+      refId: task.refId,
+      title: "发货方补充了发货前资料",
+      body: "请查看二维码、取件码或说明；订单仍在待发货。",
+      actionUrl: `/sales/${task.refId}`,
+      dedupeKey: `shipping-preparation:${task.id}:${saved.join(",")}:${input.proofNote ?? ""}`,
+    });
+    revalidateCollaborationTaskViews();
+    revalidatePath(`/sales/${task.refId}`);
+    return actionSuccess({ imageUrls: saved });
+  } catch (error) {
+    return toActionFailure(error, "保存发货前资料失败，请重试");
   }
 }
 

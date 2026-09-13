@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   claimCollaborationShippingTaskAction,
+  saveCollaborationShippingPreparationAction,
   assignCollaborationShippingTaskAction,
   completeCollaborationShippingTaskAction,
   declineCollaborationShippingTaskAction,
@@ -24,6 +25,7 @@ import {
   AlertCircle,
   ArrowRightLeft,
   Box,
+  Camera,
   Clock3,
   CheckCircle2,
   Layers3,
@@ -157,6 +159,7 @@ export function ShippingTaskList({
   }, [selected]);
 
   function choose(task: WarehouseTaskView) {
+    if (uploading || pending) return;
     setSelectedId(task.id);
     setError(null);
     setNotice(null);
@@ -174,6 +177,14 @@ export function ShippingTaskList({
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "图片上传失败");
       setForm((value) => ({ ...value, imageUrls: [...value.imageUrls, result.url] }));
+      if (selected) {
+        const saved = await saveCollaborationShippingPreparationAction(selected.id, {
+          imageUrls: [result.url],
+        });
+        if (!saved.success) throw new Error(saved.error);
+        setForm((value) => ({ ...value, imageUrls: saved.imageUrls }));
+        setNotice("发货前资料已保存并通知货主，订单仍为待发货。");
+      }
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "图片上传失败");
     } finally {
@@ -187,14 +198,17 @@ export function ShippingTaskList({
   ) {
     setError(null);
     setNotice(null);
-    startTransition(() => {
-      void action().then((result) => {
+    startTransition(async () => {
+      try {
+        const result = await action();
         if (!result.success) return setError(result.error || "操作失败");
         setNotice(
           (result.outcome && OUTCOME_MESSAGES[result.outcome]) || fallbackNotice || "操作成功"
         );
         router.refresh();
-      });
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "操作失败，请重试");
+      }
     });
   }
 
@@ -267,6 +281,7 @@ export function ShippingTaskList({
             type="button"
             size="sm"
             variant={view === item.value ? "secondary" : "ghost"}
+            disabled={uploading || pending}
             onClick={() => {
               setView(item.value);
               setSelectedId("");
@@ -308,7 +323,12 @@ export function ShippingTaskList({
           </p>
         </div>
       ) : (
-        <div className={cn("grid gap-5", mode === "portal" && "lg:grid-cols-[320px_1fr]")}>
+        <div
+          className={cn(
+            "grid min-w-0 grid-cols-1 items-start gap-5",
+            mode === "portal" && "lg:grid-cols-[320px_minmax(0,1fr)]"
+          )}
+        >
           <aside
             className={cn(
               "space-y-2",
@@ -423,7 +443,7 @@ export function ShippingTaskList({
           {selected ? (
             <main
               className={cn(
-                "space-y-5 rounded-xl border bg-card p-5 md:p-7",
+                "min-w-0 max-w-full space-y-5 rounded-xl border bg-card p-3 [overflow-wrap:anywhere] sm:p-5 md:p-7",
                 mode === "workbench" &&
                   "fixed inset-y-0 right-0 z-50 w-full max-w-2xl overflow-y-auto rounded-none shadow-xl"
               )}
@@ -578,11 +598,11 @@ export function ShippingTaskList({
                           <img
                             src={line.sku.imageUrl}
                             alt={`${line.sku.name} 商品图`}
-                            className="h-20 w-20 rounded-md border bg-background object-cover"
+                            className="h-14 w-14 rounded-md border bg-background object-cover sm:h-20 sm:w-20"
                           />
                         </a>
                       ) : (
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md border bg-muted">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border bg-muted sm:h-20 sm:w-20">
                           <Box className="h-5 w-5 text-muted-foreground" />
                         </div>
                       )}
@@ -605,27 +625,47 @@ export function ShippingTaskList({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h3 id="shipping-proof-title" className="text-base font-semibold">
-                      发货凭证
+                      发货前资料
                     </h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      先查看委托方提供的二维码、付款码或取件截图；点击图片可打开原图。
+                      双方可提供二维码、付款码或取件截图。拍照上传后立即保存并通知货主，点击图片可查看原图；实际寄出后再确认发货。
                     </p>
                   </div>
                   {selected.status === "IN_PROGRESS" && selected.isAssignedToMe !== false ? (
-                    <Label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                      <Upload className="h-4 w-4" /> {uploading ? "上传中" : "补充凭证"}
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/gif,image/webp"
-                        className="sr-only"
-                        disabled={uploading}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) void upload(file);
-                          event.target.value = "";
-                        }}
-                      />
-                    </Label>
+                    <div className="flex flex-wrap gap-2">
+                      <Label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                        <Camera className="h-4 w-4" />
+                        拍照上传
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          aria-label="拍摄发货前资料"
+                          className="sr-only"
+                          disabled={uploading || pending}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void upload(file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </Label>
+                      <Label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                        <Upload className="h-4 w-4" /> {uploading ? "上传并保存中" : "从相册上传"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          aria-label="选择发货前资料图片"
+                          className="sr-only"
+                          disabled={uploading || pending}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void upload(file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </Label>
+                    </div>
                   ) : null}
                 </div>
                 {form.imageUrls.length ? (
@@ -636,14 +676,14 @@ export function ShippingTaskList({
                         href={url}
                         target="_blank"
                         rel="noreferrer"
-                        aria-label="查看发货凭证原图"
+                        aria-label="查看发货前资料原图"
                         className="block rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={url}
-                          alt="发货凭证"
-                          className="h-24 w-24 rounded-md border bg-background object-cover sm:h-28 sm:w-28"
+                          alt="发货前资料"
+                          className="h-24 w-24 rounded-md border bg-background object-contain sm:h-28 sm:w-28"
                         />
                       </a>
                     ))}
@@ -651,10 +691,30 @@ export function ShippingTaskList({
                 ) : (
                   <p className="mt-3 rounded-md bg-muted/35 px-3 py-2 text-sm text-muted-foreground">
                     {selected.order.recipientVisible
-                      ? "委托方尚未上传凭证；如发货需要二维码或取件截图，请先联系委托方。"
-                      : "领取任务后可查看委托方提供的发货凭证。"}
+                      ? "尚未添加发货前资料。货主和发货方都可以补充二维码或取件截图。"
+                      : "领取任务后可查看委托方提供的发货前资料。"}
                   </p>
                 )}
+                {selected.status === "IN_PROGRESS" && selected.isAssignedToMe !== false ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3"
+                    disabled={pending || uploading}
+                    onClick={() =>
+                      run(
+                        () =>
+                          saveCollaborationShippingPreparationAction(selected.id, {
+                            imageUrls: form.imageUrls,
+                            proofNote: form.proofNote,
+                          }),
+                        "发货前资料已保存并通知货主，订单仍为待发货。"
+                      )
+                    }
+                  >
+                    保存发货前资料
+                  </Button>
+                ) : null}
               </section>
 
               {mode === "workbench" ? (

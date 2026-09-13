@@ -262,7 +262,7 @@ export function ListingOpsToolbar({
             <option value="">全部状态</option>
             <option value="ACTIVE">在售中</option>
             <option value="DELISTED">已下架</option>
-            {showSoldOutStatus ? <option value="SOLD_OUT">已售罄</option> : null}
+            {showSoldOutStatus ? <option value="SOLD_OUT">已成交</option> : null}
           </Select>
         ) : null}
 

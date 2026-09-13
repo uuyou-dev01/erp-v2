@@ -300,7 +300,7 @@ test.describe("deployment RC external warehouse and private evidence", () => {
     expect(notification.resolutionCode).toBe("TASK_CLAIMED");
 
     await winnerPage.locator('input[type="file"]').setInputFiles(proofFixture);
-    const proofImage = winnerPage.getByRole("img", { name: "发货凭证" });
+    const proofImage = winnerPage.getByRole("img", { name: "发货前资料" });
     await expect(proofImage).toBeVisible();
     const proofUrl = await proofImage.getAttribute("src");
     expect(proofUrl).toMatch(/^\/api\/assets\/[^/]+\/content$/);

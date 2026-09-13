@@ -23,7 +23,7 @@ function platformTitle(
   record?: ReturnType<typeof findRecordForPlatform>
 ) {
   if (platform.state === "missing") return `${platform.name} 未上架`;
-  if (platform.state === "sold_out") return `${platform.name} 已上架（已售罄）`;
+  if (platform.state === "sold_out") return `${platform.name} 已成交（本次上架结束）`;
   if (platform.state === "delisted") return `${platform.name} 已下架`;
   if (record) return `${platform.name} 已上架 · ${formatListedDaysShort(record.listedAt)}`;
   return `${platform.name} 已上架`;
@@ -99,7 +99,7 @@ export function ListingPlatformStrip({
           platform.state === "missing"
             ? "待上"
             : platform.state === "sold_out"
-              ? "售罄"
+              ? "成交"
               : platform.state === "delisted"
                 ? "下架"
                 : "在售";

@@ -141,9 +141,7 @@ test.describe("listing sale and shipment flow", () => {
     await prisma.sKU.deleteMany({ where: { id: skuId } });
   });
 
-  test("opens an in-page delist confirmation instead of a browser dialog", async ({
-    page,
-  }) => {
+  test("opens an in-page delist confirmation instead of a browser dialog", async ({ page }) => {
     const dialogMessages: string[] = [];
     page.on("dialog", async (dialog) => {
       dialogMessages.push(dialog.message());
@@ -195,7 +193,7 @@ test.describe("listing sale and shipment flow", () => {
 
     await expect(page).toHaveURL(/\/sales\/[^/]+$/);
     await expect(page.getByRole("heading", { name: /订单:/ })).toBeVisible();
-    await expect(page.getByText("已确认", { exact: true })).toBeVisible();
+    await expect(page.getByText("已成交 · 待发货", { exact: true })).toBeVisible();
     await expect(page.getByText("净利润")).toBeVisible();
     await expect(page.getByText("CNY 50.00")).toBeVisible();
 
@@ -225,8 +223,8 @@ test.describe("listing sale and shipment flow", () => {
 
     expect(
       errors.filter((line) =>
-        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line),
-      ),
+        /Runtime Error|Application error|Internal Server Error|Prisma|Unhandled/i.test(line)
+      )
     ).toEqual([]);
   });
 });
@@ -238,7 +236,7 @@ async function expectLotQuantity(lotId: string, expected: string) {
   });
   const quantity = ledgers.reduce(
     (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
-    new Decimal(0),
+    new Decimal(0)
   );
   expect(quantity.toString()).toBe(expected);
 }

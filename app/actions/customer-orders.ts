@@ -34,7 +34,6 @@ import {
 } from "@/lib/application/tasks";
 import { actionSuccess, toActionFailure } from "@/lib/application/action-result";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
-import { getEffectiveSellableQuantity } from "@/lib/application/inventory";
 import { getOrderFulfillmentLocationIds } from "@/lib/application/location-fulfillment-roster";
 import {
   cancelShipOrderTasksForOrderInTransaction,
@@ -662,7 +661,7 @@ export async function confirmOrderAction(data: ConfirmOrderInput) {
 export async function saveOrderShippingProof(
   orderId: string,
   proof: ShippingProof,
-  options?: { trackingNo?: string }
+  options?: { trackingNo?: string; removedImageUrls?: string[] }
 ) {
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
@@ -718,16 +717,28 @@ export async function saveOrderShippingProof(
     order.id
   );
 
-  const merged = shippingProofToJson(mergeShippingProof(order.shippingProof, proof));
-
-  await prisma.customerOrder.update({
-    where: { id: orderId },
-    data: {
-      shippingProof: merged as Prisma.InputJsonValue,
-      ...(options?.trackingNo !== undefined
-        ? { trackingNo: options.trackingNo.trim() || null }
-        : {}),
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${orderId} FOR UPDATE`;
+    const fresh = await tx.customerOrder.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { orderStatus: true, shippingProof: true },
+    });
+    if (fresh.orderStatus !== "CONFIRMED") throw new Error("订单已不在待发货状态，请刷新查看");
+    const existing = parseShippingProof(fresh.shippingProof);
+    const removed = new Set(options?.removedImageUrls ?? []);
+    const imageUrls = [
+      ...new Set([...(existing.imageUrls ?? []), ...(proof.imageUrls ?? [])]),
+    ].filter((url) => !removed.has(url));
+    const merged = shippingProofToJson(mergeShippingProof(existing, { ...proof, imageUrls }));
+    await tx.customerOrder.update({
+      where: { id: orderId },
+      data: {
+        shippingProof: merged as Prisma.InputJsonValue,
+        ...(options?.trackingNo !== undefined
+          ? { trackingNo: options.trackingNo.trim() || null }
+          : {}),
+      },
+    });
   });
 
   revalidatePath("/sales");
@@ -917,7 +928,6 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
     for (const itemUnitId of itemUnitIds) {
       await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${itemUnitId} FOR UPDATE`;
     }
-    const releasedItemUnitIds = new Set<string>();
 
     for (const line of order.lines) {
       for (const allocation of line.allocations) {
@@ -926,7 +936,6 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
         }
 
         if (allocation.itemUnitId) {
-          releasedItemUnitIds.add(allocation.itemUnitId);
           const item = await tx.itemUnit.findUnique({
             where: { id: allocation.itemUnitId },
           });
@@ -975,34 +984,7 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
       });
     }
 
-    if (releasedItemUnitIds.size > 0) {
-      await tx.listing.updateMany({
-        where: {
-          storeId: order.storeId,
-          platformId: order.platformId ?? undefined,
-          itemUnitId: { in: [...releasedItemUnitIds] },
-          listingType: "ITEM_UNIT",
-          status: "SOLD_OUT",
-        },
-        data: { status: "ACTIVE", delistedAt: null },
-      });
-    }
-
-    for (const skuId of new Set(order.lines.map((line) => line.skuId))) {
-      const sellableQuantity = await getEffectiveSellableQuantity(tx, order.storeId, skuId);
-      if (sellableQuantity.gt(0)) {
-        await tx.listing.updateMany({
-          where: {
-            storeId: order.storeId,
-            platformId: order.platformId ?? undefined,
-            skuId,
-            listingType: "SKU",
-            status: "SOLD_OUT",
-          },
-          data: { status: "ACTIVE", delistedAt: null },
-        });
-      }
-    }
+    // Releasing inventory does not recreate a listing on an external marketplace.
 
     for (const request of order.fulfillmentRequests) {
       if (["CANCELLED", "REJECTED", "DELIVERED"].includes(request.status)) continue;

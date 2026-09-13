@@ -26,7 +26,7 @@ interface ListingOpsCardProps {
 function statusLabel(status: string) {
   if (status === "ACTIVE") return "在售中";
   if (status === "DELISTED") return "已下架";
-  if (status === "SOLD_OUT") return "已售罄";
+  if (status === "SOLD_OUT") return "已成交";
   return status;
 }
 
@@ -237,7 +237,7 @@ export function ListingOpsCard({
                   onClick={() => void handleRelist()}
                 >
                   <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                  {relisting ? "上架中..." : "再次上架"}
+                  {relisting ? "记录中..." : "已在平台重新上架"}
                 </Button>
               ) : null}
             </div>

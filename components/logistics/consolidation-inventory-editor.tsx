@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Box, CheckCircle2, ChevronDown, PackagePlus, Search } from "lucide-react";
 import { addInventoryToConsolidationBatchAction } from "@/app/actions/consolidations";
 import type { TransferInventoryCandidate } from "@/app/actions/transfer-shipments";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,6 +29,7 @@ export function ConsolidationInventoryEditor({
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
+  const [requestedPage, setPage] = useState(1);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -42,6 +44,9 @@ export function ConsolidationInventoryEditor({
       )
     );
   }, [candidates, query]);
+  const pageSize = 8;
+  const page = Math.min(requestedPage, Math.max(1, Math.ceil(visibleCandidates.length / pageSize)));
+  const pageCandidates = visibleCandidates.slice((page - 1) * pageSize, page * pageSize);
   const selectedCandidates = candidates.filter((candidate) => numeric(selected[candidate.key]) > 0);
   const selectedQuantity = selectedCandidates.reduce(
     (total, candidate) => total + numeric(selected[candidate.key]),
@@ -156,7 +161,10 @@ export function ConsolidationInventoryEditor({
               <Input
                 aria-label="搜索可装箱库存"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
                 className="pl-9"
                 placeholder="搜索 SKU、商品或采购单"
               />
@@ -172,8 +180,8 @@ export function ConsolidationInventoryEditor({
               </p>
             </div>
           ) : (
-            <div className="max-h-[28rem] divide-y overflow-y-auto border-y">
-              {visibleCandidates.map((candidate) => {
+            <div className="divide-y border-y">
+              {pageCandidates.map((candidate) => {
                 const checked = numeric(selected[candidate.key]) > 0;
                 const quantity = selected[candidate.key] ?? "";
                 const remaining = Math.max(
@@ -244,6 +252,14 @@ export function ConsolidationInventoryEditor({
               })}
             </div>
           )}
+
+          <ListPagination
+            label="可装箱库存分页"
+            page={page}
+            pageSize={pageSize}
+            total={visibleCandidates.length}
+            onPageChange={setPage}
+          />
 
           <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">

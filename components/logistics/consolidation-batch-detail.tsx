@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { Badge } from "@/components/ui/badge";
 import {
   removeInventoryFromConsolidationBatchAction,
@@ -44,6 +45,8 @@ interface Batch {
     skuCode: string | null;
     imageUrl: string | null;
     sourceReference: string;
+    purchasedAt?: string | null;
+    purchaseOrderNo?: string | null;
     inventoryIssue: {
       code: string;
       currentLocationName: string;
@@ -89,6 +92,11 @@ export function ConsolidationBatchDetail({
   availableInventory: TransferInventoryCandidate[];
 }) {
   const router = useRouter();
+  const listRef = useRef<HTMLElement>(null);
+  const [requestedPage, setPage] = useState(1);
+  const pageSize = 10;
+  const page = Math.min(requestedPage, Math.max(1, Math.ceil(batch.lines.length / pageSize)));
+  const visibleLines = batch.lines.slice((page - 1) * pageSize, page * pageSize);
   const [isPending, startTransition] = useTransition();
   const [trackingNo, setTrackingNo] = useState(batch.outboundTrackingNo ?? "");
   const [carrier, setCarrier] = useState(batch.carrier ?? "");
@@ -249,8 +257,8 @@ export function ConsolidationBatchDetail({
         />
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        <section className="rounded-lg border">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <section ref={listRef} className="min-w-0 rounded-lg border">
           <div className="border-b px-4 py-3">
             <h2 className="text-sm font-semibold">批次商品</h2>
           </div>
@@ -260,7 +268,7 @@ export function ConsolidationBatchDetail({
                 暂无商品，可后续从工作台/采购明细加入。
               </p>
             ) : (
-              batch.lines.map((line) => (
+              visibleLines.map((line) => (
                 <div
                   key={line.id}
                   className="flex items-center justify-between gap-4 px-4 py-3 text-sm"
@@ -283,6 +291,17 @@ export function ConsolidationBatchDetail({
                       <p className="truncate text-xs text-muted-foreground">
                         {line.skuCode ? `SKU ${line.skuCode} · ` : ""}
                         {SOURCE_LABELS[line.sourceType] ?? "其他来源"} {line.sourceReference}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        购入时间：
+                        {line.purchasedAt
+                          ? new Date(line.purchasedAt).toLocaleDateString("zh-CN", {
+                              timeZone: "Asia/Shanghai",
+                            })
+                          : "未记录"}
+                        {line.purchaseOrderNo && line.sourceType !== "PURCHASE_LINE"
+                          ? ` · 采购单 ${line.purchaseOrderNo}`
+                          : ""}
                       </p>
                       {line.inventoryIssue ? (
                         <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-destructive">
@@ -318,6 +337,16 @@ export function ConsolidationBatchDetail({
               ))
             )}
           </div>
+          <ListPagination
+            label="批次商品分页"
+            page={page}
+            pageSize={pageSize}
+            total={batch.lines.length}
+            onPageChange={(next) => {
+              setPage(next);
+              listRef.current?.scrollIntoView({ block: "start" });
+            }}
+          />
         </section>
 
         <aside className="space-y-4 rounded-lg border p-4">

@@ -16,12 +16,10 @@ import {
   batchCreateListings,
   createListing,
   quickSellListing,
+  relistListing,
   updateListingAction,
 } from "@/app/actions/listings";
-import {
-  createPlatformAction,
-  updatePlatformAction,
-} from "@/app/actions/platforms";
+import { createPlatformAction, updatePlatformAction } from "@/app/actions/platforms";
 import {
   cancelCustomerOrder,
   markOrderReturned,
@@ -108,7 +106,6 @@ describe("listing quick sell reservations", () => {
       },
     });
     platformId = platform.id;
-
   });
 
   afterAll(async () => {
@@ -153,7 +150,7 @@ describe("listing quick sell reservations", () => {
           where: { id: listing.id },
           select: { status: true },
         })
-      ).status,
+      ).status
     ).toBe("SOLD_OUT");
 
     const secondSale = await quickSellListing({
@@ -175,7 +172,7 @@ describe("listing quick sell reservations", () => {
     expect(allocations).toHaveLength(1);
   });
 
-  it("keeps a multi-quantity SKU listing active until its last unit is reserved", async () => {
+  it("ends each marketplace listing on sale and permits a new listing before the first order ships", async () => {
     const { listing, sku } = await createSellableListing("multi_quantity_sellout", "2");
 
     const firstSale = await quickSellListing({
@@ -194,11 +191,28 @@ describe("listing quick sell reservations", () => {
           where: { id: listing.id },
           select: { status: true },
         })
-      ).status,
-    ).toBe("ACTIVE");
+      ).status
+    ).toBe("SOLD_OUT");
+
+    const duplicateSale = await quickSellListing({
+      listingId: listing.id,
+      quantity: "1",
+      unitPrice: "180",
+      shipFromLocationId: locationId,
+    });
+    expect(duplicateSale.success).toBe(false);
+    const nextListing = await relistListing(listing.id);
+    expect(nextListing.id).not.toBe(listing.id);
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe(
+      "SOLD_OUT"
+    );
+    expect(
+      (await prisma.customerOrder.findUniqueOrThrow({ where: { id: firstSale.orderId } }))
+        .orderStatus
+    ).toBe("CONFIRMED");
 
     const secondSale = await quickSellListing({
-      listingId: listing.id,
+      listingId: nextListing.id,
       quantity: "1",
       unitPrice: "180",
       shipFromLocationId: locationId,
@@ -212,8 +226,55 @@ describe("listing quick sell reservations", () => {
           where: { id: listing.id },
           select: { status: true },
         })
-      ).status,
+      ).status
     ).toBe("SOLD_OUT");
+  });
+
+  it("allows only one concurrent sale of the same external listing even with spare stock", async () => {
+    const { listing, sku } = await createSellableListing("concurrent_listing", "5");
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        quickSellListing({
+          listingId: listing.id,
+          quantity: "1",
+          unitPrice: "180",
+          shipFromLocationId: locationId,
+        })
+      )
+    );
+    expect(results.filter((result) => result.success)).toHaveLength(1);
+    expect((await getSkuStockBreakdown(storeId, sku.id)).sellableQty).toBe(4);
+    const reopened = await updateListingAction(listing.id, { status: "ACTIVE" });
+    expect(reopened.success).toBe(false);
+  });
+
+  it("rejects a stale edit when the listing sells after the edit reads its status", async () => {
+    const { listing } = await createSellableListing("stale_edit", "5");
+    const readListing = prisma.listing.findUnique.bind(prisma.listing);
+    const readThenSell = async (args: Parameters<typeof prisma.listing.findUnique>[0]) => {
+      const snapshot = await readListing(args);
+      const sale = await quickSellListing({
+        listingId: listing.id,
+        quantity: "1",
+        unitPrice: "180",
+        shipFromLocationId: locationId,
+      });
+      expect(sale.success).toBe(true);
+      return snapshot;
+    };
+    // This call only awaits the result; Prisma fluent relation methods are not used.
+    const spy = vi
+      .spyOn(prisma.listing, "findUnique")
+      .mockImplementationOnce(readThenSell as unknown as typeof prisma.listing.findUnique);
+    try {
+      const edit = await updateListingAction(listing.id, { status: "ACTIVE", listedPrice: "200" });
+      expect(edit.success).toBe(false);
+      if (!edit.success) expect(edit.error).toContain("已发生变化");
+      const current = await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } });
+      expect(current.status).toBe("SOLD_OUT");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("rejects a negative quick-sale unit price without reserving stock", async () => {
@@ -582,7 +643,7 @@ describe("listing quick sell reservations", () => {
     expect(unchanged.status).toBe("ACTIVE");
   });
 
-  it("releases reserved stock when an unshipped order is cancelled", async () => {
+  it("releases cancelled stock without claiming the external marketplace listing is active", async () => {
     const { listing, lotId, sku } = await createSellableListing("cancel_release");
 
     const sale = await quickSellListing({
@@ -604,11 +665,14 @@ describe("listing quick sell reservations", () => {
           where: { id: listing.id },
           select: { status: true },
         })
-      ).status,
-    ).toBe("ACTIVE");
+      ).status
+    ).toBe("SOLD_OUT");
+
+    const newListing = await relistListing(listing.id);
+    expect(newListing.id).not.toBe(listing.id);
 
     const releasedSale = await quickSellListing({
-      listingId: listing.id,
+      listingId: newListing.id,
       quantity: "1",
       unitPrice: "180",
       shipFromLocationId: locationId,
@@ -659,8 +723,8 @@ describe("listing quick sell reservations", () => {
         (item) =>
           item.entityType === "customerOrder" &&
           item.entityId === order.id &&
-          item.queue === "pendingShipment",
-      ),
+          item.queue === "pendingShipment"
+      )
     ).toBe(false);
 
     await expect(markOrderShipped(order.id)).rejects.toThrow("库存预留不完整");
@@ -670,7 +734,7 @@ describe("listing quick sell reservations", () => {
           where: { id: order.id },
           select: { orderStatus: true },
         })
-      ).orderStatus,
+      ).orderStatus
     ).toBe("CONFIRMED");
   });
 
@@ -768,7 +832,7 @@ async function expectLotQuantity(lotId: string, expected: string) {
   });
   const quantity = ledgers.reduce(
     (sum, ledger) => sum.plus(new Decimal(ledger.deltaQty.toString())),
-    new Decimal(0),
+    new Decimal(0)
   );
   expect(quantity.toString()).toBe(expected);
 }

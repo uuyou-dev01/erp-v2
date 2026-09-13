@@ -34,10 +34,10 @@ export function ListingOpsGrid({
     return (
       <EmptyState
         icon={Globe}
-        title={view === "soldOut" ? "暂无售罄或下架记录" : "暂无符合条件的 Listing"}
+        title={view === "soldOut" ? "暂无成交或下架记录" : "暂无符合条件的 Listing"}
         description={
           view === "soldOut"
-            ? "Listing 售罄或下架后会统一归档到这里，需要时可以再次上架。"
+            ? "Listing 成交或下架后会统一归档到这里，需要时可以再次上架。"
             : "调整平台、状态或风险筛选后再查看。"
         }
         actionLabel="查看可售库存"
@@ -114,7 +114,7 @@ export function ListingOpsGrid({
             {selectionMode
               ? `已选择 ${selectedIds.length} 条 Listing`
               : view === "soldOut"
-                ? "售罄 / 下架商品"
+                ? "成交 / 下架商品"
                 : "上架商品"}
           </p>
           <p className={`text-xs ${selectionError ? "text-destructive" : "text-muted-foreground"}`}>

@@ -37,9 +37,9 @@ export function ListingCoverageStats({ stats }: ListingCoverageStatsProps) {
         iconColor="text-amber-500"
       />
       <StatCard
-        title="已售罄"
+        title="已成交"
         value={stats.soldOutProducts}
-        subtitle="存在售罄平台记录"
+        subtitle="存在成交平台记录"
         icon={PackageX}
         iconColor="text-slate-500"
       />

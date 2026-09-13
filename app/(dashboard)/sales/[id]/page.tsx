@@ -30,6 +30,7 @@ import { BackButton } from "@/components/shared/back-button";
 import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 import { canShipOrders } from "@/lib/auth/permissions";
 import { getLatestFxRate } from "@/lib/fx";
+import { parseShippingProof } from "@/lib/application/shipping-proof";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ const statusLabels: Record<string, string> = {
   DRAFT: "草稿",
   PLACED: "已下单",
   PAID: "已付款",
-  CONFIRMED: "已确认",
+  CONFIRMED: "已成交 · 待发货",
   SHIPPED: "已发货",
   DELIVERED: "已送达",
   RETURNED: "已退货",
@@ -76,6 +77,7 @@ export default async function CustomerOrderDetailPage({
   }
 
   const resale = order.resaleListing;
+  const preparation = parseShippingProof(order.shippingProof);
   const fulfillmentRequest = order.fulfillmentRequests[0];
   const resaleSettlement =
     fulfillmentRequest?.settlements.find((settlement) => settlement.status !== "VOID") ??
@@ -192,6 +194,39 @@ export default async function CustomerOrderDetailPage({
           )}
         </div>
       </div>
+
+      {preparation.imageUrls?.length || preparation.pickupCode || preparation.proofNote ? (
+        <section className="min-w-0 rounded-lg border bg-card p-4" aria-label="发货前资料">
+          <h2 className="font-semibold">发货前资料</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            货主与发货方共享的二维码、付款码或取件截图。点击图片查看原图；上传资料不代表已经发货。
+          </p>
+          {preparation.pickupCode && (
+            <p className="mt-2 break-all text-sm">取件码：{preparation.pickupCode}</p>
+          )}
+          {preparation.proofNote && (
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm">{preparation.proofNote}</p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-3">
+            {preparation.imageUrls?.map((url) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="查看发货前资料原图"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt="发货前资料"
+                  className="h-28 w-28 rounded-md border object-contain"
+                />
+              </a>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>

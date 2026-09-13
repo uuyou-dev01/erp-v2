@@ -257,9 +257,11 @@ export function ConfirmArrivalForm({ detail, locations, pending, run }: ActionFo
             required
           />
           <p className="text-xs text-muted-foreground">
-            预计到货位置：{expectedLocation
+            预计到货位置：
+            {expectedLocation
               ? `${expectedLocation.name} · ${expectedLocation.code}`
-              : detail.actionContext.currentLocationText ?? "未登记"}。请按实物实际到达的位置确认。
+              : (detail.actionContext.currentLocationText ?? "未登记")}
+            。请按实物实际到达的位置确认。
           </p>
         </div>
       </div>
@@ -1175,7 +1177,10 @@ export function ShipOrderForm({
   });
 
   const persistDraft = useCallback(
-    (next: typeof form, options?: { successMessage?: string; silent?: boolean }) => {
+    (
+      next: typeof form,
+      options?: { successMessage?: string; silent?: boolean; removedImageUrls?: string[] }
+    ) => {
       run(
         () =>
           submitSaveShippingProof(detail.entityId, {
@@ -1185,6 +1190,7 @@ export function ShipOrderForm({
             pickupCode: next.pickupCode,
             proofNote: next.proofNote,
             imageUrls: next.imageUrls,
+            removedImageUrls: options?.removedImageUrls,
           }),
         {
           keepOpen: true,
@@ -1235,7 +1241,7 @@ export function ShipOrderForm({
         const next = { ...form, imageUrls: [...form.imageUrls, ...urls] };
         setForm(next);
         setDraftHint("凭证图片已上传并暂存，代发方现在可以查看");
-        persistDraft(next, { successMessage: "发货凭证已上传并暂存，代发方现在可以查看。" });
+        persistDraft(next, { successMessage: "发货前资料已上传并暂存，代发方现在可以查看。" });
       } catch (error) {
         setUploadError(error instanceof Error ? error.message : "图片上传失败");
       } finally {
@@ -1280,7 +1286,7 @@ export function ShipOrderForm({
       imageUrls: form.imageUrls.filter((item) => item !== url),
     };
     setForm(next);
-    persistDraft(next, { silent: true });
+    persistDraft(next, { silent: true, removedImageUrls: [url] });
   };
 
   const fulfillmentContext = detail.fulfillmentContext;
@@ -1416,7 +1422,7 @@ export function ShipOrderForm({
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="shipping-proof-images">发货凭证图片（选填）</Label>
+        <Label htmlFor="shipping-proof-images">发货前资料图片（选填）</Label>
         <p className="text-xs text-muted-foreground">
           可上传平台二维码、便利店付款码或取件截图。上传后会立即暂存，代发方可查看原图。
         </p>
@@ -1428,20 +1434,20 @@ export function ShipOrderForm({
                   href={url}
                   target="_blank"
                   rel="noreferrer"
-                  aria-label="查看发货凭证原图"
+                  aria-label="查看发货前资料原图"
                   className="block rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={url}
-                    alt="发货凭证"
+                    alt="发货前资料"
                     className="h-20 w-20 rounded-md border object-cover"
                   />
                 </a>
                 <button
                   type="button"
                   className="absolute -right-1 -top-1 z-10 rounded-full bg-destructive px-1.5 text-[10px] text-destructive-foreground shadow"
-                  aria-label="删除发货凭证"
+                  aria-label="删除发货前资料"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1475,7 +1481,7 @@ export function ShipOrderForm({
         ) : null}
       </div>
       <div className="space-y-2">
-        <Label htmlFor="shipping-proof-note">发货凭证备注（选填）</Label>
+        <Label htmlFor="shipping-proof-note">发货前资料备注（选填）</Label>
         <Textarea
           id="shipping-proof-note"
           value={form.proofNote}
@@ -1551,7 +1557,7 @@ export function ShippedOrderForm({ detail, pending, run }: ActionFormProps) {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={url}
-                  alt="发货凭证"
+                  alt="发货前资料"
                   className="h-20 w-20 rounded-md border object-cover"
                 />
               </a>

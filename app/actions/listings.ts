@@ -544,6 +544,7 @@ export async function quickSellListing(data: {
     const context = await requireUserContext({ storeId: listingOwner.storeId });
 
     const saleResult = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "listings" WHERE "id" = ${data.listingId} FOR UPDATE`;
       const listing = await tx.listing.findUnique({
         where: { id: data.listingId },
         include: {
@@ -912,18 +913,10 @@ export async function quickSellListing(data: {
           );
         }
 
-        const remainingSellable = await getEffectiveSellableQuantity(
-          tx,
-          listing.storeId,
-          sku.id,
-          destinationMarket
-        );
-        if (remainingSellable.lte(0)) {
-          await tx.listing.update({
-            where: { id: listing.id },
-            data: { status: "SOLD_OUT", delistedAt: new Date() },
-          });
-        }
+        await tx.listing.update({
+          where: { id: listing.id },
+          data: { status: "SOLD_OUT", delistedAt: new Date() },
+        });
       }
 
       const fees = computeOrderFees({
@@ -1148,6 +1141,9 @@ export async function bundleSellListings(data: {
     const context = await requireUserContext({ storeId: listingOwner.storeId });
 
     const saleResult = await prisma.$transaction(async (tx) => {
+      for (const listingId of [...listingIds].sort()) {
+        await tx.$queryRaw`SELECT "id" FROM "listings" WHERE "id" = ${listingId} FOR UPDATE`;
+      }
       const listings = await tx.listing.findMany({
         where: { id: { in: listingIds }, storeId: context.activeStoreId },
         include: {
@@ -1672,18 +1668,10 @@ export async function bundleSellListings(data: {
           throw new Error(`${sku.name} 在所选发货仓没有足量的销售组织自有且已授权库存`);
         }
 
-        const remainingSellable = await getEffectiveSellableQuantity(
-          tx,
-          listing.storeId,
-          sku.id,
-          destinationMarket
-        );
-        if (remainingSellable.lte(0)) {
-          await tx.listing.update({
-            where: { id: listing.id },
-            data: { status: "SOLD_OUT", delistedAt: new Date() },
-          });
-        }
+        await tx.listing.update({
+          where: { id: listing.id },
+          data: { status: "SOLD_OUT", delistedAt: new Date() },
+        });
       }
 
       const fees = computeOrderFees({
@@ -1897,6 +1885,8 @@ export async function updateListing(
     where: { id },
     select: {
       storeId: true,
+      status: true,
+      updatedAt: true,
       listedPrice: true,
       feeRateOverride: true,
       shippingFeeOverride: true,
@@ -1915,6 +1905,9 @@ export async function updateListing(
 
   if (data.status && !["ACTIVE", "DELISTED", "SOLD_OUT"].includes(data.status)) {
     throw new Error("Listing 状态无效");
+  }
+  if (data.status === "ACTIVE" && existing.status !== "ACTIVE") {
+    throw new Error("请确认已在平台重新上架，并创建新的上架记录");
   }
 
   const updateData: Record<string, unknown> = {};
@@ -1939,9 +1932,15 @@ export async function updateListing(
     updateData.delistedAt = null;
   }
 
-  const listing = await prisma.listing.update({
-    where: { id },
-    data: updateData,
+  const listing = await prisma.$transaction(async (tx) => {
+    const changed = await tx.listing.updateMany({
+      where: { id, status: existing.status, updatedAt: existing.updatedAt },
+      data: updateData,
+    });
+    if (changed.count !== 1) {
+      throw new Error("上架记录已发生变化，请刷新后再修改");
+    }
+    return tx.listing.findUniqueOrThrow({ where: { id } });
   });
 
   revalidateListingSurfaces(id);
@@ -1972,9 +1971,9 @@ export async function relistListing(id: string) {
     },
   });
   if (!existing) throw new Error("上架记录不存在或无权再次上架");
-  await requireUserContext({ storeId: existing.storeId });
+  const context = await requireUserContext({ storeId: existing.storeId });
   if (!["DELISTED", "SOLD_OUT"].includes(existing.status)) {
-    throw new Error("只有已售罄或已下架的 Listing 可以再次上架");
+    throw new Error("只有已成交或已下架的记录可以再次上架");
   }
 
   await assertListingHasSellableStock({
@@ -2003,9 +2002,45 @@ export async function relistListing(id: string) {
   });
   if (duplicate) throw new Error("相同商品已经在该平台账号上架，无需重复上架");
 
-  const listing = await prisma.listing.update({
-    where: { id },
-    data: { status: "ACTIVE", listedAt: new Date(), delistedAt: null },
+  const listing = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "listings" WHERE "id" = ${id} FOR UPDATE`;
+    const active = await tx.listing.findFirst({
+      where: {
+        storeId: existing.storeId,
+        platformId: existing.platformId,
+        salesChannelAccountId: existing.salesChannelAccountId,
+        listingType: existing.listingType,
+        status: "ACTIVE",
+        ...(existing.listingType === "ITEM_UNIT"
+          ? { itemUnitId: existing.itemUnitId }
+          : { skuId: existing.skuId }),
+      },
+      select: { id: true },
+    });
+    if (active) throw new Error("相同商品已上架，请刷新查看");
+    return tx.listing.create({
+      data: {
+        storeId: existing.storeId,
+        salesChannelAccountId: existing.salesChannelAccountId,
+        platformId: existing.platformId,
+        listingType: existing.listingType,
+        skuId: existing.skuId,
+        itemUnitId: existing.itemUnitId,
+        listedPrice: existing.listedPrice,
+        currency: existing.currency,
+        feeRateOverride: existing.feeRateOverride,
+        shippingFeeOverride: existing.shippingFeeOverride,
+        estimatedNet: existing.estimatedNet,
+        status: "ACTIVE",
+        listedAt: new Date(),
+      },
+    });
+  });
+  await recordListingCreateTask({
+    organizationId: context.organizationId,
+    storeId: existing.storeId,
+    userId: context.userId,
+    listingId: listing.id,
   });
   revalidateListingSurfaces(id);
   return listing;

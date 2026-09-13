@@ -14,6 +14,15 @@ export async function PersonalWorkspaceShell({ children }: { children: React.Rea
     select: { organization: { select: { name: true } } },
     orderBy: { createdAt: "asc" },
   });
+  const managedWarehouse = await prisma.locationFulfiller.findFirst({
+    where: {
+      userId: user.id,
+      status: "ACTIVE",
+      role: "MANAGER",
+      organization: { memberships: { none: { userId: user.id, status: { not: "ACTIVE" } } } },
+    },
+    select: { id: true },
+  });
 
   return (
     <div className="min-h-screen bg-muted/20">
@@ -35,6 +44,11 @@ export async function PersonalWorkspaceShell({ children }: { children: React.Rea
             <Button asChild variant="ghost" size="sm">
               <Link href="/collaboration/tasks">我的任务</Link>
             </Button>
+            {managedWarehouse ? (
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/collaboration/inventory">仓库库存</Link>
+              </Button>
+            ) : null}
             <Button asChild variant="ghost" size="sm">
               <Link href="/account">
                 <UserRound className="h-4 w-4" />
@@ -55,7 +69,7 @@ export async function PersonalWorkspaceShell({ children }: { children: React.Rea
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-7 md:px-6">{children}</main>
+      <main className="mx-auto min-w-0 w-full max-w-6xl px-4 py-7 md:px-6">{children}</main>
     </div>
   );
 }

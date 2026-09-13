@@ -786,9 +786,13 @@ export async function submitCreateListing(
   throw new Error("当前对象不支持添加上架记录");
 }
 
-export async function submitSaveShippingProof(entityId: string, payload: ShipOrderPayload) {
+export async function submitSaveShippingProof(
+  entityId: string,
+  payload: ShipOrderPayload & { removedImageUrls?: string[] }
+) {
   await saveOrderShippingProof(entityId, buildShippingProof(payload), {
     trackingNo: clean(payload.trackingNo),
+    removedImageUrls: payload.removedImageUrls,
   });
   revalidatePath("/workbench");
   return { success: true };

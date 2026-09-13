@@ -162,7 +162,7 @@ function StockMetricBadge({
 
 function platformCoverageStatusLabel(platform: ListingCoveragePlatform) {
   if (platform.state === "missing") return "未上架";
-  if (platform.state === "sold_out") return "已上架（已售罄）";
+  if (platform.state === "sold_out") return "已成交（本次上架结束）";
   if (platform.state === "delisted") return "已下架";
   return "已上架";
 }
