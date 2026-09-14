@@ -29,7 +29,6 @@ import {
   Camera,
   Clock3,
   CheckCircle2,
-  Layers3,
   MapPin,
   PackageCheck,
   RotateCcw,
@@ -106,9 +105,7 @@ export function ShippingTaskList({
       return task.status === "DONE" && (task.isAssignedToMe !== false || task.isCreatedByMe);
     });
   }, [mode, tasks, view]);
-  const [selectedId, setSelectedId] = useState(
-    initialTask || (mode === "portal" ? visibleTasks[0]?.id : "") || ""
-  );
+  const [selectedId, setSelectedId] = useState(initialTask || "");
   const [pending, startTransition] = useTransition();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,10 +114,8 @@ export function ShippingTaskList({
   const [withdrawReason, setWithdrawReason] = useState("");
   const [shipmentChecked, setShipmentChecked] = useState(false);
   const selected = useMemo(
-    () =>
-      visibleTasks.find((task) => task.id === selectedId) ||
-      (mode === "portal" ? visibleTasks[0] : undefined),
-    [mode, selectedId, visibleTasks]
+    () => visibleTasks.find((task) => task.id === selectedId),
+    [selectedId, visibleTasks]
   );
   const initialProof = selected?.order.shippingProof;
   const [form, setForm] = useState({
@@ -161,9 +156,19 @@ export function ShippingTaskList({
 
   function choose(task: WarehouseTaskView) {
     if (uploading || pending) return;
-    setSelectedId(task.id);
+    setSelectedId((current) => (mode === "portal" && current === task.id ? "" : task.id));
     setError(null);
     setNotice(null);
+    if (mode === "portal" && selectedId !== task.id && window.innerWidth < 1024) {
+      window.setTimeout(() => {
+        document.getElementById("shipping-task-detail")?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+      }, 0);
+    }
   }
 
   async function upload(file: File) {
@@ -344,6 +349,7 @@ export function ShippingTaskList({
               "space-y-2",
               mode === "workbench" && "grid gap-3 space-y-0 sm:grid-cols-2 xl:grid-cols-3"
             )}
+            aria-label="发货任务列表"
           >
             {visibleTasks.map((task) => {
               const timing = getShippingTaskTiming({
@@ -363,49 +369,43 @@ export function ShippingTaskList({
                   key={task.id}
                   type="button"
                   onClick={() => choose(task)}
-                  className={`w-full rounded-lg border p-4 text-left transition ${
+                  aria-expanded={task.id === selected?.id}
+                  aria-controls={selected ? "shipping-task-detail" : undefined}
+                  className={`w-full rounded-lg border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                     task.id === selected?.id
                       ? "border-primary bg-primary/5"
                       : "bg-card hover:bg-muted/40"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
                       {firstLine?.sku.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={firstLine.sku.imageUrl}
                           alt={`${firstLine.sku.name} 商品图`}
-                          className="h-14 w-14 shrink-0 rounded-md border bg-background object-cover"
+                          className="h-10 w-10 shrink-0 rounded-md border bg-background object-cover"
                         />
                       ) : (
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border bg-muted">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted">
                           <Box className="h-4 w-4 text-muted-foreground" />
                         </div>
                       )}
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
                           {firstLine?.sku.name ?? "待核对商品"}
                         </p>
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">
                           {firstLine?.sku.code ?? task.order.orderNumber}
                           {firstLine?.sku.variantLabel ? ` · ${firstLine.sku.variantLabel}` : ""}
-                        </p>
-                        <p className="mt-1 text-sm font-medium tabular-nums">
-                          {task.order.lines.length} 种，共 {totalQuantity} 件
-                        </p>
-                        {task.isBundleSale ? (
-                          <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-violet-700">
-                            <Layers3 className="h-3 w-3" />
-                            合并发货 · 同一包裹
-                          </p>
-                        ) : null}
-                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                          订单 {task.order.orderNumber}
+                          {` · ${totalQuantity} 件`}
                         </p>
                       </div>
                     </div>
-                    <Badge variant={task.status === "IN_PROGRESS" ? "default" : "outline"}>
+                    <Badge
+                      variant={task.status === "IN_PROGRESS" ? "default" : "outline"}
+                      className="max-w-16 shrink-0 text-center text-[11px] leading-tight"
+                    >
                       {task.status === "DONE"
                         ? "已完成"
                         : task.status === "CANCELLED"
@@ -417,26 +417,17 @@ export function ShippingTaskList({
                               : "待领取"}
                     </Badge>
                   </div>
-                  <div className="mt-3 flex items-end justify-between gap-3 border-t pt-3">
-                    <div className="min-w-0">
-                      <p
-                        className={cn(
-                          "text-sm font-semibold",
-                          timing.tone === "overdue" && "text-destructive",
-                          timing.tone === "warning" && "text-amber-700",
-                          timing.tone === "completed" && "text-emerald-700"
-                        )}
-                      >
-                        {timing.urgencyLabel}
-                      </p>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {timing.scheduleLabel}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {task.location.name}
-                    </span>
-                  </div>
+                  <p
+                    className={cn(
+                      "mt-1.5 truncate pl-[3.125rem] text-[11px] tabular-nums text-muted-foreground",
+                      timing.tone === "overdue" && "text-destructive",
+                      timing.tone === "warning" && "text-amber-700",
+                      timing.tone === "completed" && "text-emerald-700"
+                    )}
+                  >
+                    {task.isBundleSale ? "合并发货 · " : ""}
+                    {timing.urgencyLabel}
+                  </p>
                 </button>
               );
             })}
@@ -452,6 +443,7 @@ export function ShippingTaskList({
           ) : null}
           {selected ? (
             <main
+              id="shipping-task-detail"
               className={cn(
                 "min-w-0 max-w-full space-y-5 rounded-xl border bg-card p-3 [overflow-wrap:anywhere] sm:p-5 md:p-7",
                 mode === "workbench" &&
@@ -470,6 +462,7 @@ export function ShippingTaskList({
                   <X className="h-4 w-4" />
                 </Button>
               ) : null}
+              <h2 className="sr-only">任务详情</h2>
               <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-5">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -483,9 +476,9 @@ export function ShippingTaskList({
                       {selected.organizationName} 委托
                     </p>
                   </div>
-                  <h2 className="mt-1 text-xl font-semibold">
+                  <h3 className="mt-1 text-lg font-semibold">
                     {selected.isBundleSale ? "合并发货" : "订单"} {selected.order.orderNumber}
-                  </h2>
+                  </h3>
                   <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground">
                     <MapPin className="h-4 w-4" /> 来源仓库：{selected.location.name} ·{" "}
                     {selected.location.code}
@@ -969,6 +962,10 @@ export function ShippingTaskList({
                 </div>
               ) : null}
             </main>
+          ) : mode === "portal" ? (
+            <div className="hidden min-h-40 items-center justify-center rounded-xl border border-dashed bg-muted/20 px-6 text-sm text-muted-foreground lg:flex">
+              选择左侧任务查看详情
+            </div>
           ) : null}
         </div>
       )}

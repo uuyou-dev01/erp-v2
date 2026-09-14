@@ -254,12 +254,30 @@ test.describe("deployment RC external warehouse and private evidence", () => {
     for (const collaboratorPage of [collaboratorAPage, collaboratorBPage]) {
       await expect(
         collaboratorPage.getByRole("heading", { name: `订单 ${orderNumber}`, exact: true })
+      ).toHaveCount(0);
+      await collaboratorPage.locator('aside[aria-label="发货任务列表"] button').first().click();
+      await expect(
+        collaboratorPage.getByRole("heading", { name: `订单 ${orderNumber}`, exact: true })
       ).toBeVisible();
       await expect(
         collaboratorPage.getByText("为保护客户隐私，接受任务后才会显示姓名、电话和收货地址。")
       ).toBeVisible();
     }
     await shot(collaboratorAPage, "10-04-address-hidden-before-claim-rc1.png");
+    await collaboratorAPage.setViewportSize({ width: 390, height: 844 });
+    const mobileTask = collaboratorAPage.locator('aside[aria-label="发货任务列表"] button').first();
+    await mobileTask.click();
+    await expect(
+      collaboratorAPage.getByRole("heading", { name: `订单 ${orderNumber}`, exact: true })
+    ).toHaveCount(0);
+    expect((await mobileTask.boundingBox())?.height ?? 1000).toBeLessThan(100);
+    await shot(collaboratorAPage, "10-04a-compact-mobile-task-list.png");
+    await mobileTask.click();
+    await expect(
+      collaboratorAPage.getByRole("heading", { name: `订单 ${orderNumber}`, exact: true })
+    ).toBeVisible();
+    await shot(collaboratorAPage, "10-04b-mobile-task-detail.png");
+    await collaboratorAPage.setViewportSize({ width: 1280, height: 720 });
 
     await Promise.allSettled([
       collaboratorAPage.getByRole("button", { name: "领取并开始" }).click(),
@@ -299,7 +317,7 @@ test.describe("deployment RC external warehouse and private evidence", () => {
     expect(notification.resolvedAt).not.toBeNull();
     expect(notification.resolutionCode).toBe("TASK_CLAIMED");
 
-    await winnerPage.locator('input[type="file"]').setInputFiles(proofFixture);
+    await winnerPage.getByLabel("选择发货前资料图片").setInputFiles(proofFixture);
     const proofImage = winnerPage.getByRole("img", { name: "发货前资料" });
     await expect(proofImage).toBeVisible();
     const proofUrl = await proofImage.getAttribute("src");
@@ -352,13 +370,15 @@ test.describe("deployment RC external warehouse and private evidence", () => {
     await winnerPage.goto(`/collaboration/tasks?task=${taskId}`);
     await expect(winnerPage.getByRole("button", { name: "退回任务" })).toBeVisible();
     await winnerPage.getByRole("button", { name: "退回任务" }).click();
-    await expect(winnerPage.getByText("任务已退回委托方。")).toBeVisible();
+    await expect(
+      winnerPage.getByRole("paragraph").filter({ hasText: "任务已退回委托方。" })
+    ).toBeVisible();
     await shot(winnerPage, "10-07-external-collaborator-returned-task-rc1.png");
     expect((await winnerContext.request.get(proofUrl!)).status()).toBe(404);
 
     await ownerPage.goto(`/inventory/locations/${locationId}`);
     const winnerRosterRow = ownerPage
-      .getByText(`${winnerEmail} · 任务协作者`, { exact: true })
+      .getByText(winnerEmail, { exact: false })
       .locator("xpath=../..");
     await winnerRosterRow.getByRole("button", { name: "暂停权限" }).click();
     await expect(winnerRosterRow.getByText("已暂停")).toBeVisible();
