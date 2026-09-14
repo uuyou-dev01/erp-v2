@@ -21,11 +21,8 @@ export default async function CollaborationTasksPage() {
 
   return (
     <div>
-      <div className="mb-6">
+      <div className="mb-5">
         <h1 className="text-3xl font-semibold tracking-tight">我的任务</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          这里统一显示你有权处理的外部任务，包括集运到货确认和订单发货；未授权的企业数据不会显示。
-        </p>
       </div>
       <div className="mb-8 space-y-6">
         {tasks.length || !arrivalTasks.length ? <ShippingTaskList tasks={tasks} /> : null}
@@ -48,20 +45,12 @@ export default async function CollaborationTasksPage() {
             </div>
           ))}
         </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          完成记录会长期保留；之后有新任务时仍会出现在当前账号下。
-        </p>
       </section>
       <section className="mb-6" aria-labelledby="my-completed-work-title">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h2 id="my-completed-work-title" className="text-base font-semibold">
-              我的完成记录
-            </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              最近完成的任务、实际处理量以及对应委托方和仓库。
-            </p>
-          </div>
+          <h2 id="my-completed-work-title" className="text-base font-semibold">
+            我的完成记录
+          </h2>
           <span className="text-xs tabular-nums text-muted-foreground">
             共 {workload.eventCount} 条
           </span>

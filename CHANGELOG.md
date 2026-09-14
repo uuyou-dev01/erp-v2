@@ -10,6 +10,29 @@ All notable changes to this project are documented here. The format follows
 
 - Future release changes are recorded here before they move into a versioned section.
 
+## [0.9.0-rc.13] - 2026-09-14
+
+### Added
+
+- Added operating-report tabs for overview, sales and contribution profit, procurement and
+  inventory, expenses, and consignment settlements, with searchable details and CSV exports.
+- Added original-currency amounts, CNY conversion details, historical exchange-rate references,
+  and explicit incomplete-cost and estimated-shipping states throughout operating reports.
+
+### Changed
+
+- Made personal collaboration open directly to tasks, moved relationships into a dedicated page,
+  and clarified navigation and selected task scopes.
+- Grouped warehouse inventory by product family and added family-aware search.
+- Reworked listing cards to summarize active platforms separately for SKU stock and individual
+  items, with clearer selected-SKU actions and inventory-detail access.
+
+### Fixed
+
+- Kept mixed-currency report totals, confirmed expense directions, settlement snapshots, and
+  date boundaries consistent between summary cards, charts, details, and exports.
+- Updated collaboration language regression coverage for the dedicated relationships page.
+
 ## [0.9.0-rc.8] - 2026-09-09
 
 ### Added

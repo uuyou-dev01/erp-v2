@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
+import { familyNameFromSkuLike } from "@/lib/application/catalog-display-groups";
 
 export async function getManagedWarehouseInventory(userId: string) {
   const relationships = await prisma.locationFulfiller.findMany({
@@ -39,7 +40,7 @@ export async function getManagedWarehouseInventory(userId: string) {
               skuId: true,
               sourceType: true,
               sourceId: true,
-              sku: { select: { code: true, name: true } },
+              sku: { select: { code: true, name: true, attributes: true } },
             },
           }),
           prisma.itemUnit.findMany({
@@ -52,7 +53,7 @@ export async function getManagedWarehouseInventory(userId: string) {
               skuId: true,
               sourceType: true,
               sourceId: true,
-              sku: { select: { code: true, name: true } },
+              sku: { select: { code: true, name: true, attributes: true } },
             },
           }),
           prisma.inboundShipmentInventoryLine.findMany({
@@ -157,7 +158,14 @@ export async function getManagedWarehouseInventory(userId: string) {
         }
         const rows = new Map<
           string,
-          { skuId: string; code: string; name: string; physical: Decimal; reserved: Decimal }
+          {
+            skuId: string;
+            code: string;
+            name: string;
+            series: string | null;
+            physical: Decimal;
+            reserved: Decimal;
+          }
         >();
         for (const entity of [
           ...lots.map((lot) => ({ ...lot, type: "LOT" })),
@@ -170,6 +178,10 @@ export async function getManagedWarehouseInventory(userId: string) {
             skuId: entity.skuId,
             code: entity.sku.code,
             name: entity.sku.name,
+            series: familyNameFromSkuLike({
+              name: entity.sku.name,
+              attributes: entity.sku.attributes,
+            }),
             physical: new Decimal(0),
             reserved: new Decimal(0),
           };
@@ -183,7 +195,11 @@ export async function getManagedWarehouseInventory(userId: string) {
           name: location.name,
           organizationName: relationship.organization.name,
           rows: [...rows.values()]
-            .sort((a, b) => a.code.localeCompare(b.code))
+            .sort(
+              (a, b) =>
+                (a.series || "其他商品").localeCompare(b.series || "其他商品", "zh-CN") ||
+                a.code.localeCompare(b.code)
+            )
             .map((r) => ({
               ...r,
               physical: r.physical.toString(),

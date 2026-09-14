@@ -16,7 +16,14 @@ export function WarehouseInventoryView({
     code: string;
     name: string;
     organizationName: string;
-    rows: Array<{ skuId: string; code: string; name: string; physical: string; reserved: string }>;
+    rows: Array<{
+      skuId: string;
+      code: string;
+      name: string;
+      series: string | null;
+      physical: string;
+      reserved: string;
+    }>;
   }>;
 }) {
   const [selectedId, setSelectedId] = useState(warehouses[0]?.locationId ?? "");
@@ -35,9 +42,31 @@ export function WarehouseInventoryView({
       </p>
     );
   const rows = warehouse.rows.filter((r) =>
-    `${r.code} ${r.name}`.toLocaleLowerCase().includes(query.toLocaleLowerCase().trim())
+    `${r.code} ${r.name} ${r.series || ""}`
+      .toLocaleLowerCase()
+      .includes(query.toLocaleLowerCase().trim())
   );
   const page = Math.min(requestedPage, Math.max(1, Math.ceil(rows.length / 20)));
+  const pageRows = rows.slice((page - 1) * 20, page * 20);
+  const rowGroups = pageRows.reduce<Array<{ series: string; rows: typeof pageRows }>>(
+    (groups, row) => {
+      const series = row.series || "其他商品";
+      const group = groups.find((item) => item.series === series);
+      if (group) group.rows.push(row);
+      else groups.push({ series, rows: [row] });
+      return groups;
+    },
+    []
+  );
+
+  const displaySkuName = (row: (typeof rows)[number]) => {
+    if (!row.series || !row.name.startsWith(row.series)) return row.name;
+    const name = row.name
+      .slice(row.series.length)
+      .replace(/^[\s·・:：—-]+/, "")
+      .trim();
+    return name || row.name;
+  };
   return (
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap gap-2">
@@ -61,9 +90,7 @@ export function WarehouseInventoryView({
           <h2 className="font-semibold">
             {warehouse.name} · {warehouse.code}
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            货主：{warehouse.organizationName} · {warehouse.rows.length} 种商品
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{warehouse.rows.length} 个 SKU</p>
         </div>
         <Button
           variant="outline"
@@ -92,17 +119,35 @@ export function WarehouseInventoryView({
       />
       <div className="rounded-lg border bg-card">
         <div className="divide-y">
-          {rows.slice((page - 1) * 20, page * 20).map((r) => (
-            <div key={r.skuId} className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div className="min-w-0 flex-1">
-                <p className="break-words font-medium">{r.name}</p>
-                <p className="break-all text-xs text-muted-foreground">SKU {r.code}</p>
+          {rowGroups.map((group) => (
+            <section key={group.series}>
+              <div className="flex items-center justify-between gap-3 bg-muted/35 px-4 py-3">
+                <h3 className="min-w-0 truncate text-sm font-semibold">{group.series}</h3>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {group.rows.length} 个 SKU ·{" "}
+                  {group.rows.reduce((total, row) => total + Number(row.physical), 0)} 件
+                </span>
               </div>
-              <div className="shrink-0 text-right text-sm tabular-nums">
-                <p>在仓 {r.physical} 件</p>
-                <p className="text-xs text-muted-foreground">其中待发货占用 {r.reserved} 件</p>
+              <div className="divide-y">
+                {group.rows.map((r) => (
+                  <div
+                    key={r.skuId}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words font-medium">{displaySkuName(r)}</p>
+                      <p className="break-all text-xs text-muted-foreground">SKU {r.code}</p>
+                    </div>
+                    <div className="shrink-0 text-right text-sm tabular-nums">
+                      <p>在仓 {r.physical} 件</p>
+                      {Number(r.reserved) > 0 ? (
+                        <p className="text-xs text-muted-foreground">待发货占用 {r.reserved} 件</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
+            </section>
           ))}
           {!rows.length && (
             <p className="p-6 text-sm text-muted-foreground">没有符合条件的在仓商品</p>

@@ -231,7 +231,7 @@ describe("warehouse inventory and pre-shipment collaboration", () => {
     expect(warehouses).toHaveLength(1);
     expect(warehouses[0].locationId).toBe(locationId);
     expect(warehouses[0].rows).toEqual([
-      { skuId, code: run, name: "Test goods", physical: "6", reserved: "2" },
+      { skuId, code: run, name: "Test goods", series: null, physical: "6", reserved: "2" },
     ]);
     expect(JSON.stringify(warehouses)).not.toContain("unitCost");
     expect(await getManagedWarehouseInventory(operatorId)).toEqual([]);

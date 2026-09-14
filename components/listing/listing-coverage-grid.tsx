@@ -42,15 +42,14 @@ export function ListingCoverageGrid({
 
   return (
     <div className="relative">
-      <div className="sticky top-0 z-10 hidden grid-cols-[minmax(210px,1.35fr)_82px_108px_minmax(170px,1.15fr)_minmax(125px,.8fr)_104px_96px_154px] items-center gap-3 rounded-lg border bg-muted/95 px-3 py-2 text-[11px] font-semibold text-muted-foreground shadow-sm backdrop-blur xl:grid">
+      <div className="sticky top-0 z-10 hidden grid-cols-[minmax(180px,1.3fr)_72px_88px_minmax(160px,1.1fr)_minmax(120px,.8fr)_minmax(200px,1.2fr)_140px] items-center gap-4 rounded-lg border bg-muted/95 px-4 py-2 text-[11px] font-semibold text-muted-foreground shadow-sm backdrop-blur 2xl:grid">
         <span>商品信息</span>
         <span>新旧 / 形态</span>
         <span>库存</span>
         <span>SKU 规格</span>
         <span>仓位</span>
-        <span>SKU 平台</span>
-        <span>状态</span>
-        <span className="text-right">操作</span>
+        <span>平台在售 · 现货规格</span>
+        <span>当前 SKU 操作</span>
       </div>
       <div className="mt-2 space-y-2">
         {products.map((product) => (

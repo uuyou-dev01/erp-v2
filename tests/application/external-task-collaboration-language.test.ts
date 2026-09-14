@@ -11,6 +11,7 @@ const relationshipSurfaces = [
   "app/(dashboard)/settings/warehouse-collaboration/page.tsx",
   "app/account/page.tsx",
   "app/collaboration/page.tsx",
+  "app/collaboration/relationships/page.tsx",
   "app/collaboration/tasks/loading.tsx",
   "app/collaboration/tasks/page.tsx",
   "components/auth/location-fulfiller-invitation-panel.tsx",
@@ -37,14 +38,17 @@ describe("generic external task collaboration language", () => {
   it("uses generic roles and keeps a concrete task-type cue", () => {
     const foundation = source("lib/application/relationship-foundation.ts");
     const invitation = source("app/(auth)/invite/warehouse/[token]/page.tsx");
-    const overview = source("app/collaboration/page.tsx");
+    const relationships = source("app/collaboration/relationships/page.tsx");
     const tasks = source("app/collaboration/tasks/page.tsx");
+    const shippingTasks = source("components/collaboration/shipping-task-list.tsx");
 
     expect(foundation).toContain('MANAGER: "任务负责人"');
     expect(foundation).toContain('OPERATOR: "任务协作者"');
     expect(invitation).toContain('title="参与合作方任务"');
-    expect(overview).toContain("只参与任务协作");
+    expect(relationships).toContain("合作关系");
+    expect(relationships).toContain("RelationshipOverview");
     expect(tasks).toContain("我的任务");
-    expect(tasks).toContain("订单发货");
+    expect(tasks).toContain("<ShippingTaskList");
+    expect(shippingTasks).toContain("订单发货");
   });
 });

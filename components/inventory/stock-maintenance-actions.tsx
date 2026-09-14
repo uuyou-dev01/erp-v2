@@ -311,9 +311,9 @@ export function StockMaintenanceActions({
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="stock-maintenance-dialog-title"
-                className="relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border bg-card shadow-xl"
+                className="relative z-10 flex max-h-[calc(100dvh-1.5rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl sm:max-h-[calc(100dvh-2rem)]"
               >
-                <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+                <div className="flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
                   <div>
                     <h2 id="stock-maintenance-dialog-title" className="text-base font-semibold">
                       {mode === "ENTRY" ? "录入其他仓库库存" : "仓间调拨"}
@@ -336,7 +336,7 @@ export function StockMaintenanceActions({
                   </Button>
                 </div>
 
-                <div className="space-y-4 px-5 py-5">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
                   {mode === "ENTRY" ? (
                     <>
                       <div className="space-y-1.5">
@@ -487,7 +487,7 @@ export function StockMaintenanceActions({
                         >
                           {transferRows.map((row) => (
                             <option key={row.key} value={row.key}>
-                              {row.skuCode} · {row.locationCode} ·{" "}
+                              {row.skuName}（{row.skuCode}）· {row.locationName} ·{" "}
                               {row.entityType === "ITEM_UNIT"
                                 ? `单件 ${row.unitCode}`
                                 : `可调 ${row.bookQty}`}
@@ -691,7 +691,7 @@ export function StockMaintenanceActions({
                   ) : null}
                 </div>
 
-                <div className="flex justify-end gap-2 border-t bg-muted/20 px-5 py-4">
+                <div className="flex shrink-0 justify-end gap-2 border-t bg-muted/20 px-5 py-4">
                   <Button variant="outline" onClick={close} disabled={loading}>
                     取消
                   </Button>

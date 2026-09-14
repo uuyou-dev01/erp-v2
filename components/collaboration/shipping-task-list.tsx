@@ -224,7 +224,7 @@ export function ShippingTaskList({
           <div>
             <p className="text-sm font-medium">任务负责人视图</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              你可以查看本仓库任务进度并进行指派；客户地址仍只对当前执行人开放。
+              可指派本仓库任务；客户地址仅当前执行人可见。
             </p>
           </div>
           <div className="flex gap-4 text-sm tabular-nums">
@@ -236,7 +236,7 @@ export function ShippingTaskList({
           </div>
         </div>
       ) : null}
-      <div className="inline-flex rounded-lg bg-muted p-1" aria-label="任务范围">
+      <div className="inline-flex rounded-xl border bg-muted/70 p-1.5" aria-label="任务范围">
         {(mode === "workbench"
           ? [
               {
@@ -285,7 +285,12 @@ export function ShippingTaskList({
             key={item.value}
             type="button"
             size="sm"
-            variant={view === item.value ? "secondary" : "ghost"}
+            variant="ghost"
+            className={cn(
+              "min-w-[7rem] rounded-lg px-3 font-medium",
+              view === item.value &&
+                "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground"
+            )}
             disabled={uploading || pending}
             onClick={() => {
               setView(item.value);
