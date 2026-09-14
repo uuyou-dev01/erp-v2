@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, Package, Percent } from "lucide-react";
 import { getListingById } from "@/app/actions/listings";
-import { ListingEditForm } from "@/components/listing/listing-edit-form";
+import { ListingEditButton } from "@/components/listing/listing-edit-dialog";
 import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ function firstPhoto(value: unknown) {
 
 function formatDate(value: Date | null) {
   if (!value) return "-";
-  return value.toLocaleDateString("zh-CN");
+  return value.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
 }
 
 function safeReturnPath(value: string | undefined, fallback: string) {
@@ -84,12 +84,25 @@ export default async function ListingDetailPage({
             <p className="font-mono text-sm text-muted-foreground">{sku.code}</p>
           </div>
         </div>
-        <Link href={`/listing/platforms/${listing.platform.id}`}>
-          <Button variant="outline">
-            <ExternalLink className="mr-2 h-4 w-4" />
-            查看平台
-          </Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {listing.status === "ACTIVE" ? (
+            <ListingEditButton
+              listingId={listing.id}
+              productLabel={`${sku.code} · ${sku.name}`}
+              platformName={listing.platform.name}
+              listedPrice={listing.listedPrice?.toString() ?? ""}
+              currency={listing.currency ?? ""}
+              listedAt={listing.listedAt.toISOString()}
+              status={listing.status}
+            />
+          ) : null}
+          <Link href={`/listing/platforms/${listing.platform.id}`}>
+            <Button variant="outline">
+              <ExternalLink className="mr-2 h-4 w-4" />
+              查看平台
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -140,21 +153,6 @@ export default async function ListingDetailPage({
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>编辑 Listing</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ListingEditForm
-            listingId={listing.id}
-            listedPrice={listing.listedPrice?.toString() ?? ""}
-            currency={listing.currency ?? listing.platform.defaultCurrency ?? "CNY"}
-            status={listing.status}
-            returnHref={returnHref}
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }

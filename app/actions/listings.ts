@@ -1878,6 +1878,7 @@ export async function updateListing(
   data: {
     listedPrice?: string;
     currency?: string;
+    listedAt?: string;
     status?: string;
   }
 ) {
@@ -1902,6 +1903,13 @@ export async function updateListing(
   if (!listedPriceInput.success) {
     throw new Error(listedPriceInput.error);
   }
+  const listedAtInput = parseOptionalListingDateInput(data.listedAt);
+  if (!listedAtInput.success) {
+    throw new Error(listedAtInput.error);
+  }
+  if (data.listedAt !== undefined && !listedAtInput.value) {
+    throw new Error("请选择上架日期");
+  }
 
   if (data.status && !["ACTIVE", "DELISTED", "SOLD_OUT"].includes(data.status)) {
     throw new Error("Listing 状态无效");
@@ -1913,6 +1921,7 @@ export async function updateListing(
   const updateData: Record<string, unknown> = {};
   if (data.status) updateData.status = data.status;
   if (data.currency) updateData.currency = data.currency;
+  if (listedAtInput.value) updateData.listedAt = listedAtInput.value;
 
   if (listedPriceInput.value) {
     updateData.listedPrice = listedPriceInput.value;
@@ -1952,6 +1961,7 @@ export async function updateListingAction(
   data: {
     listedPrice?: string;
     currency?: string;
+    listedAt?: string;
     status?: string;
   }
 ) {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { delistListingAction, relistListingAction } from "@/app/actions/listings";
+import { ListingEditDialog } from "@/components/listing/listing-edit-dialog";
 import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { QuickSellButton } from "@/components/listing/quick-sell-button";
 import type { ListingOpsItem, ListingOpsRisk } from "@/components/listing/listing-ops-types";
@@ -44,7 +45,7 @@ function riskClassName(risk: ListingOpsRisk) {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("zh-CN");
+  return new Date(value).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
 }
 
 export function ListingOpsCard({
@@ -58,6 +59,7 @@ export function ListingOpsCard({
   const [delisting, setDelisting] = useState(false);
   const [relisting, setRelisting] = useState(false);
   const [confirmDelistOpen, setConfirmDelistOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const handleDelist = async () => {
@@ -135,7 +137,12 @@ export function ListingOpsCard({
               className="shrink-0 rounded-md"
             />
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{listing.skuName}</p>
+              <Link
+                href={`/listing/${listing.id}?returnTo=${encodeURIComponent(returnTo)}`}
+                className="block truncate text-sm font-medium hover:text-primary hover:underline"
+              >
+                {listing.skuName}
+              </Link>
               <p className="truncate font-mono text-xs text-muted-foreground">{listing.skuCode}</p>
             </div>
           </div>
@@ -205,11 +212,15 @@ export function ListingOpsCard({
               ) : null}
               {listing.status === "ACTIVE" && !selectionMode ? (
                 <>
-                  <Button asChild variant="outline" size="sm" className="h-8">
-                    <Link href={`/listing/${listing.id}?returnTo=${encodeURIComponent(returnTo)}`}>
-                      <Pencil className="mr-1 h-3.5 w-3.5" />
-                      修改
-                    </Link>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => setEditOpen(true)}
+                  >
+                    <Pencil className="mr-1 h-3.5 w-3.5" />
+                    修改
                   </Button>
                   <Button
                     type="button"
@@ -253,6 +264,17 @@ export function ListingOpsCard({
           </div>
         </TableCell>
       </TableRow>
+      <ListingEditDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        listingId={listing.id}
+        productLabel={productLabel}
+        platformName={listing.platform.name}
+        listedPrice={listing.listedPrice ?? ""}
+        currency={listing.currency ?? ""}
+        listedAt={listing.listedAt}
+        status={listing.status}
+      />
       <ConfirmDialog
         open={confirmDelistOpen}
         title="确认下架 Listing"

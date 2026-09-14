@@ -321,6 +321,7 @@ describe("listing pending platform eligibility", () => {
 
   it("edits the price and currency of an active Listing without delisting it first", async () => {
     const sku = await createLotStock("EDIT_ACTIVE", sellableLocationId, "1");
+    const originalListedAt = new Date("2026-09-13T15:45:00.000Z");
     const listing = await prisma.listing.create({
       data: {
         storeId,
@@ -330,7 +331,7 @@ describe("listing pending platform eligibility", () => {
         listedPrice: "180",
         currency: "JPY",
         status: "ACTIVE",
-        listedAt: new Date(),
+        listedAt: originalListedAt,
       },
     });
 
@@ -345,6 +346,23 @@ describe("listing pending platform eligibility", () => {
     expect(updated.status).toBe("ACTIVE");
     expect(updated.listedPrice?.toString()).toBe("220");
     expect(updated.currency).toBe("CNY");
+    expect(updated.listedAt.toISOString()).toBe(originalListedAt.toISOString());
+
+    const correctedDate = await updateListingAction(listing.id, {
+      listedAt: "2026-09-10",
+    });
+    expect(correctedDate.success).toBe(true);
+    const afterDateCorrection = await prisma.listing.findUniqueOrThrow({
+      where: { id: listing.id },
+    });
+    expect(afterDateCorrection.listedAt.toISOString()).toBe("2026-09-10T00:00:00.000Z");
+    expect(afterDateCorrection.listedPrice?.toString()).toBe("220");
+
+    const invalidDate = await updateListingAction(listing.id, { listedAt: "2026-02-30" });
+    expect(invalidDate.success).toBe(false);
+    expect(
+      (await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).listedAt.toISOString()
+    ).toBe("2026-09-10T00:00:00.000Z");
   });
 
   it("re-lists a delisted Listing when market-matching stock is available", async () => {

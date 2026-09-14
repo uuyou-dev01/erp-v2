@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { delistListingAction } from "@/app/actions/listings";
+import { ListingEditDialog } from "@/components/listing/listing-edit-dialog";
 import { ListingPlatformMark } from "@/components/listing/listing-platform-mark";
 import { QuickSellButton } from "@/components/listing/quick-sell-button";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -20,9 +20,8 @@ interface ListingRecordCompactRowProps {
 
 export function ListingRecordCompactRow({ product, record }: ListingRecordCompactRowProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [delisting, setDelisting] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const recordSkuCode = record.skuCode || product.skuCode;
   const recordSkuName = record.skuName || product.skuName;
@@ -30,8 +29,6 @@ export function ListingRecordCompactRow({ product, record }: ListingRecordCompac
   const days = formatListedDaysShort(record.listedAt);
   const isActive = record.state === "active";
   const isItemUnitListing = record.listingScope === "ITEM_UNIT" && record.itemUnitId;
-  const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
-  const editHref = `/listing/${record.listingId}?returnTo=${encodeURIComponent(currentHref)}`;
   const [confirmDelistOpen, setConfirmDelistOpen] = useState(false);
 
   const handleDelist = async () => {
@@ -97,12 +94,13 @@ export function ListingRecordCompactRow({ product, record }: ListingRecordCompac
               sellableLocations={record.sellableLocations}
               compact
             />
-            <Link
-              href={editHref}
+            <button
+              type="button"
+              onClick={() => setEditOpen(true)}
               className="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
             >
               编辑
-            </Link>
+            </button>
           </>
         ) : (
           <span className="text-xs text-muted-foreground">
@@ -134,6 +132,17 @@ export function ListingRecordCompactRow({ product, record }: ListingRecordCompac
           <span>{actionError}</span>
         </div>
       ) : null}
+      <ListingEditDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        listingId={record.listingId}
+        productLabel={productLabel}
+        platformName={record.platformName}
+        listedPrice={record.listedPrice ?? ""}
+        currency={record.currency ?? ""}
+        listedAt={record.listedAt}
+        status={record.status}
+      />
       <ConfirmDialog
         open={confirmDelistOpen}
         title="确认下架 Listing"
