@@ -432,7 +432,7 @@ export function OperatingDashboard({
             {(s.provisionalCount > 0 || s.missingProfitCount > 0) && (
               <Notice>
                 {s.provisionalCount} 笔订单邮费未确认为实际值；{s.missingProfitCount}{" "}
-                笔利润待核算。展开订单“核算细节”可查看原因。贡献利润不代表企业净利润。
+                笔利润待核算。展开“订单详情”可查看原因。贡献利润不代表企业净利润。
               </Notice>
             )}
             <Section title="收入与利润趋势" description="与当前筛选期间一致 · CNY">

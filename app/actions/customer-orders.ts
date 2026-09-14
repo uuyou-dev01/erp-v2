@@ -54,6 +54,7 @@ import {
 } from "@/lib/application/sellable-market";
 import { bindAssetReferences } from "@/lib/assets/references";
 import { getLatestFxRate } from "@/lib/fx";
+import { CURRENCIES } from "@/lib/i18n";
 
 export type OrderStatus =
   | "DRAFT"
@@ -1725,6 +1726,170 @@ function parseSettlementDecimal(value: string, label: string) {
     return amount;
   } catch {
     throw new Error(`${label}必须是有效数字`);
+  }
+}
+
+export async function correctCustomerOrderCurrencyAction(input: {
+  orderId: string;
+  expectedCurrency: string;
+  expectedTotalPaid: string;
+  newCurrency: string;
+  confirmedSameCurrencyFees: boolean;
+}) {
+  try {
+    const targetCurrency = input.newCurrency.trim().toUpperCase();
+    if (!CURRENCIES.some((currency) => currency.value === targetCurrency)) {
+      throw new Error("请选择受支持的订单币种");
+    }
+    if (!input.confirmedSameCurrencyFees) {
+      throw new Error("请先确认售价、平台费和销售运费使用同一种原币");
+    }
+    const initial = await prisma.customerOrder.findUnique({
+      where: { id: input.orderId },
+      select: { storeId: true },
+    });
+    if (!initial) throw new Error("订单不存在");
+    const context = await requireUserContext({ storeId: initial.storeId });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "customer_orders" WHERE "id" = ${input.orderId} FOR UPDATE`;
+      const order = await tx.customerOrder.findUnique({
+        where: { id: input.orderId },
+        select: {
+          id: true,
+          storeId: true,
+          orderNumber: true,
+          externalOrderNo: true,
+          currency: true,
+          orderStatus: true,
+          resaleListingId: true,
+          settledAt: true,
+          settlementFxRate: true,
+          settlementNetRevenueBase: true,
+          totalPaid: true,
+          subtotal: true,
+          platformFee: true,
+          shippingFee: true,
+          shippingFeeStatus: true,
+          netRevenue: true,
+        },
+      });
+      if (!order || order.storeId !== context.activeStoreId) {
+        throw new Error("订单不存在或无权修改");
+      }
+      if (
+        order.orderStatus !== "SHIPPED" ||
+        order.settledAt ||
+        order.resaleListingId ||
+        order.settlementFxRate ||
+        order.settlementNetRevenueBase
+      ) {
+        throw new Error("只支持更正未结算、未关联代卖的已发货订单币种");
+      }
+      if (
+        order.currency !== input.expectedCurrency ||
+        !new Decimal(order.totalPaid.toString()).eq(input.expectedTotalPaid)
+      ) {
+        throw new Error("订单币种或金额已变化，请刷新后重新核对");
+      }
+      if (targetCurrency === order.currency) throw new Error("新币种与当前币种相同");
+
+      const orderLineIds = (
+        await tx.orderLine.findMany({ where: { orderId: order.id }, select: { id: true } })
+      ).map((line) => line.id);
+      const [settlement, fulfillment, afterSales, earning, charge, channelLine, walletLine, fee] =
+        await Promise.all([
+          tx.settlement.findFirst({ where: { customerOrderId: order.id }, select: { id: true } }),
+          tx.fulfillmentRequest.findFirst({
+            where: { customerOrderId: order.id },
+            select: { id: true },
+          }),
+          tx.afterSalesCase.findFirst({
+            where: { customerOrderId: order.id },
+            select: { id: true },
+          }),
+          tx.earningEvent.findFirst({
+            where: { sourceType: "CUSTOMER_ORDER", sourceId: order.id },
+            select: { id: true },
+          }),
+          tx.chargeEvent.findFirst({
+            where: { sourceType: "CUSTOMER_ORDER", sourceId: order.id },
+            select: { id: true },
+          }),
+          tx.channelStatementLine.findFirst({
+            where: {
+              OR: [
+                { orderId: order.id },
+                ...(order.externalOrderNo ? [{ externalOrderNo: order.externalOrderNo }] : []),
+              ],
+            },
+            select: { id: true },
+          }),
+          tx.walletLedgerEntry.findFirst({
+            where: { sourceType: "CUSTOMER_ORDER", sourceId: order.id },
+            select: { id: true },
+          }),
+          tx.fee.findFirst({
+            where: {
+              OR: [
+                { refType: "CUSTOMER_ORDER", refId: order.id },
+                { refType: "ORDER_LINE", refId: { in: orderLineIds } },
+              ],
+            },
+            select: { id: true },
+          }),
+        ]);
+      if (
+        settlement ||
+        fulfillment ||
+        afterSales ||
+        earning ||
+        charge ||
+        channelLine ||
+        walletLine ||
+        fee
+      ) {
+        throw new Error("订单已有结算、售后或其他财务关联记录，不能直接更正币种");
+      }
+
+      await tx.customerOrder.update({
+        where: { id: order.id },
+        data: { currency: targetCurrency },
+      });
+      await tx.quickEntry.updateMany({
+        where: { generatedCustomerOrderId: order.id },
+        data: { saleCurrency: targetCurrency },
+      });
+      const amounts = {
+        totalPaid: order.totalPaid.toString(),
+        subtotal: order.subtotal.toString(),
+        platformFee: order.platformFee.toString(),
+        shippingFee: order.shippingFee.toString(),
+        shippingFeeStatus: order.shippingFeeStatus,
+        netRevenue: order.netRevenue?.toString() ?? null,
+      };
+      await tx.activityLog.create({
+        data: {
+          organizationId: context.organizationId,
+          storeId: order.storeId,
+          actorId: context.userId,
+          action: "CUSTOMER_ORDER_CURRENCY_CORRECTED",
+          refType: "CUSTOMER_ORDER",
+          refId: order.id,
+          before: { currency: order.currency, ...amounts },
+          after: { currency: targetCurrency, ...amounts },
+          message: `订单 ${order.orderNumber} 原币从 ${order.currency} 更正为 ${targetCurrency}，原币数值不变`,
+        },
+      });
+    });
+
+    revalidatePath(`/sales/${input.orderId}`);
+    revalidatePath("/sales");
+    revalidatePath("/reports");
+    revalidatePath("/workbench");
+    return actionSuccess({ orderId: input.orderId, currency: targetCurrency });
+  } catch (error) {
+    return toActionFailure(error, "更正订单币种失败，请重试");
   }
 }
 

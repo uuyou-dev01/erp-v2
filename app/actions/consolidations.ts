@@ -1089,7 +1089,7 @@ export async function removeInventoryFromConsolidationBatchAction(input: {
       await tx.$queryRaw`SELECT "id" FROM "consolidation_batches" WHERE "id" = ${input.batchId} FOR UPDATE`;
       const current = await tx.consolidationBatch.findUnique({
         where: { id: input.batchId },
-        select: { status: true, fromLocationId: true },
+        select: { status: true, fromLocationId: true, storeId: true },
       });
       if (!current || current.status !== "OPEN") {
         throw new Error("只能移除未封箱批次中的商品");
@@ -1099,9 +1099,86 @@ export async function removeInventoryFromConsolidationBatchAction(input: {
       });
       if (!line) throw new Error("集运商品不存在");
       if (line.sourceType === "PURCHASE_LINE") {
-        throw new Error("整单加入的采购商品暂不能逐行移除，请新建转运包裹处理部分发出");
-      }
-      if (line.sourceType === "ITEM_UNIT") {
+        if (!current.fromLocationId) throw new Error("集运起运仓缺失，不能安全撤回");
+        const purchaseLine = await tx.purchaseLine.findFirst({
+          where: { id: line.sourceId, purchaseOrder: { storeId: current.storeId } },
+          select: { id: true, skuId: true, purchaseOrderId: true },
+        });
+        if (!purchaseLine) throw new Error("采购明细不存在，不能安全撤回");
+        const inventory = (
+          await resolveAndLockPurchaseLineInventory(tx, {
+            storeId: current.storeId,
+            locationId: current.fromLocationId,
+            purchaseLines: [purchaseLine],
+            lotStatuses: ["ACTIVE", "CONSOLIDATING"],
+            unitStatuses: ["AVAILABLE", "CONSOLIDATING"],
+          })
+        ).get(purchaseLine.id);
+        const lotIds = inventory?.lots.map((lot) => lot.id) ?? [];
+        const unitIds = inventory?.units.map((unit) => unit.id) ?? [];
+        if (!lotIds.length && !unitIds.length) throw new Error("采购库存已变化，不能安全撤回");
+        const [lots, units, ledgers, reservations, otherBatchLine] = await Promise.all([
+          tx.inventoryLot.findMany({ where: { id: { in: lotIds } }, select: { status: true } }),
+          tx.itemUnit.findMany({ where: { id: { in: unitIds } }, select: { status: true } }),
+          lotIds.length
+            ? tx.stockLedger.groupBy({
+                by: ["entityId"],
+                where: { entityType: "LOT", entityId: { in: lotIds } },
+                _sum: { deltaQty: true },
+              })
+            : [],
+          getActiveReservations(tx, { lotIds, itemUnitIds: unitIds }),
+          tx.consolidationBatchLine.findFirst({
+            where: {
+              batchId: { not: input.batchId },
+              OR: [
+                { sourceType: "LOT", sourceId: { in: lotIds } },
+                { sourceType: "ITEM_UNIT", sourceId: { in: unitIds } },
+              ],
+            },
+            select: { id: true },
+          }),
+        ]);
+        const quantity = ledgers.reduce(
+          (sum, ledger) => sum.plus(ledger._sum.deltaQty?.toString() ?? "0"),
+          new Decimal(units.length)
+        );
+        if (
+          lots.length !== lotIds.length ||
+          units.length !== unitIds.length ||
+          lots.some((lot) => lot.status !== "CONSOLIDATING") ||
+          units.some((unit) => unit.status !== "CONSOLIDATING") ||
+          !quantity.eq(line.quantity.toString()) ||
+          reservations.length ||
+          otherBatchLine
+        ) {
+          throw new Error("采购库存数量、状态或占用已变化，不能安全撤回；请先核对库存和批次");
+        }
+        if (lotIds.length) {
+          const released = await tx.inventoryLot.updateMany({
+            where: {
+              id: { in: lotIds },
+              storeId: current.storeId,
+              locationId: current.fromLocationId,
+              status: "CONSOLIDATING",
+            },
+            data: { status: "ACTIVE" },
+          });
+          if (released.count !== lotIds.length) throw new Error("采购批次库存已变化，不能撤回");
+        }
+        if (unitIds.length) {
+          const released = await tx.itemUnit.updateMany({
+            where: {
+              id: { in: unitIds },
+              storeId: current.storeId,
+              locationId: current.fromLocationId,
+              status: "CONSOLIDATING",
+            },
+            data: { status: "AVAILABLE" },
+          });
+          if (released.count !== unitIds.length) throw new Error("采购单品库存已变化，不能撤回");
+        }
+      } else if (line.sourceType === "ITEM_UNIT") {
         await tx.$queryRaw`SELECT "id" FROM "item_units" WHERE "id" = ${line.sourceId} FOR UPDATE`;
         const released = await tx.itemUnit.updateMany({
           where: {
@@ -1182,6 +1259,7 @@ export async function removeInventoryFromConsolidationBatchAction(input: {
     revalidatePath("/inventory/lots");
     revalidatePath("/inventory/items");
     revalidatePath("/inventory/sellable");
+    revalidatePath("/workbench");
     return actionSuccess({ batchId: input.batchId, lineId: input.lineId });
   } catch (error) {
     return toActionFailure(error, "移除集运商品失败，请重试");

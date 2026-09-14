@@ -11,6 +11,7 @@ import { ConfirmOrderButton } from "@/components/sales/confirm-order-button";
 import { Button } from "@/components/ui/button";
 import { shippingTaskStatusLabels } from "@/lib/application/order-shipping-progress";
 import { SettleOrderDialog } from "@/components/sales/settle-order-dialog";
+import { CorrectOrderCurrencyDialog } from "@/components/sales/correct-order-currency-dialog";
 import {
   AlertTriangle,
   TrendingUp,
@@ -215,6 +216,20 @@ export default async function CustomerOrderDetailPage({
               requireActualShippingFee={order.shippingFeeStatus === "PENDING"}
             />
           )}
+          {order.orderStatus === "SHIPPED" &&
+            !order.settledAt &&
+            !resale &&
+            !resaleSettlement &&
+            !order.fulfillmentRequests.length &&
+            !order.afterSalesCases.length && (
+              <CorrectOrderCurrencyDialog
+                orderId={order.id}
+                currency={order.currency}
+                totalPaid={order.totalPaid.toString()}
+                platformFee={order.platformFee.toString()}
+                shippingFee={order.shippingFee.toString()}
+              />
+            )}
         </div>
       </div>
 

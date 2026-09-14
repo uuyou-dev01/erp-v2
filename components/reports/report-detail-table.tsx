@@ -61,7 +61,9 @@ export function DetailTable({
     (row) =>
       (!currency || row.money.currency === currency) &&
       (!status || row.status === status) &&
-      `${row.label} ${row.detail}`.toLowerCase().includes(query.toLowerCase())
+      `${row.label} ${row.detail} ${kind === "sales" ? (row as ReportSale).items.map((item) => `${item.name} ${item.code}`).join(" ") : ""}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
   );
   const pageCount = Math.max(1, Math.ceil(filtered.length / 10));
   const safePage = Math.min(page, pageCount - 1);
@@ -91,6 +93,8 @@ export function DetailTable({
         "收付方向",
         "实际/预估",
         "备注",
+        "成交时间（北京时间）",
+        "商品明细（名称 × 数量 · 原币行金额）",
       ],
       ...filtered.map((row) => [
         row.date,
@@ -121,6 +125,20 @@ export function DetailTable({
             : "",
         kind === "charge" ? statusLabels[(row as ReportCharge).kind] : "",
         row.note,
+        kind === "sales"
+          ? new Date((row as ReportSale).occurredAt).toLocaleString("zh-CN", {
+              timeZone: "Asia/Shanghai",
+              hour12: false,
+            })
+          : "",
+        kind === "sales"
+          ? (row as ReportSale).items
+              .map(
+                (item) =>
+                  `${item.name} × ${item.quantity} · ${reportMoney(item.lineAmount, row.money.currency)}`
+              )
+              .join("；")
+          : "",
       ]),
     ]);
   return (
@@ -190,8 +208,14 @@ export function DetailTable({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>日期</TableHead>
-                <TableHead>{kind === "stock" ? "商品 / 位置" : "单据 / 分类"}</TableHead>
+                <TableHead>{kind === "sales" ? "成交时间" : "日期"}</TableHead>
+                <TableHead>
+                  {kind === "sales"
+                    ? "商品 / 渠道"
+                    : kind === "stock"
+                      ? "商品 / 位置"
+                      : "单据 / 分类"}
+                </TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead className={numberClass}>原币金额</TableHead>
                 <TableHead className={numberClass}>折合 CNY</TableHead>
@@ -204,14 +228,35 @@ export function DetailTable({
                 <Fragment key={row.id}>
                   <TableRow>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {row.date}
+                      {kind === "sales"
+                        ? new Date((row as ReportSale).occurredAt).toLocaleString("zh-CN", {
+                            timeZone: "Asia/Shanghai",
+                            hour12: false,
+                          })
+                        : row.date}
                     </TableCell>
-                    <TableCell className="max-w-64">
-                      <Link href={row.href} className="font-medium text-blue-700 hover:underline">
-                        {row.label}
+                    <TableCell className={kind === "sales" ? "min-w-56 max-w-96" : "max-w-64"}>
+                      <Link
+                        href={row.href}
+                        className={cn(
+                          "block font-medium text-blue-700 hover:underline",
+                          kind !== "sales" && "truncate"
+                        )}
+                      >
+                        {kind === "sales" && (row as ReportSale).items.length
+                          ? (row as ReportSale).items
+                              .map((item) => `${item.name} × ${item.quantity}`)
+                              .join("、")
+                          : row.label}
                       </Link>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                      <div
+                        className={cn(
+                          "mt-1 text-xs text-muted-foreground",
+                          kind !== "sales" && "truncate"
+                        )}
+                      >
                         {row.detail}
+                        {kind === "sales" ? ` · ${row.label}` : ""}
                         {kind === "stock" && "location" in row
                           ? ` · ${row.location} · ${String((row as ReportStock).quantity)} 件`
                           : ""}
@@ -269,9 +314,9 @@ export function DetailTable({
                         aria-label={`展开 ${row.label} 核算细节`}
                         aria-expanded={expanded === row.id}
                         onClick={() => setExpanded(expanded === row.id ? null : row.id)}
-                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-blue-600"
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-blue-600"
                       >
-                        核算细节
+                        {kind === "sales" ? "订单详情" : "核算细节"}
                         <ChevronDown
                           className={cn("h-3 w-3", expanded === row.id && "rotate-180")}
                         />
@@ -281,7 +326,49 @@ export function DetailTable({
                   {expanded === row.id && (
                     <TableRow className="bg-slate-50/80">
                       <TableCell colSpan={kind === "sales" ? 7 : 6}>
-                        <div className="grid gap-4 p-2 text-sm md:grid-cols-3">
+                        <div
+                          className={cn(
+                            "grid gap-4 p-2 text-sm",
+                            kind === "sales" ? "md:grid-cols-2" : "md:grid-cols-3"
+                          )}
+                        >
+                          {kind === "sales" && (
+                            <div className="space-y-2 text-xs">
+                              <p className="text-muted-foreground">
+                                成交商品 · {row.money.currency} 原币
+                              </p>
+                              {(row as ReportSale).items.length ? (
+                                (row as ReportSale).items.map((item, index) => (
+                                  <div key={`${item.code}-${index}`} className="border-t pt-2">
+                                    <p className="font-medium">
+                                      {item.name} × {item.quantity}
+                                    </p>
+                                    {item.code && (
+                                      <p className="text-muted-foreground">SKU {item.code}</p>
+                                    )}
+                                    <p>
+                                      行金额 {reportMoney(item.lineAmount, row.money.currency)}
+                                      {item.unitPrice != null
+                                        ? ` · 单价 ${reportMoney(item.unitPrice, row.money.currency)}`
+                                        : ""}
+                                    </p>
+                                  </div>
+                                ))
+                              ) : (
+                                <p>没有商品行，请打开订单核对。</p>
+                              )}
+                              <p className="text-muted-foreground">单据号 {row.label}</p>
+                              {(row as ReportSale).settled ? (
+                                <p>已结算；金额或币种错误请先核对原始交易凭证。</p>
+                              ) : row.status === "SHIPPED" ? (
+                                <p>
+                                  币种录错可在订单页使用“更正币种”，核对售价和费用的原币后提交；金额录错可在确认全部实际费用后通过“结算订单”修正。
+                                </p>
+                              ) : (
+                                <p>请打开订单核对商品、币种和金额；未发货订单暂无直接修正入口。</p>
+                              )}
+                            </div>
+                          )}
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">换算依据</p>
                             <p>{row.money.basis}</p>

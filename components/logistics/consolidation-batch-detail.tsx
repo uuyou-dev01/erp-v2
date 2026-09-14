@@ -111,6 +111,7 @@ export function ConsolidationBatchDetail({
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [confirmingRepair, setConfirmingRepair] = useState(false);
   const [removingLineId, setRemovingLineId] = useState<string | null>(null);
+  const [confirmingLineId, setConfirmingLineId] = useState<string | null>(null);
   const [manifestCopied, setManifestCopied] = useState(false);
   const inventoryIssues = batch.lines.filter((line) => line.inventoryIssue);
   const routeEditable = batch.status === "OPEN" || batch.status === "SEALED";
@@ -216,6 +217,7 @@ export function ConsolidationBatchDetail({
           setStatusError(result.error);
           return;
         }
+        setConfirmingLineId(null);
         router.refresh();
       } catch (error) {
         setStatusError(error instanceof Error ? error.message : "移除集运商品失败，请重试");
@@ -261,6 +263,11 @@ export function ConsolidationBatchDetail({
         <section ref={listRef} className="min-w-0 rounded-lg border">
           <div className="border-b px-4 py-3">
             <h2 className="text-sm font-semibold">批次商品</h2>
+            {batch.status === "OPEN" && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                加错商品可在封箱前移出；移出采购单商品后库存恢复可用。封箱后请先核对实物，不支持直接撤回。
+              </p>
+            )}
           </div>
           <div className="divide-y">
             {batch.lines.length === 0 ? (
@@ -271,7 +278,7 @@ export function ConsolidationBatchDetail({
               visibleLines.map((line) => (
                 <div
                   key={line.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3 text-sm"
+                  className="flex flex-wrap items-center justify-between gap-4 px-4 py-3 text-sm"
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     {line.imageUrl ? (
@@ -316,14 +323,14 @@ export function ConsolidationBatchDetail({
                   <div className="flex shrink-0 items-center gap-2">
                     <span className="text-muted-foreground">× {line.quantity}</span>
                     {batch.status === "OPEN" &&
-                    (line.sourceType === "LOT" || line.sourceType === "ITEM_UNIT") ? (
+                    ["LOT", "ITEM_UNIT", "PURCHASE_LINE"].includes(line.sourceType) ? (
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-destructive"
                         disabled={isPending}
-                        onClick={() => removeInventoryLine(line.id)}
+                        onClick={() => setConfirmingLineId(line.id)}
                         aria-label={`移除 ${line.displayTitle}`}
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -333,6 +340,34 @@ export function ConsolidationBatchDetail({
                       </Button>
                     ) : null}
                   </div>
+                  {confirmingLineId === line.id && (
+                    <div className="w-full rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+                      <p>
+                        确定将 {line.displayTitle} × {line.quantity}{" "}
+                        移出当前批次？库存会恢复为起运仓可用；如库存已被占用或数量变化，系统会拒绝撤回。
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={isPending}
+                          onClick={() => setConfirmingLineId(null)}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          disabled={isPending}
+                          onClick={() => removeInventoryLine(line.id)}
+                        >
+                          {removingLineId === line.id ? "正在移出" : "确认移出"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))
             )}

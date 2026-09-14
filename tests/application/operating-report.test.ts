@@ -40,6 +40,9 @@ const order = (extra = {}) => ({
   lines: [
     {
       quantity: "1",
+      unitPrice: "10000",
+      lineAmount: "10000",
+      sku: { name: "复古相机", code: "CAM-01" },
       allocations: [
         {
           quantity: "1",
@@ -112,6 +115,16 @@ describe("operating report financial boundaries", () => {
       money: { original: "10000", currency: "JPY", base: "500.00", rate: "0.05000000" },
       cost: "200.00",
       profit: "225.00",
+      occurredAt: day.toISOString(),
+      items: [
+        {
+          name: "复古相机",
+          code: "CAM-01",
+          quantity: "1",
+          unitPrice: "10000",
+          lineAmount: "10000",
+        },
+      ],
     });
     expect(result.summary).toMatchObject({
       revenue: "1200.00",

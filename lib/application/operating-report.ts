@@ -29,6 +29,15 @@ export type ReportRow = {
   note: string;
 };
 export type ReportSale = ReportRow & {
+  occurredAt: string;
+  settled: boolean;
+  items: Array<{
+    name: string;
+    code: string;
+    quantity: string;
+    unitPrice: string | null;
+    lineAmount: string;
+  }>;
   platformFee: string | null;
   shippingFee: string | null;
   cost: string | null;
@@ -58,6 +67,7 @@ export async function getOperatingReport(storeId: string, organizationId: string
           id: true,
           orderNumber: true,
           orderDate: true,
+          settledAt: true,
           orderStatus: true,
           currency: true,
           totalPaid: true,
@@ -69,6 +79,9 @@ export async function getOperatingReport(storeId: string, organizationId: string
           lines: {
             select: {
               quantity: true,
+              unitPrice: true,
+              lineAmount: true,
+              sku: { select: { name: true, code: true } },
               allocations: {
                 select: {
                   quantity: true,
@@ -254,6 +267,15 @@ export async function getOperatingReport(storeId: string, organizationId: string
       return {
         id: order.id,
         date: reportDay(order.orderDate),
+        occurredAt: order.orderDate.toISOString(),
+        settled: Boolean(order.settledAt),
+        items: order.lines.map((line) => ({
+          name: line.sku?.name ?? "未命名商品",
+          code: line.sku?.code ?? "",
+          quantity: line.quantity.toString(),
+          unitPrice: line.unitPrice?.toString() ?? null,
+          lineAmount: line.lineAmount?.toString() ?? "0",
+        })),
         label: order.orderNumber,
         detail: order.platform?.name ?? "直销",
         status: order.orderStatus,
