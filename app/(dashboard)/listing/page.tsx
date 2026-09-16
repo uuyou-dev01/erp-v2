@@ -199,7 +199,7 @@ export default async function ListingPage({
   const returnTo = currentHref(params);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Listing 分类</h1>
@@ -247,31 +247,34 @@ export default async function ListingPage({
         </Link>
       </nav>
 
-      <ListingOpsToolbar
-        basePath="/listing"
-        platforms={platforms.map((platform) => ({
-          id: platform.id,
-          name: platform.name,
-          code: platform.code,
-          country: platform.country,
-        }))}
-        activePlatformId={params.platformId}
-        activeMarket={activeMarket}
-        status={soldOutView ? undefined : params.status}
-        risk={params.risk}
-        sort={params.sort ?? "listedAt"}
-        query={params.q}
-        showStatusFilter={false}
-        showSoldOutStatus={false}
-        showRiskFilter={!soldOutView}
-      />
-
-      {!soldOutView ? <ListingOpsStats stats={stats} /> : null}
-
       <ListingOpsGrid
         listings={pageListings}
         view={soldOutView ? "soldOut" : "active"}
         returnTo={returnTo}
+        controls={
+          <>
+            {!soldOutView ? <ListingOpsStats stats={stats} embedded /> : null}
+            <ListingOpsToolbar
+              basePath="/listing"
+              platforms={platforms.map((platform) => ({
+                id: platform.id,
+                name: platform.name,
+                code: platform.code,
+                country: platform.country,
+              }))}
+              activePlatformId={params.platformId}
+              activeMarket={activeMarket}
+              status={soldOutView ? undefined : params.status}
+              risk={params.risk}
+              sort={params.sort ?? "listedAt"}
+              query={params.q}
+              showStatusFilter={false}
+              showSoldOutStatus={false}
+              showRiskFilter={!soldOutView}
+              embedded
+            />
+          </>
+        }
       />
 
       {filteredListings.length > PAGE_SIZE ? (

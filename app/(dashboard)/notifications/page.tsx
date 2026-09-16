@@ -20,6 +20,10 @@ export default async function NotificationsPage() {
     refId: notification.refId,
     actionUrl: notification.actionUrl,
     organizationName: notification.organizationName,
+    customerName: notification.customerName,
+    orderNumber: notification.orderNumber,
+    externalOrderNo: notification.externalOrderNo,
+    platformName: notification.platformName,
   }));
 
   return (

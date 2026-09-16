@@ -2,6 +2,7 @@
 
 import { Globe } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleSellDialog } from "@/components/listing/bundle-sell-dialog";
 import { ListingOpsCard } from "@/components/listing/listing-ops-card";
@@ -13,12 +14,14 @@ interface ListingOpsGridProps {
   listings: ListingOpsItem[];
   view?: "active" | "soldOut";
   returnTo?: string;
+  controls?: ReactNode;
 }
 
 export function ListingOpsGrid({
   listings,
   view = "active",
   returnTo = "/listing",
+  controls,
 }: ListingOpsGridProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -29,22 +32,6 @@ export function ListingOpsGrid({
     const visibleIds = new Set(listings.map((listing) => listing.id));
     setSelectedIds((current) => current.filter((id) => visibleIds.has(id)));
   }, [listings]);
-
-  if (listings.length === 0) {
-    return (
-      <EmptyState
-        icon={Globe}
-        title={view === "soldOut" ? "暂无成交或下架记录" : "暂无符合条件的 Listing"}
-        description={
-          view === "soldOut"
-            ? "Listing 成交或下架后会统一归档到这里，需要时可以再次上架。"
-            : "调整平台、状态或风险筛选后再查看。"
-        }
-        actionLabel="查看可售库存"
-        actionHref="/inventory/sellable?unlisted=1"
-      />
-    );
-  }
 
   const selectedListings = selectedIds
     .map((id) => listings.find((listing) => listing.id === id))
@@ -153,36 +140,53 @@ export function ListingOpsGrid({
           ) : null}
         </div>
       </div>
-      <div className="max-h-[calc(100vh-8rem)] overflow-auto [&>div]:overflow-visible">
-        <Table className="min-w-[960px]">
-          <TableHeader className="sticky top-0 z-20 bg-background shadow-[0_1px_0_hsl(var(--border))]">
-            <TableRow>
-              <TableHead className={selectionMode ? "min-w-[300px]" : "min-w-[260px]"}>
-                商品
-              </TableHead>
-              <TableHead>平台</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>平台售价</TableHead>
-              <TableHead>库存</TableHead>
-              <TableHead>时间</TableHead>
-              <TableHead>风险</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {listings.map((listing) => (
-              <ListingOpsCard
-                key={listing.id}
-                listing={listing}
-                selectionMode={selectionMode}
-                selected={selectedIds.includes(listing.id)}
-                onToggleSelection={() => toggleSelection(listing)}
-                returnTo={returnTo}
-              />
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      {controls}
+      {listings.length === 0 ? (
+        <div className="border-t">
+          <EmptyState
+            icon={Globe}
+            title={view === "soldOut" ? "暂无成交或下架记录" : "暂无符合条件的 Listing"}
+            description={
+              view === "soldOut"
+                ? "Listing 成交或下架后会统一归档到这里，需要时可以再次上架。"
+                : "调整平台、状态或风险筛选后再查看。"
+            }
+            actionLabel="查看可售库存"
+            actionHref="/inventory/sellable?unlisted=1"
+          />
+        </div>
+      ) : (
+        <div className="max-h-[calc(100vh-8rem)] overflow-auto [&>div]:overflow-visible">
+          <Table className="min-w-[960px]">
+            <TableHeader className="sticky top-0 z-20 bg-background shadow-[0_1px_0_hsl(var(--border))]">
+              <TableRow>
+                <TableHead className={selectionMode ? "min-w-[300px]" : "min-w-[260px]"}>
+                  商品
+                </TableHead>
+                <TableHead>平台</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>平台售价</TableHead>
+                <TableHead>库存</TableHead>
+                <TableHead>时间</TableHead>
+                <TableHead>风险</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {listings.map((listing) => (
+                <ListingOpsCard
+                  key={listing.id}
+                  listing={listing}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.includes(listing.id)}
+                  onToggleSelection={() => toggleSelection(listing)}
+                  returnTo={returnTo}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
       <BundleSellDialog
         open={dialogOpen}
         listings={selectedListings}

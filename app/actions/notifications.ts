@@ -31,17 +31,46 @@ export async function getMyNotifications() {
   const organizationIds = Array.from(
     new Set(notifications.map((notification) => notification.organizationId))
   );
-  const organizations = await prisma.organization.findMany({
-    where: { id: { in: organizationIds } },
-    select: { id: true, name: true },
-  });
+  const customerOrderIds = Array.from(
+    new Set(
+      notifications.flatMap((notification) =>
+        notification.refType === "CUSTOMER_ORDER" && notification.refId ? [notification.refId] : []
+      )
+    )
+  );
+  const [organizations, customerOrders] = await Promise.all([
+    prisma.organization.findMany({
+      where: { id: { in: organizationIds } },
+      select: { id: true, name: true },
+    }),
+    prisma.customerOrder.findMany({
+      where: { id: { in: customerOrderIds } },
+      select: {
+        id: true,
+        customerName: true,
+        orderNumber: true,
+        externalOrderNo: true,
+        platform: { select: { name: true } },
+      },
+    }),
+  ]);
   const organizationNameById = new Map(
     organizations.map((organization) => [organization.id, organization.name])
   );
-  return notifications.map((notification) => ({
-    ...notification,
-    organizationName: organizationNameById.get(notification.organizationId) ?? "关联企业",
-  }));
+  const customerOrderById = new Map(customerOrders.map((order) => [order.id, order]));
+  return notifications.map((notification) => {
+    const customerOrder = notification.refId
+      ? customerOrderById.get(notification.refId)
+      : undefined;
+    return {
+      ...notification,
+      organizationName: organizationNameById.get(notification.organizationId) ?? "关联企业",
+      customerName: customerOrder?.customerName ?? null,
+      orderNumber: customerOrder?.orderNumber ?? null,
+      externalOrderNo: customerOrder?.externalOrderNo ?? null,
+      platformName: customerOrder?.platform?.name ?? null,
+    };
+  });
 }
 
 export async function markMyNotificationRead(notificationId: string) {

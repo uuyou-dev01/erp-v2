@@ -21,6 +21,10 @@ interface NotificationRow {
   refId: string | null;
   actionUrl: string | null;
   organizationName: string;
+  customerName: string | null;
+  orderNumber: string | null;
+  externalOrderNo: string | null;
+  platformName: string | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -119,7 +123,19 @@ export function NotificationList({ notifications }: { notifications: Notificatio
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              {notification.resolvedAt ? (
+              {notification.customerName && !notification.resolvedAt ? (
+                <a
+                  href={notificationHref(notification)}
+                  className="inline-flex min-w-0 items-center gap-1 text-base font-semibold hover:underline"
+                >
+                  <span className="truncate">{notification.customerName}</span>
+                  <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                </a>
+              ) : notification.customerName ? (
+                <p className="min-w-0 truncate text-base font-semibold">
+                  {notification.customerName}
+                </p>
+              ) : notification.resolvedAt ? (
                 <p className="font-medium">{notification.title}</p>
               ) : (
                 <a
@@ -130,6 +146,11 @@ export function NotificationList({ notifications }: { notifications: Notificatio
                   <ExternalLink className="h-3 w-3 text-muted-foreground" />
                 </a>
               )}
+              {notification.customerName ? (
+                <Badge variant="outline" className="font-normal text-muted-foreground">
+                  {notification.title}
+                </Badge>
+              ) : null}
               {!notification.readAt && (
                 <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
                   未读
@@ -148,6 +169,13 @@ export function NotificationList({ notifications }: { notifications: Notificatio
               <p className="mt-1 text-sm text-muted-foreground">{notification.body}</p>
             ) : null}
             <p className="mt-1 text-xs text-muted-foreground">
+              {notification.customerName ? (
+                <>
+                  {notification.platformName ?? "销售订单"} ·{" "}
+                  {notification.externalOrderNo || notification.orderNumber}
+                  {" · "}
+                </>
+              ) : null}
               {notification.organizationName} ·{" "}
               {TYPE_LABELS[notification.type] ?? notification.type}
             </p>

@@ -3,11 +3,16 @@ import type { ListingOpsStats as ListingOpsStatsType } from "@/components/listin
 
 interface ListingOpsStatsProps {
   stats: ListingOpsStatsType;
+  embedded?: boolean;
 }
 
-export function ListingOpsStats({ stats }: ListingOpsStatsProps) {
+export function ListingOpsStats({ stats, embedded = false }: ListingOpsStatsProps) {
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-y px-1 py-3 text-sm">
+    <div
+      className={`flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 text-sm ${
+        embedded ? "border-b bg-muted/15" : "border-y"
+      }`}
+    >
       <span className="inline-flex items-center gap-2">
         <CheckCircle2 className="h-4 w-4 text-emerald-600" />
         在售 <strong className="tabular-nums">{stats.activeCount}</strong>

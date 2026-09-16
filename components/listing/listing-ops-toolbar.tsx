@@ -28,6 +28,7 @@ interface ListingOpsToolbarProps {
   showStatusFilter?: boolean;
   showSoldOutStatus?: boolean;
   showRiskFilter?: boolean;
+  embedded?: boolean;
 }
 
 function withParam(
@@ -94,6 +95,7 @@ export function ListingOpsToolbar({
   showStatusFilter = true,
   showSoldOutStatus = true,
   showRiskFilter = true,
+  embedded = false,
 }: ListingOpsToolbarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -121,7 +123,7 @@ export function ListingOpsToolbar({
   };
 
   return (
-    <div className="rounded-xl border bg-card">
+    <div className={embedded ? "bg-card" : "rounded-xl border bg-card"}>
       <div className="flex items-center gap-2 overflow-x-auto border-b px-3 py-2.5">
         <span className="shrink-0 text-xs font-medium text-muted-foreground">地区</span>
         <Link
