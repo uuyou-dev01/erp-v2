@@ -14,6 +14,7 @@ interface ListingOpsGridProps {
   listings: ListingOpsItem[];
   view?: "active" | "soldOut";
   returnTo?: string;
+  summary?: ReactNode;
   controls?: ReactNode;
 }
 
@@ -21,6 +22,7 @@ export function ListingOpsGrid({
   listings,
   view = "active",
   returnTo = "/listing",
+  summary,
   controls,
 }: ListingOpsGridProps) {
   const [selectionMode, setSelectionMode] = useState(false);
@@ -95,23 +97,23 @@ export function ListingOpsGrid({
 
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5">
-        <div>
-          <p className="text-sm font-medium">
+      <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          <p className="shrink-0 text-sm font-medium">
             {selectionMode
               ? `已选择 ${selectedIds.length} 条 Listing`
               : view === "soldOut"
                 ? "成交 / 下架商品"
                 : "上架商品"}
           </p>
-          <p className={`text-xs ${selectionError ? "text-destructive" : "text-muted-foreground"}`}>
-            {selectionError ||
-              (view === "soldOut"
-                ? "历史记录与当前上架商品分开管理，可直接再次上架"
-                : selectionMode
-                  ? "选择同平台、同币种且可从同一仓库发货的商品"
-                  : "需要把多款商品合成一单时，可使用打包出售")}
-          </p>
+          {!selectionMode && !selectionError ? summary : null}
+          {selectionMode || selectionError ? (
+            <p
+              className={`text-xs ${selectionError ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {selectionError || "选择同平台、同币种且可从同一仓库发货的商品"}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           {selectionMode ? (

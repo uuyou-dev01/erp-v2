@@ -1778,13 +1778,13 @@ export async function correctCustomerOrderCurrencyAction(input: {
         throw new Error("订单不存在或无权修改");
       }
       if (
-        order.orderStatus !== "SHIPPED" ||
+        !["CONFIRMED", "SHIPPED"].includes(order.orderStatus) ||
         order.settledAt ||
         order.resaleListingId ||
         order.settlementFxRate ||
         order.settlementNetRevenueBase
       ) {
-        throw new Error("只支持更正未结算、未关联代卖的已发货订单币种");
+        throw new Error("只支持更正未结算、未关联代卖的待发货或已发货订单币种");
       }
       if (
         order.currency !== input.expectedCurrency ||

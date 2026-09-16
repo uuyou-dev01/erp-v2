@@ -19,7 +19,7 @@ let organizationId: string;
 let storeId: string;
 let skuId: string;
 
-async function createOrder(suffix: string) {
+async function createOrder(suffix: string, orderStatus = "SHIPPED") {
   return prisma.customerOrder.create({
     data: {
       storeId,
@@ -33,7 +33,7 @@ async function createOrder(suffix: string) {
       shippingFee: "520",
       shippingFeeStatus: "ESTIMATED",
       netRevenue: "2432",
-      orderStatus: "SHIPPED",
+      orderStatus,
       lines: { create: { skuId, quantity: "1", unitPrice: "3280", lineAmount: "3280" } },
     },
     include: { lines: true },
@@ -60,7 +60,7 @@ describe("customer order original-currency correction", () => {
   });
 
   it("changes only the original-currency label, synchronizes quick entry, and records an audit event", async () => {
-    const order = await createOrder("ordinary");
+    const order = await createOrder("ordinary", "CONFIRMED");
     await prisma.quickEntry.create({
       data: {
         storeId,

@@ -251,29 +251,27 @@ export default async function ListingPage({
         listings={pageListings}
         view={soldOutView ? "soldOut" : "active"}
         returnTo={returnTo}
+        summary={!soldOutView ? <ListingOpsStats stats={stats} compact /> : null}
         controls={
-          <>
-            {!soldOutView ? <ListingOpsStats stats={stats} embedded /> : null}
-            <ListingOpsToolbar
-              basePath="/listing"
-              platforms={platforms.map((platform) => ({
-                id: platform.id,
-                name: platform.name,
-                code: platform.code,
-                country: platform.country,
-              }))}
-              activePlatformId={params.platformId}
-              activeMarket={activeMarket}
-              status={soldOutView ? undefined : params.status}
-              risk={params.risk}
-              sort={params.sort ?? "listedAt"}
-              query={params.q}
-              showStatusFilter={false}
-              showSoldOutStatus={false}
-              showRiskFilter={!soldOutView}
-              embedded
-            />
-          </>
+          <ListingOpsToolbar
+            basePath="/listing"
+            platforms={platforms.map((platform) => ({
+              id: platform.id,
+              name: platform.name,
+              code: platform.code,
+              country: platform.country,
+            }))}
+            activePlatformId={params.platformId}
+            activeMarket={activeMarket}
+            status={soldOutView ? undefined : params.status}
+            risk={params.risk}
+            sort={params.sort ?? "listedAt"}
+            query={params.q}
+            showStatusFilter={false}
+            showSoldOutStatus={false}
+            showRiskFilter={!soldOutView}
+            embedded
+          />
         }
       />
 

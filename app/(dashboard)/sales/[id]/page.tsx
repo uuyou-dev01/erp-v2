@@ -99,6 +99,13 @@ export default async function CustomerOrderDetailPage({
         .reduce((sum, allocation) => sum.plus(allocation.quantity.toString()), new Decimal(0));
       return allocatedQuantity.eq(line.quantity.toString());
     });
+  const canCorrectCurrency =
+    ["CONFIRMED", "SHIPPED"].includes(order.orderStatus) &&
+    !order.settledAt &&
+    !resale &&
+    !resaleSettlement &&
+    !order.fulfillmentRequests.length &&
+    !order.afterSalesCases.length;
   const settlementBaseCurrency = order.settlementBaseCurrency ?? "CNY";
   const suggestedSettlementFxRate =
     order.settlementFxRate ??
@@ -216,20 +223,15 @@ export default async function CustomerOrderDetailPage({
               requireActualShippingFee={order.shippingFeeStatus === "PENDING"}
             />
           )}
-          {order.orderStatus === "SHIPPED" &&
-            !order.settledAt &&
-            !resale &&
-            !resaleSettlement &&
-            !order.fulfillmentRequests.length &&
-            !order.afterSalesCases.length && (
-              <CorrectOrderCurrencyDialog
-                orderId={order.id}
-                currency={order.currency}
-                totalPaid={order.totalPaid.toString()}
-                platformFee={order.platformFee.toString()}
-                shippingFee={order.shippingFee.toString()}
-              />
-            )}
+          {canCorrectCurrency && (
+            <CorrectOrderCurrencyDialog
+              orderId={order.id}
+              currency={order.currency}
+              totalPaid={order.totalPaid.toString()}
+              platformFee={order.platformFee.toString()}
+              shippingFee={order.shippingFee.toString()}
+            />
+          )}
         </div>
       </div>
 
