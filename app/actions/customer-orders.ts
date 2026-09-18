@@ -670,11 +670,43 @@ export async function confirmOrderAction(data: ConfirmOrderInput) {
   }
 }
 
+export interface ShippingRecipientInput {
+  customerName: string;
+  customerPhone?: string;
+  shippingAddress?: string;
+  externalOrderNo?: string;
+}
+
+function shippingRecipientData(input?: ShippingRecipientInput) {
+  if (!input) return undefined;
+  const customerName = input.customerName.trim();
+  if (!customerName) throw new Error("请填写客户名称或平台买家名");
+  if (customerName.length > 200) throw new Error("客户名称不能超过 200 个字符");
+  const customerPhone = input.customerPhone?.trim() || null;
+  const shippingAddress = input.shippingAddress?.trim() || null;
+  const externalOrderNo = input.externalOrderNo?.trim() || null;
+  if (customerPhone && customerPhone.length > 80) {
+    throw new Error("客户电话不能超过 80 个字符");
+  }
+  if (externalOrderNo && externalOrderNo.length > 200) {
+    throw new Error("平台订单号不能超过 200 个字符");
+  }
+  if (shippingAddress && shippingAddress.length > 2000) {
+    throw new Error("收货地址或发货备注不能超过 2000 个字符");
+  }
+  return { customerName, customerPhone, shippingAddress, externalOrderNo };
+}
+
 export async function saveOrderShippingProof(
   orderId: string,
   proof: ShippingProof,
-  options?: { trackingNo?: string; removedImageUrls?: string[] }
+  options?: {
+    trackingNo?: string;
+    removedImageUrls?: string[];
+    recipient?: ShippingRecipientInput;
+  }
 ) {
+  const recipient = shippingRecipientData(options?.recipient);
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
     include: { store: { select: { organizationId: true } } },
@@ -765,6 +797,7 @@ export async function saveOrderShippingProof(
       where: { id: orderId },
       data: {
         shippingProof: merged as Prisma.InputJsonValue,
+        ...(recipient ?? {}),
         ...(options?.trackingNo !== undefined
           ? { trackingNo: options.trackingNo.trim() || null }
           : {}),
@@ -1342,10 +1375,12 @@ async function performOrderShipment(
         trackingNo?: string;
         shippingProof?: ShippingProof;
         confirmation?: ShipmentConfirmationInput;
+        recipient?: ShippingRecipientInput;
       }
     | undefined,
   actor: { userId: string; organizationId: string }
 ) {
+  const recipient = shippingRecipientData(options?.recipient);
   const order = await prisma.customerOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -1556,6 +1591,7 @@ async function performOrderShipment(
       data: {
         orderStatus: "SHIPPED",
         shippedAt: new Date(),
+        ...(recipient ?? {}),
         trackingNo: options?.trackingNo?.trim() || undefined,
         shippingProof:
           Object.keys(mergedProof).length > 0 ? (mergedProof as Prisma.InputJsonValue) : undefined,
@@ -1611,6 +1647,7 @@ export async function markOrderShipped(
     trackingNo?: string;
     shippingProof?: ShippingProof;
     confirmation?: ShipmentConfirmationInput;
+    recipient?: ShippingRecipientInput;
   }
 ) {
   const order = await prisma.customerOrder.findUnique({

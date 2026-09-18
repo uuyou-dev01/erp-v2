@@ -1171,6 +1171,10 @@ export function ShipOrderForm({
   );
   const [shipmentChecked, setShipmentChecked] = useState(false);
   const [form, setForm] = useState({
+    customerName: detail.actionContext.customerName ?? "",
+    customerPhone: detail.actionContext.customerPhone ?? "",
+    shippingAddress: detail.actionContext.shippingAddress ?? "",
+    externalOrderNo: detail.actionContext.externalOrderNo ?? "",
     shipper: initialProof.shipper ?? "",
     shippingMethod: initialShippingMethod,
     trackingNo: detail.actionContext.trackingNo ?? "",
@@ -1187,6 +1191,10 @@ export function ShipOrderForm({
       run(
         () =>
           submitSaveShippingProof(detail.entityId, {
+            customerName: next.customerName,
+            customerPhone: next.customerPhone,
+            shippingAddress: next.shippingAddress,
+            externalOrderNo: next.externalOrderNo,
             shipper: next.shipper,
             shippingMethod: next.shippingMethod,
             trackingNo: next.trackingNo,
@@ -1277,6 +1285,10 @@ export function ShipOrderForm({
   }, [uploadProofFiles, uploading]);
 
   const payload = () => ({
+    customerName: form.customerName,
+    customerPhone: form.customerPhone,
+    shippingAddress: form.shippingAddress,
+    externalOrderNo: form.externalOrderNo,
     shipper: form.shipper,
     shippingMethod: form.shippingMethod,
     trackingNo: form.trackingNo,
@@ -1352,6 +1364,73 @@ export function ShipOrderForm({
           {draftHint}
         </p>
       ) : null}
+
+      <fieldset className="rounded-lg border bg-muted/15 px-3 pb-3 pt-2.5">
+        <legend className="flex items-center gap-2 px-1 text-sm font-semibold">
+          <UserRound className="h-4 w-4 text-blue-700" aria-hidden="true" />
+          客户与收件信息
+        </legend>
+        <p className="mb-3 mt-0.5 text-xs leading-5 text-muted-foreground">
+          发货前先用客户名称或平台买家名核对订单，避免发错。
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="shipping-customer-name">客户名称 / 平台买家名 *</Label>
+            <Input
+              id="shipping-customer-name"
+              required
+              maxLength={200}
+              value={form.customerName}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, customerName: event.target.value }))
+              }
+              placeholder="例如闲鱼昵称、煤炉买家名"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="shipping-external-order-no">平台订单号（选填）</Label>
+            <Input
+              id="shipping-external-order-no"
+              maxLength={200}
+              value={form.externalOrderNo}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, externalOrderNo: event.target.value }))
+              }
+              placeholder="用于和平台订单对应"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="shipping-customer-phone">客户电话（选填）</Label>
+            <Input
+              id="shipping-customer-phone"
+              type="tel"
+              maxLength={80}
+              value={form.customerPhone}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, customerPhone: event.target.value }))
+              }
+              placeholder="匿名配送可留空"
+            />
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="shipping-address">收货地址 / 发货备注（选填）</Label>
+            <Textarea
+              id="shipping-address"
+              maxLength={2000}
+              rows={2}
+              value={form.shippingAddress}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, shippingAddress: event.target.value }))
+              }
+              placeholder="匿名配送可填写便利店、取件方式等发货备注"
+            />
+          </div>
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {detail.actionContext.platformName ?? "直售"} · 系统订单号{" "}
+          {detail.actionContext.orderNumber}
+        </p>
+      </fieldset>
 
       <ShipmentFulfillmentSummary detail={detail} assigneeName={assigneeName} />
 
@@ -1506,7 +1585,7 @@ export function ShipOrderForm({
           <Button
             type="button"
             variant="outline"
-            disabled={pending || uploading}
+            disabled={pending || uploading || !form.customerName.trim()}
             onClick={() => {
               setDraftHint("");
               persistDraft(form);
@@ -1516,7 +1595,9 @@ export function ShipOrderForm({
           </Button>
           <SubmitButton
             pending={pending || uploading}
-            disabled={!hasCompleteFulfillmentSource || !shipmentChecked}
+            disabled={
+              !hasCompleteFulfillmentSource || !shipmentChecked || !form.customerName.trim()
+            }
           >
             确认已发货
           </SubmitButton>

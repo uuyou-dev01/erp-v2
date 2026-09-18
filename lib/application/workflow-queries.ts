@@ -1447,6 +1447,11 @@ export async function getWorkItemDetail(
       actionContext: {
         trackingNo: order.trackingNo,
         orderNumber: order.orderNumber,
+        externalOrderNo: order.externalOrderNo,
+        platformName: order.platform?.name ?? null,
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        shippingAddress: order.shippingAddress,
         shippingCountry: order.shippingCountry,
         currency: order.currency,
         subtotal: order.subtotal.toString(),

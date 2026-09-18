@@ -117,6 +117,10 @@ export interface CreateListingPayload {
 
 export interface ShipOrderPayload {
   confirmation?: import("@/lib/application/shipment-confirmation").ShipmentConfirmationInput;
+  customerName?: string;
+  customerPhone?: string;
+  shippingAddress?: string;
+  externalOrderNo?: string;
   trackingNo?: string;
   shipper?: string;
   shippingMethod?: string;
@@ -133,6 +137,24 @@ function buildShippingProof(payload: ShipOrderPayload): ShippingProof {
     proofNote: clean(payload.proofNote),
     imageUrls: payload.imageUrls?.filter(Boolean),
   });
+}
+
+function buildShippingRecipient(payload: ShipOrderPayload) {
+  const hasRecipientFields = [
+    payload.customerName,
+    payload.customerPhone,
+    payload.shippingAddress,
+    payload.externalOrderNo,
+  ].some((value) => value !== undefined);
+  if (!hasRecipientFields) return undefined;
+  const customerName = clean(payload.customerName);
+  if (!customerName) throw new Error("请填写客户名称或平台买家名");
+  return {
+    customerName,
+    customerPhone: clean(payload.customerPhone),
+    shippingAddress: clean(payload.shippingAddress),
+    externalOrderNo: clean(payload.externalOrderNo),
+  };
 }
 
 export interface SettleOrderPayload {
@@ -794,6 +816,7 @@ export async function submitSaveShippingProof(
   await saveOrderShippingProof(entityId, buildShippingProof(payload), {
     trackingNo: clean(payload.trackingNo),
     removedImageUrls: payload.removedImageUrls,
+    recipient: buildShippingRecipient(payload),
   });
   revalidatePath("/workbench");
   return { success: true };
@@ -855,6 +878,7 @@ export async function submitShipOrder(entityId: string, payload: ShipOrderPayloa
     trackingNo: clean(payload.trackingNo),
     shippingProof: buildShippingProof(payload),
     confirmation: payload.confirmation,
+    recipient: buildShippingRecipient(payload),
   });
   revalidatePath("/workbench");
   return { success: true };

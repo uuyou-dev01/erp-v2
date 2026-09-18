@@ -28,6 +28,7 @@ import {
   confirmOrderAction,
   createCustomerOrderAction,
   markOrderShipped,
+  saveOrderShippingProof,
   settleCustomerOrderAction,
 } from "@/app/actions/customer-orders";
 import { getDashboardMonthlyMetrics } from "@/app/actions/reports";
@@ -204,8 +205,36 @@ describe("purchase to profit business flow", () => {
     if (!sale.success) throw new Error(sale.error);
     expect(sale.success).toBe(true);
 
+    await saveOrderShippingProof(
+      sale.orderId,
+      {},
+      {
+        recipient: {
+          customerName: "Flow Buyer Draft",
+          customerPhone: "090-0000-0000",
+          shippingAddress: "Tokyo draft delivery note",
+          externalOrderNo: `SO_DRAFT_${runId}`,
+        },
+      }
+    );
+    await expect(
+      prisma.customerOrder.findUniqueOrThrow({ where: { id: sale.orderId } })
+    ).resolves.toMatchObject({
+      customerName: "Flow Buyer Draft",
+      customerPhone: "090-0000-0000",
+      shippingAddress: "Tokyo draft delivery note",
+      externalOrderNo: `SO_DRAFT_${runId}`,
+      orderStatus: "CONFIRMED",
+    });
+
     await markOrderShipped(sale.orderId, {
       trackingNo: `TRK_${runId}`,
+      recipient: {
+        customerName: "Flow Buyer Updated",
+        customerPhone: "090-1234-5678",
+        shippingAddress: "Tokyo anonymous delivery note",
+        externalOrderNo: `SO_UPDATED_${runId}`,
+      },
     });
 
     await expectLotQuantity(lot.id, "1");
@@ -215,6 +244,10 @@ describe("purchase to profit business flow", () => {
       include: { lines: { include: { allocations: true } } },
     });
     expect(order.orderStatus).toBe("SHIPPED");
+    expect(order.customerName).toBe("Flow Buyer Updated");
+    expect(order.customerPhone).toBe("090-1234-5678");
+    expect(order.shippingAddress).toBe("Tokyo anonymous delivery note");
+    expect(order.externalOrderNo).toBe(`SO_UPDATED_${runId}`);
     expect(order.subtotal.toString()).toBe("180");
     expect(order.platformFee.toString()).toBe("18");
     expect(order.shippingFee.toString()).toBe("12");
