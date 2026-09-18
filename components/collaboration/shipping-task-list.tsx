@@ -1,10 +1,12 @@
 "use client";
 import { showActionSuccess } from "@/components/feedback/action-feedback";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  getCollaborationShippingTasks,
+  getWarehouseCollaborationTaskInbox,
   claimCollaborationShippingTaskAction,
   saveCollaborationShippingPreparationAction,
   assignCollaborationShippingTaskAction,
@@ -32,6 +34,7 @@ import {
   MapPin,
   PackageCheck,
   RotateCcw,
+  RefreshCw,
   Settings2,
   Undo2,
   Upload,
@@ -39,6 +42,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getShippingTaskTiming } from "@/lib/application/shipping-task-timing";
+
+import { useVisibleRefresh } from "@/components/notifications/use-visible-refresh";
+import { mergeShippingDraft } from "@/lib/application/shipping-draft-sync";
 
 type WarehouseTaskView = Omit<CollaborationShippingTask, "assigneeName"> & {
   assigneeName: string | null;
@@ -68,12 +74,14 @@ const OUTCOME_MESSAGES: Record<string, string> = {
 };
 
 export function ShippingTaskList({
-  tasks,
+  tasks: serverTasks,
   mode = "portal",
 }: {
   tasks: WarehouseTaskView[];
   mode?: "portal" | "workbench";
 }) {
+  const [tasks, setTasks] = useState(serverTasks);
+  useEffect(() => setTasks(serverTasks), [serverTasks]);
   const router = useRouter();
   const params = useSearchParams();
   const initialTask = params.get("task");
@@ -110,6 +118,8 @@ export function ShippingTaskList({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [transferTargetId, setTransferTargetId] = useState("");
   const [withdrawReason, setWithdrawReason] = useState("");
   const [shipmentChecked, setShipmentChecked] = useState(false);
@@ -139,23 +149,67 @@ export function ShippingTaskList({
     0
   );
 
+  const baseline = useRef<{ id: string; access: string; form: typeof form } | null>(null);
+  // Ignore responses started before a selection, upload, action or server update.
+  const syncContext = useRef({ selectedId, uploading, pending, serverTasks });
+  if (
+    syncContext.current.selectedId !== selectedId ||
+    syncContext.current.uploading !== uploading ||
+    syncContext.current.pending !== pending ||
+    syncContext.current.serverTasks !== serverTasks
+  ) syncContext.current = { selectedId, uploading, pending, serverTasks };
+
+  const refreshTasks = useVisibleRefresh(async () => {
+    if (uploading || pending) return;
+    const context = syncContext.current;
+    setRefreshing(true);
+    setSyncError(null);
+    try {
+      const fresh = mode === "portal"
+        ? await getCollaborationShippingTasks()
+        : await getWarehouseCollaborationTaskInbox();
+      if (syncContext.current === context) setTasks(fresh);
+    } catch {
+      if (syncContext.current === context) {
+        setSyncError("资料更新失败，已保留当前内容，请点击更新资料重试。");
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, {
+    intervalMs: null,
+    refreshKey: `${mode}:${selectedId}:${uploading}:${pending}`,
+  });
+
   useEffect(() => {
-    if (!selected) return;
-    setTransferTargetId("");
-    setWithdrawReason("");
-    setShipmentChecked(false);
-    setForm({
+    if (!selected) {
+      baseline.current = null;
+      return;
+    }
+    const next = {
       trackingNo: selected.order.trackingNo || "",
       shipper: selected.order.shippingProof.shipper || selected.assigneeName || "",
       shippingMethod: selected.order.shippingProof.shippingMethod || "",
       pickupCode: selected.order.shippingProof.pickupCode || "",
       proofNote: selected.order.shippingProof.proofNote || "",
       imageUrls: selected.order.shippingProof.imageUrls || [],
-    });
+    };
+    const previous = baseline.current;
+    const access = `${selected.status}:${selected.assignedToId}:${selected.order.recipientVisible}`;
+    if (previous?.id === selected.id && previous.access === access) {
+      setForm((current) => mergeShippingDraft(current, previous.form, next));
+    } else {
+      setTransferTargetId("");
+      setWithdrawReason("");
+      setShipmentChecked(false);
+      setForm(next);
+    }
+    baseline.current = { id: selected.id, access, form: next };
   }, [selected]);
 
   function choose(task: WarehouseTaskView) {
     if (uploading || pending) return;
+    if (mode === "workbench" && selectedId === task.id) void refreshTasks();
     setSelectedId((current) => (mode === "portal" && current === task.id ? "" : task.id));
     setError(null);
     setNotice(null);
@@ -633,6 +687,18 @@ export function ShippingTaskList({
                     <p className="mt-1 text-xs text-muted-foreground">
                       双方可提供二维码、付款码或取件截图。拍照上传后立即保存并通知货主，点击图片可查看原图；实际寄出后再确认发货。
                     </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      disabled={refreshing || uploading || pending}
+                      onClick={() => void refreshTasks()}
+                    >
+                      <RefreshCw className={cn("mr-2 h-4 w-4", refreshing && "animate-spin")} />
+                      {refreshing ? "更新中…" : "更新资料"}
+                    </Button>
+                    {syncError ? <p role="alert" className="mt-2 text-xs text-destructive">{syncError}</p> : null}
                   </div>
                   {selected.status === "IN_PROGRESS" && selected.isAssignedToMe !== false ? (
                     <div className="flex flex-wrap gap-2">
