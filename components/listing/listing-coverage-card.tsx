@@ -70,17 +70,6 @@ function withReturnTo(href: string, returnTo: string) {
   return `${href}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-function primaryLocationLabel(product: ListingCoverageProduct, focusLocationId?: string) {
-  const focused = focusLocationId
-    ? product.sellableLocations.find((location) => location.locationId === focusLocationId)
-    : null;
-  if (focused) return `${focused.code} · ${focused.name}`;
-  const primary = product.sellableLocations[0];
-  if (primary) return `${primary.code} · ${primary.name}`;
-  const unit = product.itemUnits.find((item) => item.sellable);
-  return unit?.locationName ?? "未确认可售仓";
-}
-
 function shortVariantName(parentName: string, variantName: string) {
   const trimmed = (
     variantName.startsWith(parentName) ? variantName.slice(parentName.length) : variantName
@@ -794,12 +783,6 @@ export function ListingCoverageCard({
               <div className="relative z-10 flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl">
                 <div className="flex flex-wrap items-start justify-between gap-4 border-b px-5 py-4">
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <ProductImage
-                      key={`${detailProduct.skuId}:${detailProduct.imageUrl ?? ""}`}
-                      src={detailProduct.imageUrl}
-                      alt={detailProduct.skuName}
-                      className="h-14 w-14 shrink-0 rounded-lg"
-                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="truncate text-base font-semibold tracking-tight">
@@ -865,12 +848,7 @@ export function ListingCoverageCard({
                   <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-muted/35 px-3 py-2.5">
                     <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-foreground">
-                        {palletLabel} · {primaryLocationLabel(detailProduct, focusLocationId)}
-                      </p>
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        库存归属按仓库物理所在地；可配送国家由仓库能力和线路另行判断
-                      </p>
+                      <p className="text-xs font-medium text-foreground">{palletLabel}</p>
                     </div>
                     {detailRisks.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
@@ -935,7 +913,7 @@ export function ListingCoverageCard({
                                 </p>
                                 {activeCount === 0 ? (
                                   <Badge
-                                    variant="outline"
+                                    variant="destructive"
                                     className="h-5 shrink-0 px-1.5 text-[10px]"
                                   >
                                     未上架
@@ -963,9 +941,6 @@ export function ListingCoverageCard({
                       <div className="mb-3 flex items-start justify-between gap-3">
                         <div>
                           <h3 className="text-sm font-semibold">新品库存</h3>
-                          <p className="mt-0.5 text-[10px] text-muted-foreground">
-                            批量库存与 SKU 级平台上架
-                          </p>
                         </div>
                         <span className="shrink-0 text-[10px] text-muted-foreground">
                           按当前规格统计
@@ -1000,7 +975,7 @@ export function ListingCoverageCard({
                           <div>
                             <h4 className="text-xs font-semibold">新品上架平台</h4>
                             <p className="mt-0.5 text-[10px] text-muted-foreground">
-                              {detailProduct.platforms.length} 个目标平台，仅统计新品库存
+                              {detailProduct.platforms.length} 个目标平台
                             </p>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -1009,11 +984,12 @@ export function ListingCoverageCard({
                                 已上架 {detailNewStockSummary.activeListingCount}
                               </Badge>
                             ) : (
-                              <Badge variant="outline" className="h-5 text-[10px]">
+                              <Badge variant="destructive" className="h-5 text-[10px]">
                                 未上架
                               </Badge>
                             )}
-                            {detailNewStockSummary.pendingListingCount > 0 ? (
+                            {detailNewStockSummary.activeListingCount > 0 &&
+                            detailNewStockSummary.pendingListingCount > 0 ? (
                               <StockMetricBadge
                                 label="待平台"
                                 value={detailNewStockSummary.pendingListingCount}
@@ -1031,11 +1007,7 @@ export function ListingCoverageCard({
                               </li>
                             ))}
                           </ul>
-                        ) : (
-                          <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                            当前规格暂无未售出的新品上架记录
-                          </p>
-                        )}
+                        ) : null}
 
                         {detailProduct.sellableLotQty > 0 &&
                         detailNewStockSummary.pendingListingCount > 0 ? (
@@ -1062,9 +1034,11 @@ export function ListingCoverageCard({
                             每一件独立显示库存与平台上架
                           </p>
                         </div>
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          可售 {detailSellableUnits.length}
-                        </span>
+                        {detailProduct.itemUnits.length > 0 ? (
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            可售 {detailSellableUnits.length}
+                          </span>
+                        ) : null}
                       </div>
                       {detailProduct.hasItemUnits && detailProduct.itemUnits.length > 0 ? (
                         <SellableItemUnitsList

@@ -3,11 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import Decimal from "decimal.js";
 import { getStoreStockBreakdown } from "@/lib/application/inventory";
-import {
-  CORE_SELLING_PLATFORM_CODES,
-  isCoreSellingPlatform,
-  sortCoreSellingPlatforms,
-} from "@/lib/core-platforms";
+import { sortSellingPlatforms } from "@/lib/core-platforms";
 import type { ProductLifecycleStage } from "@/lib/application/next-actions";
 import { LIFECYCLE_LABELS } from "@/lib/application/next-actions";
 
@@ -151,9 +147,9 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
 
   const stockMap = await getStoreStockBreakdown(storeId);
   const platforms = await prisma.platform.findMany({
-    where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
+    where: { storeId },
   });
-  const corePlatforms = sortCoreSellingPlatforms(platforms);
+  const corePlatforms = sortSellingPlatforms(platforms);
 
   const lotIds = skus.flatMap((s) => s.inventoryLots.map((l) => l.id));
 
@@ -216,8 +212,6 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
       }
 
       for (const listing of sku.listings) {
-        if (!isCoreSellingPlatform(listing.platform.code)) continue;
-
         platformSet.set(listing.platform.id, {
           code: listing.platform.code,
           name: listing.platform.name,
@@ -230,12 +224,10 @@ export async function getSkuCardOverviews(storeId: string): Promise<SkuCardProdu
       const newStatus = listingStatusLabel(platformSet.size > 0, locType, newStockCount);
 
       const usedItems = sku.itemUnits.map((item, idx) => {
-        const platforms = item.listings
-          .map((l) => ({
-            code: l.platform.code,
-            name: l.platform.name,
-          }))
-          .filter((platform) => isCoreSellingPlatform(platform.code));
+        const platforms = item.listings.map((l) => ({
+          code: l.platform.code,
+          name: l.platform.name,
+        }));
         for (const platform of platforms) {
           itemPlatformSet.set(platform.code, platform);
         }

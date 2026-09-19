@@ -1,3 +1,4 @@
+import { sortSellingPlatforms } from "@/lib/core-platforms";
 import { describe, expect, it } from "vitest";
 import {
   buildSellableMarketSummaries,
@@ -11,6 +12,30 @@ import {
 } from "@/lib/application/sellable-market";
 
 describe("sellable market rules", () => {
+  it("includes configured Rakuten alongside Mercari in Japanese listing targets", () => {
+    const configured = [
+      { code: "RAKUTEN", country: "JP" },
+      { code: "MERCARI", country: "JP" },
+    ];
+    const targets = sortSellingPlatforms(
+      configured.filter((platform) => isPlatformTargetForMarket(platform, "JP"))
+    );
+    expect(targets.map((platform) => platform.code)).toEqual(["MERCARI", "RAKUTEN"]);
+    expect(isPlatformTargetForMarket({ code: "RAKUTEN", country: null }, "JP")).toBe(true);
+    expect(isPlatformTargetForMarket({ code: "RAKUTEN", country: "JP" }, "CN")).toBe(false);
+  });
+  it("keeps arbitrary configured platforms when their market matches", () => {
+    const platforms = [
+      { code: "NEW_JP_PLATFORM", country: "JP" },
+      { code: "NEW_CN_PLATFORM", country: "CN" },
+      { code: "NEW_GLOBAL_PLATFORM", country: "GLOBAL" },
+    ];
+    expect(
+      sortSellingPlatforms(platforms)
+        .filter((p) => isPlatformTargetForMarket(p, "JP"))
+        .map((p) => p.code)
+    ).toEqual(["NEW_GLOBAL_PLATFORM", "NEW_JP_PLATFORM"]);
+  });
   it("infers the sellable market from structured location region first", () => {
     expect(inferMarketFromLocation({ region: "JP_TOKYO", code: "WH-1", name: "仓库" })).toBe("JP");
     expect(

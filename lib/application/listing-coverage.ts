@@ -1,9 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import {
-  CORE_SELLING_PLATFORM_CODES,
-  isCoreSellingPlatform,
-  sortCoreSellingPlatforms,
-} from "@/lib/core-platforms";
+import { sortSellingPlatforms } from "@/lib/core-platforms";
 import { getStoreStockBreakdown, type StockLocationBreakdown } from "@/lib/application/inventory";
 import {
   buildSellableMarketSummaries,
@@ -712,7 +708,7 @@ export async function getListingCoverageProducts(storeId: string) {
     activeFulfillmentItemAllocations,
   ] = await Promise.all([
     prisma.platform.findMany({
-      where: { storeId, code: { in: [...CORE_SELLING_PLATFORM_CODES] } },
+      where: { storeId },
       select: { id: true, name: true, code: true, country: true },
     }),
     getListingRows(storeId),
@@ -793,7 +789,7 @@ export async function getListingCoverageProducts(storeId: string) {
     }),
   ]);
 
-  const corePlatforms = sortCoreSellingPlatforms(platforms);
+  const corePlatforms = sortSellingPlatforms(platforms);
   const drafts = new Map<string, ProductDraft>();
   const skuCatalogById = new Map(
     skus.map((sku) => {
@@ -1096,8 +1092,6 @@ export async function getListingCoverageProducts(storeId: string) {
   }
 
   for (const listing of listings) {
-    if (!isCoreSellingPlatform(listing.platform.code)) continue;
-
     const sku = listing.sku ?? listing.itemUnit?.sku;
     if (!sku) continue;
 
