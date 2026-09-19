@@ -14,7 +14,11 @@ import {
   TrendingUp,
 } from "lucide-react";
 import type { OperatingReport } from "@/lib/application/operating-report";
-import { reportMoney, sumReportMoney } from "@/lib/application/operating-report-math";
+import {
+  averageOrderValue,
+  reportMoney,
+  sumReportMoney,
+} from "@/lib/application/operating-report-math";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Table,
@@ -95,6 +99,7 @@ export function OperatingDashboard({
       ["口径", "订单贡献利润，非企业净利润；运费未确认时为参考值。主体费用及物流支出独立列示。"],
       ["指标", "金额 CNY", "范围"],
       ["销售收入", s.revenue, period],
+      ["客单价", averageOrderValue(s.revenue, s.orderCount), period],
       ["订单贡献利润", s.profit, period],
       ["已售商品成本", s.cost, period],
       ["平台费", s.platformFee, period],
@@ -240,13 +245,19 @@ export function OperatingDashboard({
       >
         {tab === "overview" && (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <Metric
                 title="销售收入"
                 value={reportMoney(s.revenue)}
                 description={`${s.orderCount} 笔成交订单 · 查看销售明细`}
                 onClick={() => changeTab("sales")}
                 highlight
+              />
+              <Metric
+                title="客单价"
+                value={reportMoney(averageOrderValue(s.revenue, s.orderCount))}
+                description="所选期间销售收入 ÷ 成交订单数"
+                onClick={() => changeTab("sales")}
               />
               <Metric
                 title="订单贡献利润"

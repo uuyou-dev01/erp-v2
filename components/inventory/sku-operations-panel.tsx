@@ -1,3 +1,4 @@
+import { PagedRecords } from "./paged-records";
 import {
   BarChart3,
   CircleDollarSign,
@@ -232,7 +233,7 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                 label="平均毛利"
                 value={
                   averages.averageGrossProfit
-                    ? formatCurrency(averages.averageGrossProfit, profitCurrency)
+                    ? formatCurrency(averages.averageGrossProfit, salesCurrency)
                     : "-"
                 }
                 subtext={averages.grossMarginRate ? `${averages.grossMarginRate}%` : "尚不能计算"}
@@ -513,36 +514,20 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                   </span>
                 </div>
                 <div className="p-4">
-                  {sku.reference.recentSalesLines.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <Table className="min-w-[620px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>订单</TableHead>
-                            <TableHead>平台</TableHead>
-                            <TableHead>数量</TableHead>
-                            <TableHead>金额</TableHead>
-                            <TableHead>日期</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {sku.reference.recentSalesLines.map((line) => (
-                            <TableRow key={line.id}>
-                              <TableCell className="font-medium">{line.orderNumber}</TableCell>
-                              <TableCell>{line.platformName ?? "未记录"}</TableCell>
-                              <TableCell>{formatQuantity(line.quantity)}</TableCell>
-                              <TableCell>
-                                {formatCurrency(line.lineAmount, line.currency)}
-                              </TableCell>
-                              <TableCell>{formatDateLabel(line.orderDate)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ) : (
-                    <EmptyRows>暂无销售记录</EmptyRows>
-                  )}
+                  <PagedRecords
+                    headings={["订单", "客户", "平台", "数量", "金额", "日期"]}
+                    rows={sku.reference.recentSalesLines.map((line) => ({
+                      id: line.id,
+                      cells: [
+                        line.orderNumber,
+                        line.customerName ?? "未记录客户",
+                        line.platformName ?? "未记录",
+                        formatQuantity(line.quantity),
+                        formatCurrency(line.lineAmount, line.currency),
+                        formatDateLabel(line.orderDate),
+                      ],
+                    }))}
+                  />
                 </div>
               </div>
 
@@ -557,36 +542,19 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                   </span>
                 </div>
                 <div className="p-4">
-                  {sku.reference.recentPurchaseLines.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <Table className="min-w-[620px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>采购单</TableHead>
-                            <TableHead>状态</TableHead>
-                            <TableHead>数量</TableHead>
-                            <TableHead>金额</TableHead>
-                            <TableHead>日期</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {sku.reference.recentPurchaseLines.map((line) => (
-                            <TableRow key={line.id}>
-                              <TableCell className="font-medium">{line.orderNo}</TableCell>
-                              <TableCell>{line.status}</TableCell>
-                              <TableCell>{formatQuantity(line.quantity)}</TableCell>
-                              <TableCell>
-                                {formatCurrency(line.lineAmount, line.currency)}
-                              </TableCell>
-                              <TableCell>{formatDateLabel(line.orderedAt)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ) : (
-                    <EmptyRows>暂无采购记录</EmptyRows>
-                  )}
+                  <PagedRecords
+                    headings={["采购单", "状态", "数量", "金额", "日期"]}
+                    rows={sku.reference.recentPurchaseLines.map((line) => ({
+                      id: line.id,
+                      cells: [
+                        line.orderNo,
+                        line.status,
+                        formatQuantity(line.quantity),
+                        formatCurrency(line.lineAmount, line.currency),
+                        formatDateLabel(line.orderedAt),
+                      ],
+                    }))}
+                  />
                 </div>
               </div>
             </div>
@@ -598,9 +566,13 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                   利润与成本匹配
                 </h3>
                 <span className="rounded-md border border-blue-100 bg-white/80 px-2 py-1 text-xs text-slate-600">
-                  未匹配 {sku.analysis.profitOverview.pendingCostLineCount} 笔
+                  待核算 {sku.analysis.profitOverview.pendingCostLineCount} 笔
                 </span>
               </div>
+              <p className="px-4 pt-3 text-xs text-muted-foreground">
+                统一折算
+                CNY；仅统计成本完整匹配的销售，缺少成本或汇率的记录暂不计入。毛利未扣除平台费及运费。
+              </p>
               <div className="grid gap-2 p-4 sm:grid-cols-4">
                 <OperationMetric
                   label="已匹配销售额"

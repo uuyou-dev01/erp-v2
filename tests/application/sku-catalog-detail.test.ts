@@ -501,6 +501,7 @@ async function createOrderWithLine(
         quantity: "1",
         unitCost: options.allocationCost,
         costAmount: options.allocationCost,
+        costCurrency: "CNY",
         status: "SHIPPED",
       },
     });

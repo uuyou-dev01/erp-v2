@@ -1,3 +1,5 @@
+import { salesDateFilter } from "@/lib/application/sales-date-filter";
+import { reportDay } from "@/lib/application/operating-report-math";
 import { shippingTaskStatusLabels } from "@/lib/application/order-shipping-progress";
 import Link from "next/link";
 import {
@@ -71,6 +73,12 @@ const fulfillmentModeLabels: Record<string, string> = {
 type OrderRow = Awaited<ReturnType<typeof getCustomerOrders>>[number];
 
 type SalesSearchParams = {
+  period?: string;
+  from?: string;
+  to?: string;
+  month?: string;
+  weekday?: string;
+  page?: string;
   q?: string;
   view?: string;
   mode?: string;
@@ -181,9 +189,11 @@ export default async function SalesPage({
       .length,
   };
 
+  const dateFilter = salesDateFilter(params);
   const orders = allOrders.filter((order) => {
     const state = orderStates.get(order.id)!;
     return (
+      dateFilter.matches(order.orderDate) &&
       orderMatchesSalesWorkbenchView(order, view) &&
       (!mode || state.businessMode === mode) &&
       (!status || order.orderStatus === status) &&
@@ -192,7 +202,15 @@ export default async function SalesPage({
     );
   });
 
+  const pages = Math.max(1, Math.ceil(orders.length / 25));
+  const page = Math.min(pages, Math.max(1, Math.floor(Number(params.page) || 1)));
+  const pageOrders = orders.slice((page - 1) * 25, page * 25);
   const currentParams: SalesSearchParams = {
+    period: params.period,
+    from: params.from,
+    to: params.to,
+    month: params.month,
+    weekday: params.weekday,
     q: query || undefined,
     view: view === "all" ? undefined : view,
     mode: mode || undefined,
@@ -354,7 +372,9 @@ export default async function SalesPage({
     },
   ];
 
-  const hasFilters = Boolean(query || mode || status || params.platform || view !== "all");
+  const hasFilters = Boolean(
+    query || mode || status || params.platform || params.period || params.weekday || view !== "all"
+  );
 
   return (
     <div className="space-y-4">
@@ -406,9 +426,38 @@ export default async function SalesPage({
         })}
       </nav>
 
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[
+          [
+            "本周订单量",
+            allOrders.filter(
+              (o) =>
+                reportDay(o.orderDate) >= dateFilter.monday &&
+                reportDay(o.orderDate) <= dateFilter.today
+            ).length,
+          ],
+          [
+            "本月订单量",
+            allOrders.filter(
+              (o) =>
+                reportDay(o.orderDate) >= `${dateFilter.today.slice(0, 7)}-01` &&
+                reportDay(o.orderDate) <= dateFilter.today
+            ).length,
+          ],
+          ["选定时间订单量", allOrders.filter((o) => dateFilter.matches(o.orderDate)).length],
+        ].map(([label, count]) => (
+          <div key={label} className="rounded-lg border p-4">
+            <p className="text-xs text-muted-foreground">{label}</p>
+            <p className="mt-1 text-xl font-semibold">{count} 单</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        订单量按下单日期（北京时间）统计，含所有状态；星期筛选可叠加时间范围。列表同时应用业务、状态及平台筛选。
+      </p>
       <form
         method="get"
-        className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3 lg:flex-row lg:items-center"
+        className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3 lg:flex-row lg:flex-wrap lg:items-center"
       >
         {view !== "all" ? <input type="hidden" name="view" value={view} /> : null}
         <div className="relative min-w-0 flex-1">
@@ -457,6 +506,54 @@ export default async function SalesPage({
             </option>
           ))}
         </Select>
+        <Select
+          name="period"
+          defaultValue={params.period ?? ""}
+          aria-label="时间范围"
+          className="lg:w-36"
+        >
+          <option value="">全部时间</option>
+          <option value="today">今天</option>
+          <option value="week">本周</option>
+          <option value="month">本月</option>
+          <option value="selectedMonth">指定月份</option>
+          <option value="custom">指定日期范围</option>
+        </Select>
+        <Input
+          type="month"
+          name="month"
+          defaultValue={params.month}
+          aria-label="指定月份"
+          className="lg:w-40"
+        />
+        <Input
+          type="date"
+          name="from"
+          defaultValue={params.from}
+          aria-label="开始日期"
+          className="lg:w-40"
+        />
+        <span className="text-xs text-muted-foreground">至</span>
+        <Input
+          type="date"
+          name="to"
+          defaultValue={params.to}
+          aria-label="结束日期"
+          className="lg:w-40"
+        />
+        <Select
+          name="weekday"
+          defaultValue={params.weekday ?? ""}
+          aria-label="星期"
+          className="lg:w-32"
+        >
+          <option value="">全部星期</option>
+          {["日", "一", "二", "三", "四", "五", "六"].map((day, i) => (
+            <option key={i} value={i}>
+              星期{day}
+            </option>
+          ))}
+        </Select>
         <Button type="submit" variant="secondary" size="sm">
           筛选
         </Button>
@@ -469,6 +566,11 @@ export default async function SalesPage({
         ) : null}
       </form>
 
+      {dateFilter.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {dateFilter.error}
+        </p>
+      )}
       <section
         className="overflow-hidden rounded-lg border bg-background"
         aria-labelledby="sales-order-list-title"
@@ -479,13 +581,14 @@ export default async function SalesPage({
               订单列表
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              当前显示 {orders.length} / {allOrders.length} 单
+              当前显示 {pageOrders.length} 单 · 筛选结果 {orders.length} 单 · 全部{" "}
+              {allOrders.length} 单
             </p>
           </div>
         </div>
         <ResponsiveTable
           columns={columns}
-          data={orders}
+          data={pageOrders}
           keyExtractor={(order) => order.id}
           emptyState={
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
@@ -506,6 +609,19 @@ export default async function SalesPage({
             </div>
           }
         />
+        <div className="flex items-center justify-between border-t p-3 text-sm">
+          <span>
+            第 {page} / {pages} 页
+          </span>
+          <div className="flex gap-3">
+            {page > 1 && (
+              <Link href={buildSalesHref(currentParams, { page: String(page - 1) })}>上一页</Link>
+            )}
+            {page < pages && (
+              <Link href={buildSalesHref(currentParams, { page: String(page + 1) })}>下一页</Link>
+            )}
+          </div>
+        </div>
       </section>
     </div>
   );

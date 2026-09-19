@@ -81,3 +81,8 @@ export function reportCsv(rows: Array<Array<string | number | null>>) {
       .join("\r\n")
   );
 }
+
+export function averageOrderValue(revenue: string | null, orderCount: number): string | null {
+  if (revenue === null) return null;
+  return orderCount > 0 ? new Decimal(revenue).div(orderCount).toFixed(2) : "0.00";
+}

@@ -307,7 +307,9 @@ export function ListingCoverageCard({
         hasItemUnits: selectedVariant.scopedItemUnits.length > 0,
       }
     : product;
-  const detailRecords = selectedVariant ? selectedVariant.scopedRecords : product.records;
+  const detailRecords = (selectedVariant ? selectedVariant.scopedRecords : product.records).filter(
+    (record) => record.status !== "SOLD_OUT"
+  );
   const detailSkuListingRecords = detailRecords.filter(
     (record) => record.listingScope !== "ITEM_UNIT"
   );
@@ -1014,7 +1016,7 @@ export function ListingCoverageCard({
                           </ul>
                         ) : (
                           <p className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                            当前规格的新品库存尚未建立上架记录
+                            当前规格暂无未售出的新品上架记录
                           </p>
                         )}
 
@@ -1052,7 +1054,7 @@ export function ListingCoverageCard({
                           units={detailProduct.itemUnits}
                           anchorId={`units-${detailProduct.skuId}`}
                           product={detailProduct}
-                          records={detailProduct.records}
+                          records={detailRecords}
                           returnTo={currentHref}
                           onAddListing={(unitId) =>
                             openAdd(undefined, {

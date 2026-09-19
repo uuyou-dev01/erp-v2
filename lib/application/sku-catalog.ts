@@ -1,3 +1,4 @@
+import { buildSkuProfitOverview } from "./sku-profit-overview";
 import { prisma } from "@/lib/prisma";
 import { getStoreStockBreakdown, type SkuStockBreakdown } from "@/lib/application/inventory";
 import { deriveCatalogRole, type SkuCatalogRole } from "@/lib/application/sku-identity";
@@ -557,6 +558,7 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
     recentSalesLines: Array<{
       id: string;
       orderNumber: string;
+      customerName: string | null;
       quantity: string;
       unitPrice: string | null;
       lineAmount: string;
@@ -940,9 +942,21 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
       },
       include: {
         sku: { select: { id: true, code: true } },
-        allocations: { select: { costAmount: true, itemUnitId: true, lotId: true } },
+        allocations: {
+          select: {
+            costAmount: true,
+            costCurrency: true,
+            quantity: true,
+            status: true,
+            itemUnitId: true,
+            lotId: true,
+            inventoryLot: { select: { costCurrency: true, costStatus: true, receivedAt: true } },
+            itemUnit: { select: { costCurrency: true, costStatus: true, createdAt: true } },
+          },
+        },
         order: {
           select: {
+            customerName: true,
             orderNumber: true,
             orderDate: true,
             currency: true,
@@ -984,8 +998,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     }),
     prisma.purchaseLine.findMany({
       where: { skuId: { in: metricSkuIds } },
-      take: 5,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ purchaseOrder: { orderedAt: "desc" } }, { createdAt: "desc" }],
       include: {
         purchaseOrder: {
           select: {
@@ -1061,6 +1074,7 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
   const purchaseMetrics = computeSkuPurchaseMetrics(allPurchaseLines);
   const marginMetrics = computeSkuMarginMetrics(salesMetrics, purchaseMetrics);
   const analysis = buildSkuDetailAnalysis({
+    profitOverview: await buildSkuProfitOverview(sku.storeId, salesLines),
     stockBreakdown,
     listings: activeListings,
     historicalListings,
@@ -1134,9 +1148,10 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
         orderedAt:
           (line.purchaseOrder.orderedAt ?? line.purchaseOrder.createdAt)?.toISOString() ?? null,
       })),
-      recentSalesLines: salesLines.slice(0, 5).map((line) => ({
+      recentSalesLines: salesLines.map((line) => ({
         id: line.id,
         orderNumber: line.order.orderNumber,
+        customerName: line.order.customerName,
         quantity: line.quantity.toString(),
         unitPrice: line.unitPrice?.toString() ?? null,
         lineAmount: line.lineAmount.toString(),
@@ -1269,6 +1284,7 @@ function buildSkuInventorySections(input: {
 }
 
 function buildSkuDetailAnalysis(input: {
+  profitOverview: SkuCatalogDetail["analysis"]["profitOverview"];
   stockBreakdown: SkuStockBreakdown;
   listings: Array<{
     id: string;
@@ -1345,20 +1361,9 @@ function buildSkuDetailAnalysis(input: {
     }
   >();
 
-  let salesAmount = new Decimal(0);
-  let costMatchedSalesAmount = new Decimal(0);
-  let allocatedInventoryCost = new Decimal(0);
-  let fulfilledLineCount = 0;
-  let pendingCostLineCount = 0;
-  let profitCurrency: string | null = null;
-
   for (const line of input.salesLines) {
     const qty = new Decimal(line.quantity.toString());
     const amount = new Decimal(line.lineAmount.toString());
-    const allocationCost = line.allocations.reduce(
-      (sum, allocation) => sum.plus(new Decimal(allocation.costAmount.toString())),
-      new Decimal(0)
-    );
     const platform = line.order.platform ?? { name: "未记录平台", code: "UNKNOWN" };
     const current = platformBuckets.get(platform.code) ?? {
       platformName: platform.name,
@@ -1377,26 +1382,12 @@ function buildSkuDetailAnalysis(input: {
       current.currency = line.order.currency;
     }
     platformBuckets.set(platform.code, current);
-
-    salesAmount = salesAmount.plus(amount);
-    if (!profitCurrency) profitCurrency = line.order.currency;
-    if (allocationCost.gt(0)) {
-      fulfilledLineCount += 1;
-      costMatchedSalesAmount = costMatchedSalesAmount.plus(amount);
-      allocatedInventoryCost = allocatedInventoryCost.plus(allocationCost);
-    } else {
-      pendingCostLineCount += 1;
-    }
   }
 
   const salesTimeline = buildSkuSalesTimeline(input.salesLines, input.historicalListings);
   const listingLifecycle = buildListingLifecycle(input.salesLines, input.historicalListings);
   const listingSellThrough = buildListingSellThrough(listingLifecycle);
   const skuAverages = buildSkuAverageMetrics(input.salesLines, input.purchaseLines);
-  const grossProfit = costMatchedSalesAmount.minus(allocatedInventoryCost);
-  const profitRate = costMatchedSalesAmount.gt(0)
-    ? grossProfit.div(costMatchedSalesAmount).mul(100).toFixed(1)
-    : "0.0";
 
   return {
     inventoryDistribution: {
@@ -1450,16 +1441,7 @@ function buildSkuDetailAnalysis(input: {
         currency: platform.currency,
         lastSoldAt: platform.lastSoldAt.toISOString(),
       })),
-    profitOverview: {
-      salesAmount: salesAmount.toFixed(2),
-      costMatchedSalesAmount: costMatchedSalesAmount.toFixed(2),
-      allocatedInventoryCost: allocatedInventoryCost.toFixed(2),
-      grossProfit: grossProfit.toFixed(2),
-      profitRate,
-      fulfilledLineCount,
-      pendingCostLineCount,
-      currency: profitCurrency,
-    },
+    profitOverview: input.profitOverview,
     salesVelocity: buildSalesVelocity(input.salesLines),
     salesTimeline,
     listingLifecycle,
