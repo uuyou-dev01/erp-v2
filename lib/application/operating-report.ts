@@ -462,6 +462,29 @@ export async function getOperatingReport(storeId: string, organizationId: string
   const validSales = sales.filter((row) => row.included);
   const total = (rows: ReportRow[]) =>
     sumReportMoney(rows.filter((row) => row.included).map((row) => row.money.base));
+  const summarizeSales = (rows: ReportSale[]) => ({
+    revenue: total(rows),
+    cost: sumReportMoney(rows.map((row) => row.cost)),
+    platformFee: sumReportMoney(rows.map((row) => row.platformFee)),
+    shippingFee: sumReportMoney(rows.map((row) => row.shippingFee)),
+    profit: sumReportMoney(rows.map((row) => row.profit)),
+    orderCount: rows.length,
+  });
+  const salesByDay = new Map<string, ReportSale[]>();
+  for (const sale of validSales) {
+    const rows = salesByDay.get(sale.date) ?? [];
+    rows.push(sale);
+    salesByDay.set(sale.date, rows);
+  }
+  const daily = [];
+  for (
+    const cursor = new Date(`${range.from}T00:00:00Z`);
+    cursor.toISOString().slice(0, 10) <= range.to;
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  ) {
+    const date = cursor.toISOString().slice(0, 10);
+    daily.push({ date, ...summarizeSales(salesByDay.get(date) ?? []) });
+  }
   const monthly = [];
   for (
     let cursor = new Date(`${range.from.slice(0, 7)}-01T00:00:00Z`);
@@ -470,15 +493,7 @@ export async function getOperatingReport(storeId: string, organizationId: string
   ) {
     const month = cursor.toISOString().slice(0, 7);
     const rows = validSales.filter((row) => row.date.startsWith(month));
-    monthly.push({
-      month,
-      revenue: total(rows),
-      cost: sumReportMoney(rows.map((row) => row.cost)),
-      platformFee: sumReportMoney(rows.map((row) => row.platformFee)),
-      shippingFee: sumReportMoney(rows.map((row) => row.shippingFee)),
-      profit: sumReportMoney(rows.map((row) => row.profit)),
-      orderCount: rows.length,
-    });
+    monthly.push({ month, ...summarizeSales(rows) });
   }
   const platforms = Array.from(new Set(validSales.map((row) => row.detail))).map((name) => {
     const rows = validSales.filter((row) => row.detail === name);
@@ -514,6 +529,7 @@ export async function getOperatingReport(storeId: string, organizationId: string
     charges: chargeRows,
     settlements: settlementRows,
     monthly,
+    daily,
     platforms,
     stockLocations,
     summary: {

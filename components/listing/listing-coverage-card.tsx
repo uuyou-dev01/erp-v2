@@ -792,33 +792,42 @@ export function ListingCoverageCard({
             <div className="fixed inset-0 z-[900] flex items-end justify-center p-3 sm:items-center sm:p-4">
               <div className="absolute inset-0 bg-black/45" onClick={() => setDetailsOpen(false)} />
               <div className="relative z-10 flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl">
-                <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="truncate text-base font-semibold tracking-tight">
-                        {detailProduct.skuName}
-                      </h2>
-                      <Badge variant="secondary" className="h-5 text-[10px]">
-                        {productKindLabel(kind)}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                      {detailProduct.skuCode && detailProduct.skuCode !== detailProduct.skuName ? (
-                        <span className="font-mono">SKU {detailProduct.skuCode}</span>
-                      ) : null}
-                      {detailProduct.brand ? <span>{detailProduct.brand}</span> : null}
-                      <span className={detailProduct.category ? undefined : "text-amber-700"}>
-                        {detailProduct.category || "品类待补充"}
-                      </span>
-                      {detailProduct.referencePrice ? (
-                        <span>
-                          参考{" "}
-                          {formatCurrency(
-                            detailProduct.referencePrice,
-                            detailProduct.referenceCurrency ?? "CNY"
-                          )}
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b px-5 py-4">
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <ProductImage
+                      key={`${detailProduct.skuId}:${detailProduct.imageUrl ?? ""}`}
+                      src={detailProduct.imageUrl}
+                      alt={detailProduct.skuName}
+                      className="h-14 w-14 shrink-0 rounded-lg"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="truncate text-base font-semibold tracking-tight">
+                          {detailProduct.skuName}
+                        </h2>
+                        <Badge variant="secondary" className="h-5 text-[10px]">
+                          {productKindLabel(kind)}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                        {detailProduct.skuCode &&
+                        detailProduct.skuCode !== detailProduct.skuName ? (
+                          <span className="font-mono">SKU {detailProduct.skuCode}</span>
+                        ) : null}
+                        {detailProduct.brand ? <span>{detailProduct.brand}</span> : null}
+                        <span className={detailProduct.category ? undefined : "text-amber-700"}>
+                          {detailProduct.category || "品类待补充"}
                         </span>
-                      ) : null}
+                        {detailProduct.referencePrice ? (
+                          <span>
+                            参考{" "}
+                            {formatCurrency(
+                              detailProduct.referencePrice,
+                              detailProduct.referenceCurrency ?? "CNY"
+                            )}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -905,6 +914,7 @@ export function ListingCoverageCard({
                               key={variant.skuId}
                               type="button"
                               onClick={() => setSelectedVariantSkuId(variant.skuId)}
+                              aria-pressed={isSelected}
                               className={cn(
                                 "min-w-0 rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
                                 isSelected
@@ -912,8 +922,15 @@ export function ListingCoverageCard({
                                   : "bg-background/80 hover:bg-muted/50"
                               )}
                             >
-                              <div className="flex min-w-0 items-start justify-between gap-1.5">
-                                <p className="min-w-0 truncate font-medium leading-5">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <ProductImage
+                                  key={`${variant.skuId}:${variant.imageUrl ?? product.imageUrl ?? ""}`}
+                                  src={variant.imageUrl ?? product.imageUrl}
+                                  alt={shortVariantName(product.skuName, variant.skuName)}
+                                  size="sm"
+                                  className="shrink-0 rounded-md"
+                                />
+                                <p className="min-w-0 flex-1 truncate font-medium leading-5">
                                   {shortVariantName(product.skuName, variant.skuName)}
                                 </p>
                                 {activeCount === 0 ? (

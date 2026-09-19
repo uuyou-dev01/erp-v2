@@ -1,134 +1,58 @@
 "use client";
-
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import { Box, Search } from "lucide-react";
-import type { SkuCatalogDisplayGroup } from "@/lib/application/catalog-display-groups";
-import { buildSkuCatalogDisplayGroups } from "@/lib/application/catalog-display-groups";
-import type { SkuCatalogListItem } from "@/lib/application/sku-catalog";
+import { useRouter } from "next/navigation";
+import { Box, Search, ChevronDown, ChevronRight } from "lucide-react";
+import Decimal from "decimal.js";
 import {
-  catalogStatusLabel,
-} from "@/lib/application/sku-catalog";
-import type { SkuCatalogRole } from "@/lib/application/sku-identity";
-import { SkuCatalogRowActions } from "@/components/inventory/sku-catalog-row-actions";
+  buildSkuCatalogDisplayGroups,
+  type SkuCatalogDisplayGroup,
+} from "@/lib/application/catalog-display-groups";
+import {
+  catalogPriceRanges,
+  combineCatalogOperations,
+  type CatalogPrice,
+} from "@/lib/application/catalog-operations";
+import type { SkuCatalogListItem } from "@/lib/application/sku-catalog";
+import { SkuCatalogRowActions } from "./sku-catalog-row-actions";
+import { bulkUpdateSkuCatalogAction } from "@/app/actions/skus";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { ProductImage } from "@/components/ui/product-image";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatCurrency } from "@/lib/decimal";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatCurrency, formatQuantity } from "@/lib/decimal";
 
+type Period = { range: string; from: string; to: string; error: string | null };
 interface SkuCatalogGridProps {
   items: SkuCatalogListItem[];
+  period?: Period;
+  initialView?: "stock" | "business";
 }
-
-type CatalogBusiness = SkuCatalogListItem["business"];
-
-function formatDate(value: string | null) {
-  if (!value) return "—";
+function dateLabel(date: string) {
   return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
+    timeZone: "Asia/Shanghai",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date(value));
+  }).format(new Date(date));
 }
-
-function money(value: string | null, currency?: string | null) {
-  return value ? formatCurrency(value, currency || "CNY") : "—";
+function Prices({ values, empty }: { values: CatalogPrice[]; empty: string }) {
+  const ranges = catalogPriceRanges(values);
+  return ranges.length ? (
+    <>
+      {ranges.map((v) => (
+        <p key={v.currency} className="whitespace-nowrap tabular-nums">
+          {formatCurrency(v.min, v.currency)}
+          {v.min !== v.max ? ` ～ ${formatCurrency(v.max, v.currency)}` : ""}
+        </p>
+      ))}
+    </>
+  ) : (
+    <span className="text-xs text-muted-foreground">{empty}</span>
+  );
 }
-
-function weightedAverage(
-  items: SkuCatalogListItem[],
-  valueKey: "averageSalePrice",
-  weightKey: "salesCount"
-) {
-  let amount = 0;
-  let weight = 0;
-  for (const item of items) {
-    const value = Number(item.business[valueKey]);
-    const itemWeight = Number(item.business[weightKey]);
-    if (!Number.isFinite(value) || !Number.isFinite(itemWeight) || itemWeight <= 0) {
-      continue;
-    }
-    amount += value * itemWeight;
-    weight += itemWeight;
-  }
-  return weight > 0 ? (amount / weight).toFixed(2) : null;
-}
-
-function summarizeGroup(group: SkuCatalogDisplayGroup): CatalogBusiness {
-  if (!group.isDisplayGroup) return group.head.business;
-
-  const items = group.variantItems.length ? group.variantItems : [group.head];
-  const latestItem =
-    [...items]
-      .filter((item) => item.business.lastSoldAt)
-      .sort(
-        (a, b) =>
-          new Date(b.business.lastSoldAt ?? 0).getTime() -
-          new Date(a.business.lastSoldAt ?? 0).getTime()
-      )[0] ?? items[0];
-  const salesCount = items.reduce((sum, item) => sum + item.business.salesCount, 0);
-  const salesAmount = items
-    .reduce((sum, item) => sum + Number(item.business.salesAmount || 0), 0)
-    .toFixed(2);
-  const averageSalePrice = weightedAverage(items, "averageSalePrice", "salesCount");
-  const purchaseSource =
-    items.find((item) => item.business.averagePurchasePrice)?.business ?? group.head.business;
-  const averagePurchasePrice = purchaseSource.averagePurchasePrice;
-  const purchaseCurrency = purchaseSource.purchaseCurrency;
-  const saleCurrency = latestItem.business.salesCurrency;
-  const canComputeMargin =
-    averageSalePrice &&
-    averagePurchasePrice &&
-    (!saleCurrency || !purchaseCurrency || saleCurrency === purchaseCurrency);
-  const grossProfitPerUnit = canComputeMargin
-    ? (Number(averageSalePrice) - Number(averagePurchasePrice)).toFixed(2)
-    : null;
-  const grossMarginRate =
-    canComputeMargin && Number(averageSalePrice) > 0
-      ? (((Number(averageSalePrice) - Number(averagePurchasePrice)) / Number(averageSalePrice)) * 100).toFixed(1)
-      : null;
-
-  return {
-    sellableQty: "0",
-    inTransitQty: "0",
-    activeListingCount: 0,
-    latestSalePrice: latestItem.business.latestSalePrice,
-    averageSalePrice,
-    salesCurrency: saleCurrency,
-    salesCount,
-    salesAmount,
-    lastSoldAt: latestItem.business.lastSoldAt,
-    averagePurchasePrice,
-    purchaseCurrency,
-    grossProfitPerUnit,
-    grossMarginRate,
-    primaryPlatformName:
-      items.find((item) => item.business.primaryPlatformName)?.business.primaryPlatformName ??
-      null,
-    primaryPlatformCode:
-      items.find((item) => item.business.primaryPlatformCode)?.business.primaryPlatformCode ??
-      null,
-  };
-}
-
-function marginTone(rate: string | null) {
-  if (!rate) return "text-muted-foreground";
-  const value = Number(rate);
-  if (!Number.isFinite(value)) return "text-muted-foreground";
-  if (value < 0) return "text-red-600";
-  if (value < 15) return "text-amber-700";
-  return "text-emerald-700";
-}
-
 function words(value: string) {
   return value
     .replace(/[·・|/：:()（）]/g, " ")
@@ -173,298 +97,591 @@ function compactVariantName(group: SkuCatalogDisplayGroup, variant: SkuCatalogLi
   return raw;
 }
 
-function roleLabel(group: SkuCatalogDisplayGroup) {
-  if (group.head.catalogRole === "GROUP" || group.isSeries) return "商品组";
-  if (group.head.catalogRole === "VARIANT") return "规格 SKU";
-  return "独立 SKU";
-}
-
-function groupMatchesRole(group: SkuCatalogDisplayGroup, role: "all" | SkuCatalogRole) {
-  if (role === "all") return true;
-  if (role === "GROUP") return group.head.catalogRole === "GROUP" || group.isSeries;
-  if (role === "VARIANT") return group.variantItems.length > 0 || group.head.catalogRole === "VARIANT";
-  return !group.isSeries && group.head.catalogRole === "SIMPLE";
-}
-
-export function SkuCatalogGrid({ items }: SkuCatalogGridProps) {
+export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCatalogGridProps) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
-  const [catalogStatus, setCatalogStatusFilter] = useState<
-    "all" | "active" | "disabled"
-  >("all");
-  const [catalogRole, setCatalogRoleFilter] = useState<"all" | SkuCatalogRole>("all");
-  const [brand, setBrand] = useState("all");
-  const [category, setCategory] = useState("all");
-
-  const brands = useMemo(
-    () => [...new Set(items.map((i) => i.brand).filter(Boolean))] as string[],
-    [items]
-  );
-  const categories = useMemo(
-    () => [...new Set(items.map((i) => i.category).filter(Boolean))] as string[],
-    [items]
-  );
-
+  const [status, setStatus] = useState("active");
+  const [brand, setBrand] = useState("");
+  const [category, setCategory] = useState("");
+  const [view, setView] = useState<"stock" | "business">(initialView);
+  const [range, setRange] = useState(period?.range ?? "30d");
+  const [page, setPage] = useState(1);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMode, setBulkMode] = useState<"disabled" | "category" | null>(null);
+  const [bulkCategory, setBulkCategory] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const brands = [...new Set(items.flatMap((i) => (i.brand ? [i.brand] : [])))].sort();
+  const categories = [...new Set(items.flatMap((i) => (i.category ? [i.category] : [])))].sort();
   const grouped = useMemo(() => buildSkuCatalogDisplayGroups(items), [items]);
-
-  const filteredGroups = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return grouped.filter((group) => {
-      if (!groupMatchesRole(group, catalogRole)) return false;
-      const candidates = [group.head, ...group.variantItems];
-      const matchesFilters = candidates.some((item) => {
-        if (catalogStatus !== "all" && item.catalogStatus !== catalogStatus) return false;
-        if (brand !== "all" && item.brand !== brand) return false;
-        if (category !== "all" && item.category !== category) return false;
-        return true;
-      });
-      if (!matchesFilters) return false;
-      if (!q) return true;
-      return candidates.some((item) => {
-        return (
-          item.code.toLowerCase().includes(q) ||
-          item.name.toLowerCase().includes(q) ||
-          (item.manufacturerCode || "").toLowerCase().includes(q) ||
-          (item.variantLabel || "").toLowerCase().includes(q) ||
-          (item.brand || "").toLowerCase().includes(q) ||
-          (item.category || "").toLowerCase().includes(q) ||
-          (item.series || "").toLowerCase().includes(q)
-        );
-      });
+  const filtered = useMemo(
+    () =>
+      grouped.flatMap((group) => {
+        const q = query.trim().toLocaleLowerCase();
+        const textMatches = (i: SkuCatalogListItem) =>
+          [i.name, i.code, i.manufacturerCode, i.variantLabel, i.brand, i.category, i.series]
+            .filter(Boolean)
+            .join(" ")
+            .toLocaleLowerCase()
+            .includes(q);
+        const matches = (i: SkuCatalogListItem) =>
+          (!status || i.catalogStatus === status) &&
+          (!brand || i.brand === brand) &&
+          (!category || i.category === category) &&
+          (!q || textMatches(i) || textMatches(group.head));
+        if (group.variantItems.length) {
+          const variants = group.variantItems.filter(matches);
+          return variants.length ? [{ ...group, variantItems: variants }] : [];
+        }
+        return matches(group.head) ? [group] : [];
+      }),
+    [grouped, query, status, brand, category]
+  );
+  const pages = Math.max(1, Math.ceil(filtered.length / 25));
+  const current = Math.min(page, pages);
+  const visible = filtered.slice((current - 1) * 25, current * 25);
+  const idsFor = (group: SkuCatalogDisplayGroup) => [
+    ...new Set([
+      ...(group.isDisplayGroup ? [] : [group.head.id]),
+      ...group.variantItems.map((v) => v.id),
+    ]),
+  ];
+  const pageIds = [...new Set(visible.flatMap(idsFor))];
+  const resetPage = () => {
+    setPage(1);
+    setSelected(new Set());
+  };
+  const toggle = (ids: string[]) =>
+    setSelected((previous) => {
+      const next = new Set(previous);
+      const all = ids.every((id) => next.has(id));
+      ids.forEach((id) => (all ? next.delete(id) : next.add(id)));
+      return next;
     });
-  }, [grouped, query, catalogStatus, catalogRole, brand, category]);
-
+  const updateBulk = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await bulkUpdateSkuCatalogAction({
+        ids: [...selected],
+        ...(bulkMode === "category" ? { category: bulkCategory } : { status: "disabled" as const }),
+      });
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
+      setNotice(`已更新 ${selected.size} 个档案。`);
+      setSelected(new Set());
+      setBulkMode(null);
+      router.refresh();
+    } catch {
+      setError("更新失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const renderData = (rows: SkuCatalogListItem[]) => {
+    const metrics = combineCatalogOperations(
+      rows.flatMap((i) => (i.operations ? [i.operations] : []))
+    );
+    const qty = rows.reduce((sum, i) => sum.plus(i.business.sellableQty), new Decimal(0));
+    const transit = rows.reduce((sum, i) => sum.plus(i.business.inTransitQty), new Decimal(0));
+    const profit = new Decimal(metrics.matchedRevenue).minus(metrics.matchedCost);
+    const rate = new Decimal(metrics.matchedRevenue).gt(0)
+      ? profit.div(metrics.matchedRevenue).mul(100).toFixed(1)
+      : null;
+    return (
+      <>
+        {view === "stock" ? (
+          <>
+            <TableCell className="text-right tabular-nums">
+              <p className={qty.gt(0) ? "font-medium" : "text-muted-foreground"}>
+                {formatQuantity(qty.toString())} 件
+              </p>
+              {transit.gt(0) && (
+                <p className="text-xs text-muted-foreground">
+                  在途 {formatQuantity(transit.toString())} 件
+                </p>
+              )}
+            </TableCell>
+            <TableCell>
+              <p className="max-w-44 text-sm">{metrics.platforms.join("、") || "未上架"}</p>
+            </TableCell>
+          </>
+        ) : (
+          <>
+            <TableCell className="text-right">
+              <Prices values={metrics.purchasePrices} empty="暂无有效采购" />
+            </TableCell>
+            <TableCell className="text-right">
+              <Prices values={metrics.salePrices} empty="期间无成交" />
+            </TableCell>
+          </>
+        )}
+        <TableCell className="text-right tabular-nums">
+          <p className="font-medium">{formatQuantity(metrics.soldQty)} 件</p>
+          <p className="text-xs text-muted-foreground">{metrics.orderIds.length} 单</p>
+        </TableCell>
+        <TableCell className="text-right tabular-nums">
+          {metrics.latest ? (
+            <>
+              <p className="whitespace-nowrap">
+                {formatCurrency(metrics.latest.price, metrics.latest.currency)}
+              </p>
+              <p className="text-xs text-muted-foreground">{dateLabel(metrics.latest.date)}</p>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">期间无成交</span>
+          )}
+        </TableCell>
+        {view === "business" && (
+          <TableCell className="text-right tabular-nums">
+            {metrics.matchedLines > 0 ? (
+              <>
+                <p className={profit.lt(0) ? "text-red-600" : "font-medium"}>
+                  {formatCurrency(profit.toFixed(2), "CNY")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  毛利率 {rate === null ? "不适用" : `${rate}%`}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {metrics.pendingLines ? "待核算" : "期间无成交"}
+              </p>
+            )}
+            {metrics.pendingLines > 0 && (
+              <p className="text-xs text-amber-700">{metrics.pendingLines} 条明细待核算</p>
+            )}
+          </TableCell>
+        )}
+      </>
+    );
+  };
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border p-1" aria-label="商品视图">
+          {(
+            [
+              ["stock", "商品与库存"],
+              ["business", "经营数据"],
+            ] as const
+          ).map(([key, label]) => (
+            <Button
+              key={key}
+              size="sm"
+              variant={view === key ? "default" : "ghost"}
+              aria-pressed={view === key}
+              onClick={() => setView(key)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+        <form method="get" className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="view" value={view} />
+          <label htmlFor="catalog-period" className="text-xs text-muted-foreground">
+            销售统计
+          </label>
+          <select
+            id="catalog-period"
+            name="range"
+            value={range}
+            onChange={(e) => setRange(e.target.value)}
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+          >
+            <option value="30d">近30天</option>
+            <option value="90d">近90天</option>
+            <option value="month">本月</option>
+            <option value="custom">自定义日期</option>
+          </select>
+          {range === "custom" && (
+            <>
+              <Input
+                name="from"
+                type="date"
+                aria-label="开始日期"
+                defaultValue={period?.from}
+                required
+                className="w-40"
+              />
+              <span className="text-xs">至</span>
+              <Input
+                name="to"
+                type="date"
+                aria-label="结束日期"
+                defaultValue={period?.to}
+                required
+                className="w-40"
+              />
+            </>
+          )}
+          <Button type="submit" size="sm" variant="outline">
+            查询
+          </Button>
+        </form>
+      </div>
       <div className="rounded-lg border bg-card p-3">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="flex flex-wrap gap-2">
+          <div className="relative min-w-56 flex-1">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              className="h-9 pl-9"
-              placeholder="搜索商品组、规格、SKU、货号、品牌…"
+              aria-label="搜索商品"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                resetPage();
+              }}
+              placeholder="搜索商品、规格、编码或品牌"
+              className="pl-9"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              className="h-9 rounded-md border bg-background px-3 text-sm"
-              value={catalogRole}
-              onChange={(e) => setCatalogRoleFilter(e.target.value as "all" | SkuCatalogRole)}
+          <select
+            aria-label="档案状态"
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value);
+              resetPage();
+            }}
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="active">启用商品</option>
+            <option value="disabled">已停用</option>
+            <option value="">全部状态</option>
+          </select>
+          <select
+            aria-label="品牌"
+            value={brand}
+            onChange={(e) => {
+              setBrand(e.target.value);
+              resetPage();
+            }}
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">全部品牌</option>
+            {brands.map((b) => (
+              <option key={b}>{b}</option>
+            ))}
+          </select>
+          <select
+            aria-label="分类"
+            value={category}
+            onChange={(e) => {
+              setCategory(e.target.value);
+              resetPage();
+            }}
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">全部分类</option>
+            {categories.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+          {(query || brand || category || status !== "active") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setQuery("");
+                setBrand("");
+                setCategory("");
+                setStatus("active");
+                resetPage();
+              }}
             >
-              <option value="all">全部类型</option>
-              <option value="GROUP">商品组</option>
-              <option value="VARIANT">含规格 SKU</option>
-              <option value="SIMPLE">独立 SKU</option>
-            </select>
-            <select
-              className="h-9 rounded-md border bg-background px-3 text-sm"
-              value={catalogStatus}
-              onChange={(e) =>
-                setCatalogStatusFilter(e.target.value as typeof catalogStatus)
-              }
-            >
-              <option value="all">全部状态</option>
-              <option value="active">启用</option>
-              <option value="disabled">已停用</option>
-            </select>
-            {brands.length > 0 ? (
-              <select
-                className="h-9 rounded-md border bg-background px-3 text-sm"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-              >
-                <option value="all">全部品牌</option>
-                {brands.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {categories.length > 0 ? (
-              <select
-                className="h-9 rounded-md border bg-background px-3 text-sm"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              >
-                <option value="all">全部分类</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-          </div>
+              重置
+            </Button>
+          )}
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          共 {filteredGroups.length} 组档案；商品组用于聚合规格，业务单据请选择规格 SKU 或独立 SKU。
-        </p>
       </div>
-
-      {filteredGroups.length === 0 ? (
+      <p className="text-xs text-muted-foreground">
+        销售期间：{period ? `${period.from} 至 ${period.to}（北京时间）` : "所选期间"} ·
+        仅计有效成交订单；库存与在售平台为当前状态。商品组数据仅汇总筛选后可见的规格。
+      </p>
+      {period?.error && (
+        <p role="alert" className="text-sm text-amber-700">
+          {period.error}
+        </p>
+      )}
+      {view === "business" && (
+        <p className="rounded-md bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          采购均价按全部有效采购计算；销售均价按所选期间销售金额 ÷
+          件数计算，多规格展示各规格均价区间，各币种分别显示。毛利统一折算
+          CNY，仅计成本完整匹配的销售，未扣平台费和运费；待核算明细暂不计入。
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="text-sm text-emerald-700">
+          {notice}
+        </p>
+      )}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+          <span>已选 {selected.size} 个档案（含所选商品的可见规格）</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setError(null);
+              setBulkMode("category");
+            }}
+          >
+            批量分类
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setError(null);
+              setBulkMode("disabled");
+            }}
+          >
+            批量停用
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            取消选择
+          </Button>
+        </div>
+      )}
+      {!filtered.length ? (
         <EmptyState
           icon={Box}
-          title="暂无商品档案"
-          description={
-            items.length === 0
-              ? "添加第一个商品，系统会根据是否有多个规格引导创建。"
-              : "没有符合筛选条件的商品。"
-          }
-          actionHref={items.length === 0 ? "/inventory/skus/new" : undefined}
-          actionLabel={items.length === 0 ? "新增商品" : undefined}
+          title="没有符合条件的商品"
+          description="调整搜索或筛选条件，或新增商品档案。"
         />
       ) : (
         <div className="overflow-hidden rounded-lg border bg-card">
-          <Table className="min-w-[1180px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="min-w-[320px]">商品档案</TableHead>
-                <TableHead className="min-w-[120px]">层级 / 状态</TableHead>
-                <TableHead className="text-right">参考价</TableHead>
-                <TableHead className="text-right">平均进货价</TableHead>
-                <TableHead className="text-right">近销价</TableHead>
-                <TableHead className="text-right">均售价</TableHead>
-                <TableHead className="text-right">成交</TableHead>
-                <TableHead className="text-right">毛利率</TableHead>
-                <TableHead>主销平台</TableHead>
-                <TableHead className="text-right">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredGroups.map((group) => {
-                const head = group.head;
-                const business = summarizeGroup(group);
-                const visibleVariants = group.variantItems.slice(0, 3);
-                const hiddenVariantCount = Math.max(
-                  group.variantItems.length - visibleVariants.length,
-                  0
-                );
-                const salesCurrency = business.salesCurrency || head.currency || "CNY";
-                const purchaseCurrency =
-                  business.purchaseCurrency || head.currency || salesCurrency;
-                const referenceCurrency = head.currency || salesCurrency;
-
-                return (
-                  <TableRow key={group.key}>
-                    <TableCell>
-                      <div className="flex min-w-0 gap-3">
-                        <ProductImage
-                          src={head.imageUrl}
-                          alt={head.name}
-                          className="h-10 w-10 shrink-0"
-                        />
-                        <div className="min-w-0">
-                          {group.isDisplayGroup ? (
-                            <span className="font-medium">{group.displayName}</span>
-                          ) : (
-                            <Link
-                              href={`/inventory/skus/${head.id}`}
-                              className="font-medium hover:text-primary hover:underline"
-                            >
-                              {group.displayName}
-                            </Link>
-                          )}
-                          <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                            {group.displayCode}
-                          </p>
-                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {group.displayMeta || "未设置品牌 / 分类"}
-                          </p>
-                          {visibleVariants.length > 0 ? (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              {visibleVariants.map((variant) => (
-                                <Link
-                                  key={variant.id}
-                                  href={`/inventory/skus/${variant.id}`}
+          <div className="max-h-[65vh] overflow-auto">
+            <table className="w-full min-w-[980px] text-sm">
+              <TableHeader className="sticky top-0 z-10 bg-slate-50 shadow-sm">
+                <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="选择本页商品及规格"
+                      checked={pageIds.length > 0 && pageIds.every((id) => selected.has(id))}
+                      onChange={() => toggle(pageIds)}
+                    />
+                  </TableHead>
+                  <TableHead className="min-w-72">商品 / 规格</TableHead>
+                  <TableHead className="text-right">
+                    {view === "stock" ? "当前可售" : "采购均价 / 区间"}
+                  </TableHead>
+                  <TableHead className={view === "business" ? "text-right" : ""}>
+                    {view === "stock" ? "当前在售平台" : "期间均售价 / 区间"}
+                  </TableHead>
+                  <TableHead className="text-right">期间销量 / 订单</TableHead>
+                  <TableHead className="text-right">期间最近售价</TableHead>
+                  {view === "business" && (
+                    <TableHead className="text-right">已核算毛利 / 毛利率</TableHead>
+                  )}
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visible.map((group) => {
+                  const variants = group.variantItems;
+                  const dataRows = variants.length ? variants : [group.head];
+                  const open = expanded.has(group.key);
+                  const ids = idsFor(group);
+                  return (
+                    <Fragment key={group.key}>
+                      <TableRow>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            aria-label={`选择 ${group.displayName}`}
+                            checked={ids.every((id) => selected.has(id))}
+                            onChange={() => toggle(ids)}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <ProductImage
+                              src={group.head.imageUrl}
+                              alt={group.displayName}
+                              className="h-11 w-11 shrink-0 rounded-md"
+                            />
+                            <div className="min-w-0">
+                              {group.isDisplayGroup ? (
+                                <button
+                                  className="text-left font-medium hover:text-primary"
+                                  onClick={() =>
+                                    setExpanded((prev) => {
+                                      const n = new Set(prev);
+                                      if (n.has(group.key)) n.delete(group.key);
+                                      else n.add(group.key);
+                                      return n;
+                                    })
+                                  }
                                 >
-                                  <Badge
-                                    variant="outline"
-                                    className="max-w-[140px] truncate text-[10px]"
-                                  >
-                                    {compactVariantName(group, variant)}
-                                  </Badge>
+                                  {group.displayName}
+                                </button>
+                              ) : (
+                                <Link
+                                  className="font-medium hover:text-primary hover:underline"
+                                  href={`/inventory/skus/${group.head.id}`}
+                                >
+                                  {group.displayName}
                                 </Link>
-                              ))}
-                              {hiddenVariantCount > 0 ? (
-                                <Badge variant="secondary" className="text-[10px]">
-                                  +{hiddenVariantCount}
+                              )}
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {[group.head.brand, group.head.category]
+                                  .filter(Boolean)
+                                  .join(" · ")}{" "}
+                                <span className="ml-2" title={group.displayCode}>
+                                  {group.isDisplayGroup ? "" : group.displayCode}
+                                </span>
+                              </p>
+                              {variants.length === 1 && (
+                                <Link
+                                  href={`/inventory/skus/${variants[0].id}`}
+                                  className="mt-1 inline-block text-xs text-muted-foreground hover:text-primary"
+                                >
+                                  规格：{compactVariantName(group, variants[0])}
+                                </Link>
+                              )}
+                              {variants.length > 1 && (
+                                <button
+                                  className="mt-1 flex items-center gap-1 text-xs text-primary"
+                                  aria-expanded={open}
+                                  onClick={() =>
+                                    setExpanded((prev) => {
+                                      const n = new Set(prev);
+                                      if (n.has(group.key)) n.delete(group.key);
+                                      else n.add(group.key);
+                                      return n;
+                                    })
+                                  }
+                                >
+                                  {open ? (
+                                    <ChevronDown className="h-3 w-3" />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3" />
+                                  )}
+                                  {open ? "收起" : "展开"} {variants.length} 个规格
+                                </button>
+                              )}
+                              {group.head.catalogStatus === "disabled" && (
+                                <Badge variant="secondary" className="ml-2 text-[10px]">
+                                  已停用
                                 </Badge>
-                              ) : null}
+                              )}
                             </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col items-start gap-1">
-                        <Badge
-                          variant={group.isSeries ? "secondary" : "outline"}
-                          className="whitespace-nowrap"
-                        >
-                          {roleLabel(group)}
-                        </Badge>
-                        {group.isSeries ? (
-                          <Badge variant="outline" className="whitespace-nowrap">
-                            {group.variantLabel}
-                          </Badge>
-                        ) : null}
-                        <Badge
-                          variant={head.catalogStatus === "active" ? "default" : "secondary"}
-                          className="whitespace-nowrap"
-                        >
-                          {catalogStatusLabel(head.catalogStatus)}
-                        </Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      {money(head.referencePrice, referenceCurrency)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      {money(business.averagePurchasePrice, purchaseCurrency)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      {money(business.latestSalePrice, salesCurrency)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      {money(business.averageSalePrice, salesCurrency)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      <p className="font-medium">{business.salesCount} 次</p>
-                      <p className="text-xs text-muted-foreground">
-                        最近 {formatDate(business.lastSoldAt)}
-                      </p>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      <p className={`font-medium ${marginTone(business.grossMarginRate)}`}>
-                        {business.grossMarginRate ? `${business.grossMarginRate}%` : "—"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {business.grossProfitPerUnit
-                          ? money(business.grossProfitPerUnit, salesCurrency)
-                          : "单件 —"}
-                      </p>
-                    </TableCell>
-                    <TableCell className="max-w-[160px] truncate">
-                      {business.primaryPlatformName ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {group.isDisplayGroup ? (
-                        <span className="text-xs text-muted-foreground">
-                          查看具体 SKU
-                        </span>
-                      ) : (
-                        <SkuCatalogRowActions item={head} />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                          </div>
+                        </TableCell>
+                        {renderData(dataRows)}
+                        <TableCell className="text-right">
+                          {group.isDisplayGroup ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setExpanded((prev) => new Set([...prev, group.key]))}
+                            >
+                              查看规格
+                            </Button>
+                          ) : (
+                            <SkuCatalogRowActions item={group.head} />
+                          )}
+                        </TableCell>
+                      </TableRow>
+                      {open &&
+                        variants.length > 1 &&
+                        variants.map((variant) => (
+                          <TableRow key={variant.id} className="bg-muted/20">
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                aria-label={`选择规格 ${variant.name}`}
+                                checked={selected.has(variant.id)}
+                                onChange={() => toggle([variant.id])}
+                              />
+                            </TableCell>
+                            <TableCell className="pl-8">
+                              <Link
+                                className="font-medium hover:text-primary"
+                                href={`/inventory/skus/${variant.id}`}
+                              >
+                                {compactVariantName(group, variant)}
+                              </Link>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {variant.code}
+                                {variant.catalogStatus === "disabled" ? " · 已停用" : ""}
+                              </p>
+                            </TableCell>
+                            {renderData([variant])}
+                            <TableCell>
+                              <SkuCatalogRowActions item={variant} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t px-4 py-3 text-xs text-muted-foreground">
+            <span>
+              共 {filtered.length} 个商品 · 每页25个 · 第 {current} / {pages} 页
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={current === 1}
+                onClick={() => {
+                  setPage(current - 1);
+                  setSelected(new Set());
+                }}
+              >
+                上一页
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={current === pages}
+                onClick={() => {
+                  setPage(current + 1);
+                  setSelected(new Set());
+                }}
+              >
+                下一页
+              </Button>
+            </div>
+          </div>
         </div>
       )}
+      <ConfirmDialog
+        open={bulkMode !== null}
+        title={bulkMode === "category" ? "批量修改分类" : "批量停用商品"}
+        description={`将更新所选的 ${selected.size} 个档案。历史库存和业务记录会保留。`}
+        loading={busy}
+        error={error}
+        confirmDisabled={bulkMode === "category" && !bulkCategory.trim()}
+        onCancel={() => setBulkMode(null)}
+        onConfirm={updateBulk}
+      >
+        {bulkMode === "category" && (
+          <>
+            <Input
+              aria-label="目标分类"
+              placeholder="输入分类名称"
+              list="catalog-categories"
+              value={bulkCategory}
+              onChange={(e) => setBulkCategory(e.target.value)}
+            />
+            <datalist id="catalog-categories">
+              {categories.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

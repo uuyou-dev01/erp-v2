@@ -1,3 +1,9 @@
+import {
+  catalogMoneyBuckets,
+  combineCatalogOperations,
+  type CatalogOperations,
+} from "./catalog-operations";
+import { createStoreMoneyConverter } from "@/lib/fx";
 import { buildSkuProfitOverview } from "./sku-profit-overview";
 import { prisma } from "@/lib/prisma";
 import { getStoreStockBreakdown, type SkuStockBreakdown } from "@/lib/application/inventory";
@@ -320,6 +326,7 @@ export function resolveCoverImageUrl(meta: SkuCatalogMeta, fallback?: string | n
 }
 
 export interface SkuCatalogListItem {
+  operations?: CatalogOperations;
   id: string;
   code: string;
   name: string;
@@ -609,7 +616,10 @@ function firstImageFromPayload(value: unknown) {
   );
 }
 
-export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogListItem[]> {
+export async function getSkuCatalogList(
+  storeId: string,
+  period?: { dateFrom: Date; dateTo: Date }
+): Promise<SkuCatalogListItem[]> {
   const [skus, stockBreakdown, activeListings, salesLines, purchaseLines] = await Promise.all([
     prisma.sKU.findMany({
       where: { storeId },
@@ -639,16 +649,31 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
       where: { storeId, status: "ACTIVE" },
       select: {
         skuId: true,
+        platform: { select: { name: true } },
         itemUnit: { select: { skuId: true } },
       },
     }),
     prisma.orderLine.findMany({
       where: {
         sku: { storeId },
-        order: { orderStatus: { in: VALID_SALES_STATUSES } },
+        order: {
+          orderStatus: { in: VALID_SALES_STATUSES },
+          ...(period ? { orderDate: { gte: period.dateFrom, lte: period.dateTo } } : {}),
+        },
       },
       select: {
         skuId: true,
+        orderId: true,
+        allocations: {
+          select: {
+            quantity: true,
+            costAmount: true,
+            costCurrency: true,
+            status: true,
+            inventoryLot: { select: { costCurrency: true, costStatus: true, receivedAt: true } },
+            itemUnit: { select: { costCurrency: true, costStatus: true, createdAt: true } },
+          },
+        },
         quantity: true,
         lineAmount: true,
         order: {
@@ -682,10 +707,14 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
   ]);
 
   const activeListingsBySku = new Map<string, number>();
+  const activePlatformsBySku = new Map<string, Set<string>>();
   for (const listing of activeListings) {
     const skuId = listing.skuId ?? listing.itemUnit?.skuId;
     if (!skuId) continue;
     activeListingsBySku.set(skuId, (activeListingsBySku.get(skuId) ?? 0) + 1);
+    const platforms = activePlatformsBySku.get(skuId) ?? new Set<string>();
+    platforms.add(listing.platform.name);
+    activePlatformsBySku.set(skuId, platforms);
   }
   const salesBySku = new Map<string, typeof salesLines>();
   for (const line of salesLines) {
@@ -707,6 +736,51 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
     childSkuIdsByParent.set(sku.parentSkuId, childIds);
   }
 
+  const operationsBySku = new Map<string, CatalogOperations>();
+  if (period) {
+    const converter = await createStoreMoneyConverter(storeId);
+    await Promise.all(
+      skus
+        .filter((sku) => sku.catalogRole !== "GROUP")
+        .map(async (sku) => {
+          const sales = salesBySku.get(sku.id) ?? [];
+          const purchases = (purchasesBySku.get(sku.id) ?? []).filter(
+            (line) => !["DRAFT", "CANCELLED"].includes(line.purchaseOrder.status)
+          );
+          const profit = await buildSkuProfitOverview(storeId, sales, converter);
+          const latest = [...sales].sort(
+            (a, b) => b.order.orderDate.getTime() - a.order.orderDate.getTime()
+          )[0];
+          operationsBySku.set(sku.id, {
+            orderIds: [...new Set(sales.map((line) => line.orderId))],
+            soldQty: sales
+              .reduce((sum, line) => sum.plus(line.quantity.toString()), new Decimal(0))
+              .toString(),
+            platforms: [...(activePlatformsBySku.get(sku.id) ?? [])],
+            salePrices: catalogMoneyBuckets(
+              sales.map((line) => ({ ...line, currency: line.order.currency }))
+            ),
+            purchasePrices: catalogMoneyBuckets(
+              purchases.map((line) => ({ ...line, currency: line.purchaseOrder.currency }))
+            ),
+            latest:
+              latest && new Decimal(latest.quantity.toString()).gt(0)
+                ? {
+                    price: new Decimal(latest.lineAmount.toString())
+                      .div(latest.quantity.toString())
+                      .toFixed(2),
+                    currency: latest.order.currency,
+                    date: latest.order.orderDate.toISOString(),
+                  }
+                : null,
+            matchedRevenue: profit.costMatchedSalesAmount,
+            matchedCost: profit.allocatedInventoryCost,
+            matchedLines: profit.fulfilledLineCount,
+            pendingLines: profit.pendingCostLineCount,
+          });
+        })
+    );
+  }
   return skus.map((sku) => {
     const meta = parseSkuCatalogMeta(sku.attributes, sku.imageUrl);
     const childSkuIds = childSkuIdsByParent.get(sku.id) ?? [];
@@ -728,6 +802,13 @@ export async function getSkuCatalogList(storeId: string): Promise<SkuCatalogList
     );
     const marginMetrics = computeSkuMarginMetrics(salesMetrics, purchaseMetrics);
     return {
+      operations: period
+        ? combineCatalogOperations(
+            metricSkuIds.flatMap((id) =>
+              operationsBySku.get(id) ? [operationsBySku.get(id)!] : []
+            )
+          )
+        : undefined,
       id: sku.id,
       code: sku.code,
       name: sku.name,

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Eye, Loader2, Pencil, ShieldAlert, Trash2 } from "lucide-react";
+import { ArrowRight, Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -21,6 +21,7 @@ interface SkuCatalogRowActionsProps {
 
 export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
   const router = useRouter();
+  const [moreOpen, setMoreOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [disableOpen, setDisableOpen] = useState(false);
@@ -108,39 +109,56 @@ export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
   return (
     <>
       <div className="space-y-1 text-right">
-        <div className="flex justify-end gap-0.5">
-          <Link href={`/inventory/skus/${item.id}`} title="查看">
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <Eye className="h-4 w-4" />
-            </Button>
-          </Link>
-          <Link href={`/inventory/skus/${item.id}?edit=1`} title="编辑">
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <Pencil className="h-4 w-4" />
-            </Button>
-          </Link>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-red-600 hover:text-red-700"
-            title="删除"
-            onClick={openDeleteDialog}
-          >
-            <Trash2 className="h-4 w-4" />
+        <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/inventory/skus/${item.id}`}>详情</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/inventory/skus/${item.id}?edit=1`}>编辑</Link>
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2 text-xs"
-            disabled={toggling}
-            onClick={toggleStatus}
+            aria-label={`更多操作：${item.name}`}
+            onClick={() => setMoreOpen(true)}
           >
-            {item.catalogStatus === "active" ? "停用" : "启用"}
+            更多
           </Button>
         </div>
         {toggleError && <p className="text-xs text-destructive">{toggleError}</p>}
       </div>
 
+      <ConfirmDialog
+        open={moreOpen}
+        title="商品操作"
+        description={item.name}
+        hideConfirm
+        onCancel={() => setMoreOpen(false)}
+        onConfirm={() => {}}
+      >
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="outline"
+            disabled={toggling}
+            onClick={() => {
+              setMoreOpen(false);
+              void toggleStatus();
+            }}
+          >
+            {item.catalogStatus === "active" ? "停用档案" : "启用档案"}
+          </Button>
+          <Button
+            variant="outline"
+            className="text-red-600"
+            onClick={() => {
+              setMoreOpen(false);
+              void openDeleteDialog();
+            }}
+          >
+            删除档案
+          </Button>
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog
         open={disableOpen}
         title="确认停用 SKU"

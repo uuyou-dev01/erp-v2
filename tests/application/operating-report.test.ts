@@ -137,6 +137,54 @@ describe("operating report financial boundaries", () => {
     expect(sumReportMoney(result.sales.map((row) => row.profit))).toBe(result.summary.profit);
     expect(result.platforms[0].revenue).toBe(result.summary.revenue);
   });
+  it("groups daily sales by Beijing date, fills empty days and reconciles with monthly totals", async () => {
+    db.customerOrder.findMany.mockResolvedValue([
+      order({ orderDate: new Date("2026-08-31T16:00:00Z") }),
+      order({ id: "second", orderDate: new Date("2026-09-01T15:59:59Z") }),
+      order({ id: "next-day", orderDate: new Date("2026-09-01T16:00:00Z") }),
+      order({ id: "cancelled", orderStatus: "CANCELLED" }),
+    ]);
+    const result = await getOperatingReport("store-1", "org-1", range());
+    expect(result.daily).toHaveLength(14);
+    expect(result.daily[0]).toMatchObject({
+      date: "2026-09-01",
+      orderCount: 2,
+      revenue: "1000.00",
+    });
+    expect(result.daily[1]).toMatchObject({ date: "2026-09-02", orderCount: 1, revenue: "500.00" });
+    expect(result.daily[13]).toMatchObject({
+      date: "2026-09-14",
+      orderCount: 0,
+      revenue: "0.00",
+      profit: "0.00",
+    });
+    expect(result.daily.reduce((sum, row) => sum + row.orderCount, 0)).toBe(3);
+    for (const key of ["revenue", "cost", "platformFee", "shippingFee", "profit"] as const) {
+      expect(sumReportMoney(result.daily.map((row) => row[key]))).toBe(result.monthly[0][key]);
+    }
+  });
+  it("preserves unknown daily amounts and includes both ends of a cross-month range", async () => {
+    db.customerOrder.findMany.mockResolvedValue([
+      order({ orderDate: new Date("2026-09-30T16:00:00Z"), currency: "XXX" }),
+    ]);
+    const result = await getOperatingReport(
+      "store-1",
+      "org-1",
+      resolveReportRange({
+        range: "custom",
+        from: "2026-09-30",
+        to: "2026-10-01",
+      })
+    );
+    expect(result.daily).toHaveLength(2);
+    expect(result.daily[0]).toMatchObject({ date: "2026-09-30", revenue: "0.00", orderCount: 0 });
+    expect(result.daily[1]).toMatchObject({
+      date: "2026-10-01",
+      revenue: null,
+      profit: null,
+      orderCount: 1,
+    });
+  });
   it("keeps agent fee estimates separate from contribution profit", async () => {
     db.customerOrder.findMany.mockResolvedValue([order({ shippingProviderFeeRate: "0.02" })]);
     const result = await getOperatingReport("store-1", "org-1", range());

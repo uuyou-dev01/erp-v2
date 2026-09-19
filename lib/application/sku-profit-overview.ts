@@ -17,8 +17,12 @@ type ProfitLine = {
   }>;
 };
 
-export async function buildSkuProfitOverview(storeId: string, lines: ProfitLine[]) {
-  const converter = await createStoreMoneyConverter(storeId);
+export async function buildSkuProfitOverview(
+  storeId: string,
+  lines: ProfitLine[],
+  sharedConverter?: Awaited<ReturnType<typeof createStoreMoneyConverter>>
+) {
+  const converter = sharedConverter ?? (await createStoreMoneyConverter(storeId));
   let sales = new Decimal(0),
     matched = new Decimal(0),
     cost = new Decimal(0);

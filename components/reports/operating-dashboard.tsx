@@ -308,7 +308,7 @@ export function OperatingDashboard({
                 }
               >
                 <div className="p-4">
-                  <OperatingTrendChart rows={data.monthly} />
+                  <OperatingTrendChart rows={data.monthly} dailyRows={data.daily} />
                 </div>
               </Section>
               <Section title="收入如何形成利润" description="订单贡献口径 · CNY">
@@ -448,7 +448,7 @@ export function OperatingDashboard({
             )}
             <Section title="收入与利润趋势" description="与当前筛选期间一致 · CNY">
               <div className="p-4">
-                <OperatingTrendChart rows={data.monthly} />
+                <OperatingTrendChart rows={data.monthly} dailyRows={data.daily} />
               </div>
             </Section>
             <MonthlyTable data={data} />

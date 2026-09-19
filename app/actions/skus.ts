@@ -1491,3 +1491,49 @@ export async function deleteSKUAction(id: string) {
     return toActionFailure(error, "删除SKU失败，请重试");
   }
 }
+
+export async function bulkUpdateSkuCatalogAction(input: {
+  ids: string[];
+  status?: "disabled";
+  category?: string;
+}) {
+  try {
+    const context = await requireUserContext();
+    const ids = [...new Set(input.ids)];
+    if (!ids.length || ids.length > 500) throw new Error("每次请选择 1 至 500 个档案");
+    if ((input.status === "disabled") === Boolean(input.category?.trim()))
+      throw new Error("请选择一项批量操作");
+    const rows = await prisma.sKU.findMany({
+      where: { id: { in: ids }, storeId: context.activeStoreId },
+      select: { id: true, attributes: true },
+    });
+    if (rows.length !== ids.length) throw new Error("部分商品不存在或不属于当前店铺，请刷新后重试");
+    const category = input.category?.trim()
+      ? await resolveProductCategory({
+          organizationId: context.organizationId,
+          legacyName: input.category.trim(),
+        })
+      : null;
+    await prisma.$transaction(
+      rows.map((row) =>
+        prisma.sKU.update({
+          where: { id: row.id, storeId: context.activeStoreId },
+          data:
+            input.status === "disabled"
+              ? {
+                  attributes: mergeSkuCatalogAttributes(row.attributes, {
+                    catalogStatus: "disabled",
+                  }) as never,
+                }
+              : { categoryId: category!.id, category: category!.name },
+        })
+      )
+    );
+    revalidatePath("/inventory/skus");
+    revalidatePath("/inventory/sellable");
+    for (const id of ids) revalidatePath(`/inventory/skus/${id}`);
+    return actionSuccess({ count: ids.length });
+  } catch (error) {
+    return toActionFailure(error, "批量更新失败，请重试");
+  }
+}
