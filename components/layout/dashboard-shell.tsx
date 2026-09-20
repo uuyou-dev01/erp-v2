@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { PricingCalculatorProvider } from "@/components/inventory/pricing-calculator";
 import { CommandPalette } from "@/components/command/command-palette";
 
 function SidebarFallback() {
@@ -56,33 +57,35 @@ export function DashboardShell({
   }, []);
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-muted/30">
-      <Suspense fallback={<SidebarFallback />}>
-        <Sidebar
-          storeId={activeStoreId}
-          role={role}
-          mobileOpen={mobileMenuOpen}
-          onMobileClose={() => setMobileMenuOpen(false)}
-          collaboration={collaboration}
-          setupStatus={setupStatus}
-        />
-      </Suspense>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Header
-          role={role}
-          stores={stores}
-          activeStoreId={activeStoreId}
-          organizations={organizations}
-          activeOrganizationId={activeOrganizationId}
-          account={account}
-          onMenuClick={() => setMobileMenuOpen(true)}
-          onCommandOpen={() => setCommandOpen(true)}
-        />
-        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background p-4 md:p-6">
-          {children}
-        </main>
+    <PricingCalculatorProvider key={activeStoreId}>
+      <div className="flex h-dvh overflow-hidden bg-muted/30">
+        <Suspense fallback={<SidebarFallback />}>
+          <Sidebar
+            storeId={activeStoreId}
+            role={role}
+            mobileOpen={mobileMenuOpen}
+            onMobileClose={() => setMobileMenuOpen(false)}
+            collaboration={collaboration}
+            setupStatus={setupStatus}
+          />
+        </Suspense>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <Header
+            role={role}
+            stores={stores}
+            activeStoreId={activeStoreId}
+            organizations={organizations}
+            activeOrganizationId={activeOrganizationId}
+            account={account}
+            onMenuClick={() => setMobileMenuOpen(true)}
+            onCommandOpen={() => setCommandOpen(true)}
+          />
+          <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background p-4 md:p-6">
+            {children}
+          </main>
+        </div>
+        <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} role={role} />
       </div>
-      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} role={role} />
-    </div>
+    </PricingCalculatorProvider>
   );
 }

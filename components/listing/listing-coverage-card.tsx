@@ -16,6 +16,7 @@ import { ListingRecordCompactRow } from "@/components/listing/listing-record-com
 import { QuickAddListingDialog } from "@/components/listing/quick-add-listing-dialog";
 import { SellableItemUnitsList } from "@/components/listing/sellable-item-units-list";
 import { SellableStockBreakdown } from "@/components/listing/sellable-stock-breakdown";
+import { SkuLatestSale } from "@/components/listing/sku-latest-sale";
 import type {
   ItemUnitChannelSummary,
   ListingCoverageProduct,
@@ -1060,19 +1061,24 @@ export function ListingCoverageCard({
                           按当前规格统计
                         </span>
                       </div>
-                      <div className="mb-3 flex items-end gap-8 border-b pb-3">
-                        <div>
+                      <div className="mb-3 flex flex-wrap items-start gap-x-6 gap-y-3 border-b pb-3">
+                        <div className="shrink-0">
                           <p className="text-[10px] text-muted-foreground">现货</p>
                           <p className="mt-0.5 text-xl font-semibold tabular-nums">
                             {detailProduct.sellableLotQty}
                           </p>
                         </div>
-                        <div>
+                        <div className="shrink-0">
                           <p className="text-[10px] text-muted-foreground">在途</p>
                           <p className="mt-0.5 text-xl font-semibold tabular-nums">
                             {detailLotInTransitQty}
                           </p>
                         </div>
+                        <SkuLatestSale
+                          key={`${storeId}:${detailProduct.skuId}`}
+                          storeId={storeId}
+                          skuId={detailProduct.skuId}
+                        />
                       </div>
                       {detailProduct.sellableLotQty > 0 || detailLotInTransitQty > 0 ? (
                         <SellableStockBreakdown

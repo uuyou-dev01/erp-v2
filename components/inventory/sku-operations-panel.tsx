@@ -24,6 +24,8 @@ import Link from "next/link";
 import Decimal from "decimal.js";
 import { formatItemUnitCondition } from "@/lib/inventory/item-unit-display";
 import { itemConditionTypeLabel, itemFunctionStatusLabel } from "@/lib/inventory/item-condition";
+import { buildSkuPricingBasis } from "@/lib/application/sku-pricing";
+import { PricingCalculatorTrigger } from "@/components/inventory/pricing-calculator";
 
 interface SkuOperationsPanelProps {
   sku: SkuCatalogDetail;
@@ -171,6 +173,7 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
   const purchaseCurrency =
     averages.purchaseCurrency ?? sku.business.purchaseCurrency ?? sku.currency ?? "CNY";
   const saleSignal = buildSaleSignal(sku);
+  const pricingBasis = buildSkuPricingBasis(sku);
   const newStockQty = sku.inventorySections.newStockLots.reduce(
     (sum, lot) => sum.plus(lot.quantity),
     new Decimal(0)
@@ -196,6 +199,9 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
               </div>
               <div className="text-xs text-muted-foreground">
                 销售 {averages.salesCount} 笔 · 采购 {averages.purchaseCount} 笔
+                <span className="ml-3 inline-block">
+                  <PricingCalculatorTrigger basis={pricingBasis} name={sku.name} />
+                </span>
               </div>
             </div>
             <div className="grid divide-y bg-muted/15 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-3 xl:grid-cols-6">
@@ -352,6 +358,9 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
 
         {section === "inventory" ? (
           <div className="grid gap-4 xl:grid-cols-2">
+            <div className="flex justify-end xl:col-span-2">
+              <PricingCalculatorTrigger basis={pricingBasis} name={sku.name} />
+            </div>
             <div className="rounded-lg border border-slate-200 bg-white">
               <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/80 px-4 py-3">
                 <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-950">

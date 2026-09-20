@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   Box,
+  Calculator,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -23,6 +24,8 @@ import {
 import type { QueueCounts } from "@/lib/application/next-actions";
 import { operationsNavigation, settingsAreaRoutes, type NavItem } from "@/config/navigation";
 import { canUseQuickEntry, isNavigationHrefAllowed } from "@/lib/auth/permissions";
+
+import { usePricingCalculator } from "@/components/inventory/pricing-calculator";
 
 interface SidebarProps {
   mobileOpen?: boolean;
@@ -240,6 +243,7 @@ export function Sidebar({
     );
   };
 
+  const { openCalculator } = usePricingCalculator();
   const handleNavClick = () => onMobileClose?.();
 
   const settingsHref =
@@ -600,6 +604,22 @@ export function Sidebar({
           <Settings2 className={navIconClass(settingsActive)} />
           {!collapsed ? <span className="truncate">设置</span> : null}
         </Link>
+        <button
+          type="button"
+          aria-label="售价计算器"
+          title="售价计算器"
+          className={cn(
+            "mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            collapsed && "justify-center"
+          )}
+          onClick={() => {
+            handleNavClick();
+            openCalculator();
+          }}
+        >
+          <Calculator className="h-4 w-4 shrink-0 opacity-60" />
+          {!collapsed ? <span>售价计算器</span> : null}
+        </button>
       </div>
     </div>
   );
