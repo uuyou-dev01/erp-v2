@@ -35,6 +35,11 @@ import {
   buildProductStocktakeHref,
 } from "@/lib/application/inventory-dashboard";
 import { productKindLabel } from "@/lib/application/sku-catalog";
+import { isReplenishmentAlert, type ReplenishmentPolicy } from "@/lib/application/replenishment";
+import {
+  formatReplenishmentCoverage,
+  matchesReplenishmentVariant,
+} from "@/lib/application/replenishment-view";
 import { formatCurrency } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
 import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
@@ -56,6 +61,7 @@ interface ListingCoverageCardProps {
   focusLocationId?: string;
   focusMarket?: SellableMarketCode;
   categoryOptions?: string[];
+  replenishmentPolicy?: ReplenishmentPolicy;
 }
 
 function riskClassName(risk: ListingCoverageRisk) {
@@ -183,6 +189,7 @@ export function ListingCoverageCard({
   focusLocationId,
   focusMarket,
   categoryOptions = [],
+  replenishmentPolicy,
 }: ListingCoverageCardProps) {
   const [mounted, setMounted] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -193,12 +200,15 @@ export function ListingCoverageCard({
   const [addListingScope, setAddListingScope] = useState<"SKU" | "ITEM_UNIT" | undefined>();
   const [addItemUnitId, setAddItemUnitId] = useState<string | undefined>();
   const [selectedVariantSkuId, setSelectedVariantSkuId] = useState<string | null>(null);
+  const [allVariantsOpen, setAllVariantsOpen] = useState(false);
   const [quickEditTarget, setQuickEditTarget] = useState<SkuQuickEditTarget | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
 
   const kind = product.hasItemUnits && !product.hasLotStock ? "USED" : product.productKind;
   const currentHref = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+  const filterKey = searchParams.toString();
+  const variantFilters = Object.fromEntries(searchParams.entries());
   const displayPlatforms = focusMarket
     ? product.allPlatforms.filter((platform) => isPlatformTargetForMarket(platform, focusMarket))
     : product.platforms;
@@ -210,15 +220,24 @@ export function ListingCoverageCard({
       platforms: focusMarket ? product.allPlatforms : product.platforms,
       market: focusMarket,
       locationId: focusLocationId,
+      policy: replenishmentPolicy,
     })
   );
-  const defaultVariantView =
-    variantViews.find(
-      (variant) => variant.scopedSellableQty > 0 || variant.scopedInTransitQty > 0
-    ) ??
-    variantViews[0] ??
-    null;
-  const visibleVariantViews = variantViews.filter((variant) => variant.scopedSellableQty > 0);
+  const visibleVariantViews = variantViews
+    .filter(
+      (variant) =>
+        variant.scopedSellableQty > 0 ||
+        variant.scopedInTransitQty > 0 ||
+        isReplenishmentAlert(variant.replenishment)
+    )
+    .sort(
+      (a, b) =>
+        Number(matchesReplenishmentVariant(product, b, variantFilters)) -
+          Number(matchesReplenishmentVariant(product, a, variantFilters)) ||
+        (b.replenishment?.priority ?? 0) - (a.replenishment?.priority ?? 0) ||
+        b.scopedSellableQty - a.scopedSellableQty
+    );
+  const defaultVariantView = visibleVariantViews[0] ?? variantViews[0] ?? null;
   const selectedVariant =
     product.variantRows.length > 1
       ? (variantViews.find((variant) => variant.skuId === selectedVariantSkuId) ??
@@ -392,10 +411,26 @@ export function ListingCoverageCard({
   const fulfillmentLabels = [
     ...new Set(product.sellableLocations.flatMap((location) => location.fulfillableMarkets ?? [])),
   ].map(fulfillmentDestinationLabel);
-  const displayedVariantViews =
-    visibleVariantViews.length > 0 ? visibleVariantViews.slice(0, 2) : variantViews.slice(0, 2);
+  const orderedVariantViews = visibleVariantViews.length ? visibleVariantViews : variantViews;
+  const collapsedVariantViews = orderedVariantViews.slice(0, 2);
+  // Keep the current action target visible after collapsing the extra variants.
+  if (
+    selectedVariant &&
+    orderedVariantViews.some((variant) => variant.skuId === selectedVariant.skuId) &&
+    !collapsedVariantViews.some((variant) => variant.skuId === selectedVariant.skuId)
+  ) {
+    collapsedVariantViews[1] = selectedVariant;
+  }
+  const displayedVariantViews = allVariantsOpen ? orderedVariantViews : collapsedVariantViews;
+  const selectedReplenishment = selectedVariant?.replenishment;
+  const selectedNeedsReplenishment = isReplenishmentAlert(selectedReplenishment);
+  const replenishmentParams = new URLSearchParams(searchParams.toString());
+  replenishmentParams.set("view", "pools");
+  replenishmentParams.set("q", selectedVariant?.skuCode ?? product.skuCode);
+  ["page", "risk", "status", "unlisted"].forEach((key) => replenishmentParams.delete(key));
+  const replenishmentHref = `/inventory/sellable?${replenishmentParams.toString()}`;
   const hasVariantChildren = product.variantRows.some((variant) => variant.skuId !== product.skuId);
-  const skuCount = visibleVariantViews.length || product.variantRows.length || 1;
+  const skuCount = variantViews.length || 1;
   const readySkuCount = visibleVariantViews.filter(
     (variant) => variant.scopedSellableQty > 0
   ).length;
@@ -426,6 +461,10 @@ export function ListingCoverageCard({
   useEffect(() => {
     setMounted(true);
   }, []);
+  useEffect(() => {
+    setSelectedVariantSkuId(null);
+    setAllVariantsOpen(false);
+  }, [filterKey]);
 
   useEffect(() => {
     if (!detailsOpen) return;
@@ -503,7 +542,7 @@ export function ListingCoverageCard({
 
   return (
     <>
-      <article className="grid grid-cols-2 gap-4 rounded-lg border bg-card p-4 shadow-sm xl:grid-cols-4 2xl:grid-cols-[minmax(180px,1.3fr)_72px_88px_minmax(160px,1.1fr)_minmax(120px,.8fr)_minmax(200px,1.2fr)_140px] 2xl:items-center">
+      <article className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border bg-card px-4 py-3 xl:grid-cols-4 2xl:grid-cols-[minmax(180px,1.3fr)_64px_80px_minmax(220px,1.2fr)_minmax(120px,.8fr)_minmax(200px,1.1fr)_132px] 2xl:items-center">
         <div className="col-span-2 min-w-0 2xl:col-span-1">
           <span className="mb-1 block text-[10px] font-medium text-muted-foreground 2xl:hidden">
             商品信息
@@ -512,8 +551,8 @@ export function ListingCoverageCard({
             <ProductImage
               src={product.imageUrl}
               alt={product.skuName}
-              size="lg"
-              className="h-11 w-11 shrink-0 rounded-md"
+              size="md"
+              className="shrink-0 rounded-md"
             />
             <div className="min-w-0 flex-1">
               <button
@@ -589,44 +628,115 @@ export function ListingCoverageCard({
               可售 {readySkuCount}/{skuCount}
               {transitSkuCount > 0 ? ` · ${transitSkuCount} 在途` : ""}
             </span>
+            {orderedVariantViews.length > 2 && (
+              <button
+                type="button"
+                onClick={() => setAllVariantsOpen((open) => !open)}
+                aria-expanded={allVariantsOpen}
+                aria-label={
+                  allVariantsOpen ? "收起规格" : `展开其余 ${orderedVariantViews.length - 2} 个规格`
+                }
+                className="ml-auto rounded text-[11px] leading-4 text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {allVariantsOpen ? "收起" : `+${orderedVariantViews.length - 2} 个规格`}
+              </button>
+            )}
           </div>
-          <div className="space-y-1">
+          <div className={cn("space-y-1", allVariantsOpen && "max-h-40 overflow-y-auto p-0.5")}>
             {displayedVariantViews.map((variant) => {
               const isSelected = selectedVariant?.skuId === variant.skuId;
+              const forecast = variant.replenishment;
+              const needsReplenishment = isReplenishmentAlert(forecast);
 
               return (
                 <div key={variant.skuId} className="flex min-w-0 items-center">
                   <button
                     type="button"
                     onClick={() => setSelectedVariantSkuId(variant.skuId)}
+                    aria-pressed={isSelected}
+                    aria-label={`选择规格 ${shortVariantName(product.skuName, variant.skuName)}`}
                     className={cn(
-                      "flex h-7 min-w-0 flex-1 items-center justify-between gap-2 rounded-md border px-2 text-left transition-colors",
+                      "flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded border px-2 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       isSelected
                         ? "border-primary/40 bg-primary/5"
                         : "bg-background/70 hover:bg-muted/40"
                     )}
                   >
-                    <span className="min-w-0 truncate text-[11px] font-medium">
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs font-medium"
+                      title={shortVariantName(product.skuName, variant.skuName)}
+                    >
                       {shortVariantName(product.skuName, variant.skuName)}
                     </span>
-                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                    <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
                       现 {variant.scopedSellableQty}
                       {variant.scopedInTransitQty > 0 ? ` · 途 ${variant.scopedInTransitQty}` : ""}
                     </span>
+                    {forecast && (
+                      <>
+                        <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
+                          30天售 {forecast.sales30Qty}
+                        </span>
+                        <span
+                          className={cn(
+                            "inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-4",
+                            forecast.status === "out_of_stock"
+                              ? "font-medium text-red-700"
+                              : needsReplenishment
+                                ? "font-medium text-amber-700"
+                                : "text-muted-foreground"
+                          )}
+                          title={forecast.reason}
+                        >
+                          {needsReplenishment
+                            ? forecast.label
+                            : forecast.coverageDays !== null
+                              ? `可售 ${formatReplenishmentCoverage(forecast)}`
+                              : forecast.label}
+                        </span>
+                      </>
+                    )}
                   </button>
                 </div>
               );
             })}
-            {visibleVariantViews.length > displayedVariantViews.length ? (
-              <button
-                type="button"
-                onClick={() => setDetailsOpen(true)}
-                className="h-7 w-full rounded-md border border-dashed px-2 text-left text-[10px] text-muted-foreground hover:bg-muted/40"
-              >
-                +{visibleVariantViews.length - displayedVariantViews.length} 个 SKU
-              </button>
-            ) : null}
           </div>
+          {selectedNeedsReplenishment && selectedReplenishment && (
+            <div
+              className={cn(
+                "mt-1.5 flex items-start justify-between gap-2 border-l-2 pl-2 text-[11px] leading-4",
+                selectedReplenishment.status === "out_of_stock"
+                  ? "border-red-300"
+                  : "border-amber-300"
+              )}
+            >
+              <p className="min-w-0 text-foreground">
+                {selectedReplenishment.coverageDays !== null
+                  ? selectedReplenishment.coverageDays === 0
+                    ? "当前已售罄"
+                    : `约可售 ${formatReplenishmentCoverage(selectedReplenishment)}`
+                  : "销量样本少，补量需人工确认"}
+                {selectedReplenishment.suggestedQty !== null &&
+                  (selectedReplenishment.suggestedQty === 0 &&
+                  selectedReplenishment.timelyIncomingQty > 0
+                    ? " · 已安排到货"
+                    : ` · 建议补 ${selectedReplenishment.suggestedQty} 件`)}
+                {selectedVariant?.incomingSummary?.nextArrivalDate && (
+                  <span className="ml-1 text-muted-foreground">
+                    预计{" "}
+                    {selectedVariant.incomingSummary.nextArrivalDate.slice(5).replace("-", "/")} 到
+                  </span>
+                )}
+              </p>
+              <Link
+                href={replenishmentHref}
+                aria-label="查看补货依据"
+                className="shrink-0 whitespace-nowrap font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                补货依据
+              </Link>
+            </div>
+          )}
         </div>
 
         <div className="col-span-2 min-w-0 md:col-span-1">
@@ -642,16 +752,20 @@ export function ListingCoverageCard({
           ) : null}
         </div>
 
-        <div className="col-span-2 min-w-0 rounded-lg bg-muted/20 p-3 md:col-span-1">
+        <div className="col-span-2 min-w-0 md:col-span-1">
           <span className="mb-2 block text-[11px] font-medium text-muted-foreground 2xl:hidden">
             平台在售 · 现货规格
           </span>
-          <ListingPlatformSummary variants={variantViews} onViewPending={viewPendingListings} />
+          <ListingPlatformSummary
+            compact
+            variants={variantViews}
+            onViewPending={viewPendingListings}
+          />
           {product.aggregateRisks.length > 0 ? (
             <button
               type="button"
               onClick={() => setDetailsOpen(true)}
-              className="mt-3 block w-full space-y-1 border-t pt-2 text-left"
+              className="mt-1.5 flex w-full items-center gap-1.5 text-left"
               aria-label="查看库存与上架风险"
             >
               <Badge
@@ -665,7 +779,7 @@ export function ListingCoverageCard({
                 <span className="truncate">{product.aggregateRisks[0].label}</span>
               </Badge>
               {product.aggregateRisks.length > 1 ? (
-                <p className="text-[10px] text-muted-foreground">
+                <p className="shrink-0 text-[10px] text-muted-foreground">
                   +{product.aggregateRisks.length - 1} 项风险
                 </p>
               ) : null}
@@ -677,10 +791,10 @@ export function ListingCoverageCard({
           <span className="mb-1 block text-[10px] font-medium text-muted-foreground 2xl:hidden">
             操作
           </span>
-          <p className="mb-2 text-xs text-muted-foreground">
-            当前 SKU{" "}
+          <p className="mb-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span className="shrink-0">当前</span>
             <span
-              className="mt-0.5 block truncate font-medium text-foreground"
+              className="min-w-0 truncate text-[11px] font-medium text-foreground"
               title={cardProduct.skuName}
             >
               {shortVariantName(product.skuName, cardProduct.skuName)}
@@ -689,7 +803,7 @@ export function ListingCoverageCard({
           <Button
             variant={canAddSkuListing ? "default" : "outline"}
             size="sm"
-            className="h-8 w-full px-2 text-xs"
+            className="h-7 w-full px-2 text-xs"
             onClick={() =>
               canAddSkuListing ? openAdd(undefined, { listingScope: "SKU" }) : setDetailsOpen(true)
             }
@@ -705,7 +819,7 @@ export function ListingCoverageCard({
             <Button
               variant="ghost"
               size="sm"
-              className="mr-auto h-7 px-0 text-[11px] text-muted-foreground"
+              className="mr-auto h-6 px-0 text-[11px] text-muted-foreground"
               onClick={() => setDetailsOpen(true)}
             >
               查看明细
@@ -713,7 +827,7 @@ export function ListingCoverageCard({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 w-7 px-0 text-muted-foreground"
+              className="h-6 w-6 px-0 text-muted-foreground"
               aria-label="更多操作"
               title="更多操作"
               aria-haspopup="menu"

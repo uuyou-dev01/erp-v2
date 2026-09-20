@@ -7,10 +7,19 @@ export const dynamic = "force-dynamic";
 export default async function NewPurchaseOrderPage({
   searchParams,
 }: {
-  searchParams: Promise<{ skuId?: string }>;
+  searchParams: Promise<{ skuId?: string; quantity?: string }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
-  const { skuId } = await searchParams;
+  const { skuId, quantity } = await searchParams;
+  const initialQuantity =
+    skuId &&
+    quantity &&
+    /^\d+(\.\d+)?$/.test(quantity) &&
+    Number.isFinite(Number(quantity)) &&
+    Number(quantity) > 0 &&
+    Number(quantity) <= Number.MAX_SAFE_INTEGER
+      ? quantity
+      : undefined;
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <div className="flex items-start gap-3">
@@ -19,13 +28,13 @@ export default async function NewPurchaseOrderPage({
           <h1 className="text-3xl font-bold">新建采购订单</h1>
           <p className="text-muted-foreground">
             {skuId
-              ? "已从市场采集预选 SKU，完成基本信息后确认采购数量与成本"
+              ? "已预选 SKU，完成基本信息后确认采购数量与成本"
               : "按步骤创建采购订单并添加商品"}
           </p>
         </div>
       </div>
 
-      <PurchaseWizard storeId={storeId} initialSkuId={skuId} />
+      <PurchaseWizard storeId={storeId} initialSkuId={skuId} initialQuantity={initialQuantity} />
     </div>
   );
 }

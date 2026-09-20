@@ -3,6 +3,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ListingCoverageCard } from "@/components/listing/listing-coverage-card";
 import type { ListingCoverageProduct } from "@/lib/application/listing-coverage";
 import type { SellableMarketCode } from "@/lib/application/sellable-market";
+import type { ReplenishmentPolicy } from "@/lib/application/replenishment";
 
 interface ListingCoverageGridProps {
   products: ListingCoverageProduct[];
@@ -14,6 +15,7 @@ interface ListingCoverageGridProps {
   focusLocationId?: string;
   focusMarket?: SellableMarketCode;
   categoryOptions?: string[];
+  replenishmentPolicy?: ReplenishmentPolicy;
 }
 
 export function ListingCoverageGrid({
@@ -25,6 +27,7 @@ export function ListingCoverageGrid({
   focusLocationId,
   focusMarket,
   categoryOptions = [],
+  replenishmentPolicy,
 }: ListingCoverageGridProps) {
   void _expandIfUnlisted;
 
@@ -42,11 +45,11 @@ export function ListingCoverageGrid({
 
   return (
     <div className="relative">
-      <div className="sticky top-0 z-10 hidden grid-cols-[minmax(180px,1.3fr)_72px_88px_minmax(160px,1.1fr)_minmax(120px,.8fr)_minmax(200px,1.2fr)_140px] items-center gap-4 rounded-lg border bg-muted/95 px-4 py-2 text-[11px] font-semibold text-muted-foreground shadow-sm backdrop-blur 2xl:grid">
+      <div className="sticky top-0 z-10 hidden grid-cols-[minmax(180px,1.3fr)_64px_80px_minmax(220px,1.2fr)_minmax(120px,.8fr)_minmax(200px,1.1fr)_132px] items-center gap-4 rounded-lg border bg-muted/95 px-4 py-2 text-[11px] font-semibold text-muted-foreground shadow-sm backdrop-blur 2xl:grid">
         <span>商品信息</span>
         <span>新旧 / 形态</span>
         <span>库存</span>
-        <span>SKU 规格</span>
+        <span>SKU 规格 · 库存预警</span>
         <span>仓位</span>
         <span>平台在售 · 现货规格</span>
         <span>当前 SKU 操作</span>
@@ -60,6 +63,7 @@ export function ListingCoverageGrid({
             focusLocationId={focusLocationId}
             focusMarket={focusMarket}
             categoryOptions={categoryOptions}
+            replenishmentPolicy={replenishmentPolicy}
           />
         ))}
       </div>

@@ -207,7 +207,7 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
               )}
             </TableCell>
             <TableCell>
-              <p className="max-w-44 text-sm">{metrics.platforms.join("、") || "未上架"}</p>
+              <p className="max-w-44">{metrics.platforms.join("、") || "未上架"}</p>
             </TableCell>
           </>
         ) : (
@@ -591,7 +591,10 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                       {open &&
                         variants.length > 1 &&
                         variants.map((variant) => (
-                          <TableRow key={variant.id} className="bg-muted/20">
+                          <TableRow
+                            key={variant.id}
+                            className="bg-muted/20 text-xs leading-4 [&>td]:py-2"
+                          >
                             <TableCell>
                               <input
                                 type="checkbox"
@@ -602,12 +605,12 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                             </TableCell>
                             <TableCell className="pl-8">
                               <Link
-                                className="font-medium hover:text-primary"
+                                className="font-normal hover:text-primary"
                                 href={`/inventory/skus/${variant.id}`}
                               >
                                 {compactVariantName(group, variant)}
                               </Link>
-                              <p className="mt-1 text-xs text-muted-foreground">
+                              <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
                                 {variant.code}
                                 {variant.catalogStatus === "disabled" ? " · 已停用" : ""}
                               </p>

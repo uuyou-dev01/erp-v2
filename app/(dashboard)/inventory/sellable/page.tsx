@@ -1,6 +1,6 @@
 import { requireUserContext } from "@/lib/auth/user-context";
 import Link from "next/link";
-import { ArrowRightLeft, Plus } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Plus } from "lucide-react";
 import { getPlatforms } from "@/app/actions/platforms";
 import { ListingCoverageGrid } from "@/components/listing/listing-coverage-grid";
 import { BatchListingDialog } from "@/components/listing/batch-listing-dialog";
@@ -21,60 +21,17 @@ import {
   type SellableMarketCode,
 } from "@/lib/application/sellable-market";
 import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
+import { isReplenishmentAlert, resolveReplenishmentPolicy } from "@/lib/application/replenishment";
+import { matchesReplenishmentVariant } from "@/lib/application/replenishment-view";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
 const LEGACY_SELLABLE_PARAMS = new Set(["platformId"]);
 
-function hasStatus(product: ListingCoverageProduct, status?: string) {
-  if (!status) return true;
-  return product.records.some((record) => record.status === status);
-}
-
-function hasRisk(product: ListingCoverageProduct, risk?: string) {
-  if (!risk) return true;
-  return product.aggregateRisks.some((item) => item.key === risk);
-}
-
-function hasProductKind(product: ListingCoverageProduct, kind?: string) {
-  if (!kind) return true;
-  const effectiveKind = product.hasItemUnits && !product.hasLotStock ? "USED" : product.productKind;
-  if (effectiveKind === kind) return true;
-  return product.variantRows.some((variant) => variant.productKind === kind);
-}
-
-function hasCategory(product: ListingCoverageProduct, category?: string) {
-  if (!category) return true;
-  if (product.category?.trim() === category) return true;
-  return product.variantRows.some((variant) => variant.category?.trim() === category);
-}
-
-function hasStockType(product: ListingCoverageProduct, stockType?: string) {
-  if (!stockType) return true;
-  if (stockType === "LOT") return product.hasLotStock && !product.hasItemUnits;
-  if (stockType === "ITEM_UNIT") return product.hasItemUnits && !product.hasLotStock;
-  if (stockType === "MIXED") return product.hasLotStock && product.hasItemUnits;
-  return true;
-}
-
 function matchesUnlisted(product: ListingCoverageProduct, unlisted?: string) {
   if (unlisted !== "1") return true;
   return product.records.length === 0;
-}
-
-function matchesQuery(product: ListingCoverageProduct, query?: string) {
-  if (!query) return true;
-  const keyword = query.toLowerCase();
-  return [
-    product.key,
-    product.skuCode,
-    product.skuName,
-    ...product.variantRows.map((variant) => variant.skuCode),
-    ...product.variantRows.map((variant) => variant.skuName),
-    product.brand ?? "",
-    product.category ?? "",
-  ].some((value) => value.toLowerCase().includes(keyword));
 }
 
 function primaryPrice(product: ListingCoverageProduct) {
@@ -84,6 +41,11 @@ function primaryPrice(product: ListingCoverageProduct) {
 
 function sortProducts(products: ListingCoverageProduct[], sort?: string) {
   return [...products].sort((a, b) => {
+    if (sort === "replenishment") {
+      const priority = (product: ListingCoverageProduct) =>
+        Math.max(0, ...product.variantRows.map((variant) => variant.replenishment?.priority ?? 0));
+      return priority(b) - priority(a) || b.sellableQty - a.sellableQty;
+    }
     if (!sort || sort === "stockDesc") {
       return b.sellableQty - a.sellableQty;
     }
@@ -233,12 +195,16 @@ export default async function SellableInventoryPage({
     kind?: string;
     category?: string;
     stockType?: string;
+    leadDays?: string;
+    bufferDays?: string;
+    coverDays?: string;
   }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
   const params = await searchParams;
+  const replenishmentPolicy = resolveReplenishmentPolicy(params);
   const [products, platforms] = await Promise.all([
-    getListingCoverageProducts(storeId),
+    getListingCoverageProducts(storeId, replenishmentPolicy),
     getPlatforms(storeId),
   ]);
 
@@ -247,10 +213,17 @@ export default async function SellableInventoryPage({
     .map((product) =>
       buildScopedListingCoverageProduct(product, {
         market: selectedMarket,
+        includeDemandOnly: true,
+        policy: replenishmentPolicy,
       })
     )
     .filter((product): product is ListingCoverageProduct => Boolean(product));
-  const marketProducts = marketInventoryProducts.filter((product) => product.sellableQty > 0);
+  const marketProducts = marketInventoryProducts.filter(
+    (product) =>
+      product.sellableQty > 0 ||
+      product.inTransitQty > 0 ||
+      product.variantRows.some((variant) => isReplenishmentAlert(variant.replenishment))
+  );
   const locationOptions = buildLocationOptions(marketProducts, selectedMarket);
   const selectedLocation = locationOptions.find((location) => location.id === params.locationId);
   const effectiveMarket = selectedMarket ?? selectedLocation?.market;
@@ -272,19 +245,22 @@ export default async function SellableInventoryPage({
       buildScopedListingCoverageProduct(product, {
         market: effectiveMarket,
         locationId: params.locationId,
+        includeDemandOnly: true,
+        policy: replenishmentPolicy,
       })
     )
     .filter((product): product is ListingCoverageProduct => Boolean(product));
+  const filterCandidates = scopedProducts.filter(
+    (product) =>
+      matchesUnlisted(product, params.unlisted) &&
+      product.variantRows.some((variant) =>
+        matchesReplenishmentVariant(product, variant, { ...params, risk: undefined })
+      )
+  );
   const filteredProducts = sortProducts(
-    scopedProducts.filter((product) => {
-      if (!matchesUnlisted(product, params.unlisted)) return false;
-      if (!hasStatus(product, params.status)) return false;
-      if (!hasRisk(product, params.risk)) return false;
-      if (!hasProductKind(product, params.kind)) return false;
-      if (!hasCategory(product, params.category)) return false;
-      if (!hasStockType(product, params.stockType)) return false;
-      return matchesQuery(product, params.q);
-    }),
+    filterCandidates.filter((product) =>
+      product.variantRows.some((variant) => matchesReplenishmentVariant(product, variant, params))
+    ),
     params.sort ?? "stockDesc"
   );
   const currentPage = Math.max(Number(params.page ?? "1") || 1, 1);
@@ -296,6 +272,26 @@ export default async function SellableInventoryPage({
   const fromWorkbench = params.from === "workbench";
   const returnTo = currentHref(params);
   const isStockingPoolView = params.view === "pools";
+  const alertVariants = filterCandidates.flatMap((product) =>
+    product.variantRows.filter(
+      (variant) =>
+        isReplenishmentAlert(variant.replenishment) &&
+        matchesReplenishmentVariant(product, variant, { ...params, risk: undefined })
+    )
+  );
+  const stockoutCount = alertVariants.filter(
+    (variant) => variant.replenishment?.status === "out_of_stock"
+  ).length;
+  const visibleAlertCount = filteredProducts.reduce(
+    (count, product) =>
+      count +
+      product.variantRows.filter(
+        (variant) =>
+          isReplenishmentAlert(variant.replenishment) &&
+          matchesReplenishmentVariant(product, variant, params)
+      ).length,
+    0
+  );
   const batchListingSkus =
     params.unlisted === "1"
       ? pageProducts
@@ -320,7 +316,7 @@ export default async function SellableInventoryPage({
         <div>
           <h1 className="text-2xl font-bold">库存看板</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            按商品、节点和仓库所在地集中查看可分配库存。
+            查看各规格库存、销售速度和补货预警，售罄待补的规格也会保留。
           </p>
           <p className="mt-1 hidden text-xs text-muted-foreground lg:block">
             库存归属只看仓库物理所在地；是否可向某个国家发货，由节点能力和配送线路另行判断。
@@ -392,7 +388,49 @@ export default async function SellableInventoryPage({
         view={isStockingPoolView ? "pools" : undefined}
         resultCount={filteredProducts.length}
         totalCount={scopedProducts.length}
+        replenishmentCount={visibleAlertCount}
       />
+
+      {!isStockingPoolView && (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border px-3 py-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+              补货预警
+            </span>
+            {alertVariants.length ? (
+              <>
+                <Link
+                  href={withSellableParams(params, { risk: "stockout", sort: "replenishment" })}
+                  className="text-red-700 hover:underline"
+                >
+                  已售罄 {stockoutCount} 个规格
+                </Link>
+                <Link
+                  href={withSellableParams(params, {
+                    risk: "replenishment",
+                    sort: "replenishment",
+                  })}
+                  className="text-amber-700 hover:underline"
+                >
+                  全部补货预警 {alertVariants.length} 个规格
+                </Link>
+              </>
+            ) : (
+              <span className="text-muted-foreground">
+                当前筛选范围暂无补货预警；销量不足的规格仍需人工关注。
+              </span>
+            )}
+          </div>
+          <Link
+            href={withSellableParams(params, { view: "pools" })}
+            className="text-muted-foreground hover:text-primary"
+          >
+            按到货 {replenishmentPolicy.leadTimeDays} 天＋缓冲 {replenishmentPolicy.safetyDays}{" "}
+            天估算 · 调整参数
+          </Link>
+        </div>
+      )}
 
       {fromWorkbench || params.unlisted === "1" ? (
         <SellableNewStockGuide
@@ -405,7 +443,16 @@ export default async function SellableInventoryPage({
       ) : null}
 
       {isStockingPoolView ? (
-        <StockingPoolBoard products={filteredProducts} />
+        <StockingPoolBoard
+          products={filteredProducts}
+          policy={replenishmentPolicy}
+          marketLabel={[
+            effectiveMarket ? fulfillmentDestinationLabel(effectiveMarket) : "全部库存所在地",
+            selectedLocation?.label,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        />
       ) : (
         <>
           <ListingCoverageGrid
@@ -415,6 +462,7 @@ export default async function SellableInventoryPage({
             focusLocationId={params.locationId}
             focusMarket={effectiveMarket}
             categoryOptions={categoryOptions.map((option) => option.value)}
+            replenishmentPolicy={replenishmentPolicy}
             emptyTitle={params.unlisted === "1" ? "暂无待添加上架的商品" : "暂无可售库存"}
             emptyDescription={
               params.unlisted === "1"

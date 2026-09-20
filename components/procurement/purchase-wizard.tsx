@@ -34,6 +34,7 @@ import Decimal from "decimal.js";
 interface PurchaseWizardProps {
   storeId: string;
   initialSkuId?: string;
+  initialQuantity?: string;
 }
 
 interface LineItem {
@@ -104,7 +105,7 @@ function compactSkuLabel(sku: SKUOption) {
   return sku.variantLabel || sku.name;
 }
 
-export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
+export function PurchaseWizard({ storeId, initialSkuId, initialQuantity }: PurchaseWizardProps) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -133,7 +134,7 @@ export function PurchaseWizard({ storeId, initialSkuId }: PurchaseWizardProps) {
   const [newLine, setNewLine] = useState({
     skuId: initialSkuId?.trim() || "",
     trackingMode: "LOT" as "LOT" | "ITEM_UNIT",
-    quantity: "",
+    quantity: initialQuantity ?? "",
     unitPrice: "",
   });
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});

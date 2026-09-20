@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { FilterX, Layers3, Search } from "lucide-react";
+import { ChevronDown, FilterX, Layers3, Search, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -23,6 +23,7 @@ interface InventorySellableToolbarProps {
   view?: "pools";
   resultCount: number;
   totalCount: number;
+  replenishmentCount?: number;
 }
 
 function withParam(searchParams: { toString(): string }, key: string, value?: string) {
@@ -71,11 +72,13 @@ export function InventorySellableToolbar({
   view,
   resultCount,
   totalCount,
+  replenishmentCount = 0,
 }: InventorySellableToolbarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [search, setSearch] = useState(query ?? "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const hasFilters = Boolean(
     query ||
     locationId ||
@@ -116,7 +119,12 @@ export function InventorySellableToolbar({
               size="sm"
               className="h-8 px-3 text-xs"
             >
-              经营池
+              经营池 · 补货
+              {replenishmentCount > 0 && (
+                <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] tabular-nums text-amber-800">
+                  {replenishmentCount}
+                </span>
+              )}
             </Button>
           </Link>
         </div>
@@ -159,99 +167,122 @@ export function InventorySellableToolbar({
             </Button>
           </form>
 
-          <Select
-            value={category ?? ""}
-            className="h-9 text-xs"
-            aria-label="商品品类"
-            onChange={(event) =>
-              router.push(withParam(searchParams, "category", event.target.value))
-            }
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="justify-start px-1 md:hidden"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+            aria-controls="inventory-board-filters"
           >
-            <option value="">全部商品品类</option>
-            {categories.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label} · {item.count}
-              </option>
-            ))}
-          </Select>
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            筛选与排序{hasFilters ? " · 已筛选" : ""}
+            <ChevronDown className={`ml-auto h-3.5 w-3.5 ${filtersOpen ? "rotate-180" : ""}`} />
+          </Button>
+          <div
+            id="inventory-board-filters"
+            className={filtersOpen ? "contents" : "hidden md:contents"}
+          >
+            <Select
+              value={category ?? ""}
+              className="h-9 text-xs"
+              aria-label="商品品类"
+              onChange={(event) =>
+                router.push(withParam(searchParams, "category", event.target.value))
+              }
+            >
+              <option value="">全部商品品类</option>
+              {categories.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label} · {item.count}
+                </option>
+              ))}
+            </Select>
 
-          <Select
-            value={productKind ?? ""}
-            className="h-9 text-xs"
-            aria-label="新旧类型"
-            onChange={(event) => router.push(withParam(searchParams, "kind", event.target.value))}
-          >
-            <option value="">全部新旧类型</option>
-            <option value="NEW">全新商品</option>
-            <option value="USED">中古商品</option>
-          </Select>
+            <Select
+              value={productKind ?? ""}
+              className="h-9 text-xs"
+              aria-label="新旧类型"
+              onChange={(event) => router.push(withParam(searchParams, "kind", event.target.value))}
+            >
+              <option value="">全部新旧类型</option>
+              <option value="NEW">全新商品</option>
+              <option value="USED">中古商品</option>
+            </Select>
 
-          <Select
-            value={stockType ?? ""}
-            className="h-9 text-xs"
-            aria-label="库存形态"
-            onChange={(event) =>
-              router.push(withParam(searchParams, "stockType", event.target.value))
-            }
-          >
-            <option value="">全部库存形态</option>
-            <option value="LOT">批量库存</option>
-            <option value="ITEM_UNIT">单件库存</option>
-            <option value="MIXED">混合库存</option>
-          </Select>
+            <Select
+              value={stockType ?? ""}
+              className="h-9 text-xs"
+              aria-label="库存形态"
+              onChange={(event) =>
+                router.push(withParam(searchParams, "stockType", event.target.value))
+              }
+            >
+              <option value="">全部库存形态</option>
+              <option value="LOT">批量库存</option>
+              <option value="ITEM_UNIT">单件库存</option>
+              <option value="MIXED">混合库存</option>
+            </Select>
 
-          <Select
-            value={status ?? ""}
-            className="h-9 text-xs"
-            aria-label="上架状态"
-            onChange={(event) => router.push(withParam(searchParams, "status", event.target.value))}
-          >
-            <option value="">全部上架状态</option>
-            <option value="ACTIVE">在售中</option>
-            <option value="DELISTED">已下架</option>
-            <option value="SOLD_OUT">已售罄</option>
-          </Select>
+            <Select
+              value={status ?? ""}
+              className="h-9 text-xs"
+              aria-label="上架状态"
+              onChange={(event) =>
+                router.push(withParam(searchParams, "status", event.target.value))
+              }
+            >
+              <option value="">全部上架状态</option>
+              <option value="ACTIVE">在售中</option>
+              <option value="DELISTED">已下架</option>
+              <option value="SOLD_OUT">已售罄</option>
+            </Select>
 
-          <Select
-            value={risk ?? ""}
-            className="h-9 text-xs"
-            aria-label="库存风险"
-            onChange={(event) => router.push(withParam(searchParams, "risk", event.target.value))}
-          >
-            <option value="">全部库存风险</option>
-            <option value="lowStock">库存不足</option>
-            <option value="unpriced">未定价</option>
-            <option value="stale">长期未售</option>
-          </Select>
+            <Select
+              value={risk ?? ""}
+              className="h-9 text-xs"
+              aria-label="库存风险"
+              onChange={(event) => router.push(withParam(searchParams, "risk", event.target.value))}
+            >
+              <option value="">全部库存风险</option>
+              <option value="replenishment">补货预警</option>
+              <option value="stockout">售罄待补</option>
+              <option value="lowStock">库存不足</option>
+              <option value="unpriced">未定价</option>
+              <option value="stale">长期未售</option>
+            </Select>
 
-          <Select
-            value={locationId ?? ""}
-            className="h-9 text-xs"
-            aria-label="仓位"
-            onChange={(event) =>
-              router.push(withParam(searchParams, "locationId", event.target.value))
-            }
-          >
-            <option value="">全部仓位</option>
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.label} · {location.qty}
-              </option>
-            ))}
-          </Select>
+            <Select
+              value={locationId ?? ""}
+              className="h-9 text-xs"
+              aria-label="仓位"
+              onChange={(event) =>
+                router.push(withParam(searchParams, "locationId", event.target.value))
+              }
+            >
+              <option value="">全部仓位</option>
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.label} · {location.qty}
+                </option>
+              ))}
+            </Select>
 
-          <Select
-            value={sort}
-            className="h-9 text-xs"
-            aria-label="排序"
-            onChange={(event) => router.push(withParam(searchParams, "sort", event.target.value))}
-          >
-            <option value="stockDesc">现货从多到少</option>
-            <option value="updatedAt">最近更新</option>
-            <option value="listedAt">最近上架</option>
-            <option value="priceDesc">价格从高到低</option>
-            <option value="priceAsc">价格从低到高</option>
-          </Select>
+            <Select
+              value={sort}
+              className="h-9 text-xs"
+              aria-label="排序"
+              onChange={(event) => router.push(withParam(searchParams, "sort", event.target.value))}
+            >
+              <option value="stockDesc">现货从多到少</option>
+              <option value="replenishment">补货紧急优先</option>
+              <option value="updatedAt">最近更新</option>
+              <option value="listedAt">最近上架</option>
+              <option value="priceDesc">价格从高到低</option>
+              <option value="priceAsc">价格从低到高</option>
+            </Select>
+          </div>
         </div>
       </div>
     </section>
