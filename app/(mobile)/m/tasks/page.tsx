@@ -15,22 +15,76 @@ const scopes: Array<{ value: MobileTaskScope; label: string }> = [
   { value: "completed", label: "已完成" },
 ];
 
-export default async function MobileTasksPage({ searchParams }: { searchParams: Promise<{ scope?: string }> }) {
+export default async function MobileTasksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ scope?: string }>;
+}) {
   await requireMobilePageContext("/m/tasks");
   const params = await searchParams;
-  const scope = scopes.some((item) => item.value === params.scope) ? (params.scope as MobileTaskScope) : "today";
-  const tasks = await getMobileTasks(scope);
+  const scope = scopes.some((item) => item.value === params.scope)
+    ? (params.scope as MobileTaskScope)
+    : "today";
+  const allTasks = await getMobileTasks(scope);
+  const tasks = scope === "today" ? allTasks.filter((task) => task.mobileEnabled) : allTasks;
+  const desktopCount = allTasks.length - tasks.length;
   return (
     <main className="px-5 pb-8 pt-[max(env(safe-area-inset-top),1rem)]">
       <header className="flex items-center gap-3 py-2">
-        <Link href="/m" className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600"><ChevronLeft className="h-5 w-5" /></Link>
-        <div><h1 className="text-xl font-semibold tracking-tight text-slate-950">待办</h1><p className="text-xs text-slate-400">只显示需要执行的下一步</p></div>
+        <Link
+          href="/m"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600"
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </Link>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-950">待办</h1>
+          <p className="text-xs text-slate-400">只显示需要执行的下一步</p>
+        </div>
       </header>
       <nav className="mt-5 flex gap-1 overflow-x-auto border-b border-slate-200 pb-2">
-        {scopes.map((item) => <Link key={item.value} href={`/m/tasks?scope=${item.value}`} className={cn("shrink-0 rounded-lg px-3 py-2 text-xs font-medium", scope === item.value ? "bg-slate-950 text-white" : "text-slate-500")}>{item.label}</Link>)}
+        {scopes.map((item) => (
+          <Link
+            key={item.value}
+            href={`/m/tasks?scope=${item.value}`}
+            className={cn(
+              "shrink-0 rounded-lg px-3 py-2 text-xs font-medium",
+              scope === item.value ? "bg-slate-950 text-white" : "text-slate-500"
+            )}
+          >
+            {item.label}
+          </Link>
+        ))}
       </nav>
-      {scope === "today" ? <div className="mt-4 grid grid-cols-2 gap-2"><Link href="/m/tasks/batch" className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-50 px-2 text-center text-xs font-semibold text-blue-700"><Layers3 className="h-4 w-4" />批量节点</Link><Link href="/m/tasks/ship" className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-2 text-center text-xs font-semibold text-white"><ScanLine className="h-4 w-4" />连续发货</Link></div> : null}
-      <div className="mt-2"><MobileTaskList tasks={tasks} /></div>
+      {scope === "today" ? (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Link
+            href="/m/tasks/batch"
+            className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-50 px-2 text-center text-xs font-semibold text-blue-700"
+          >
+            <Layers3 className="h-4 w-4" />
+            批量节点
+          </Link>
+          <Link
+            href="/m/tasks/ship"
+            className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-2 text-center text-xs font-semibold text-white"
+          >
+            <ScanLine className="h-4 w-4" />
+            连续发货
+          </Link>
+        </div>
+      ) : null}
+      <div className="mt-2">
+        <MobileTaskList tasks={tasks} />
+      </div>
+      {desktopCount > 0 && (
+        <p className="mt-5 text-xs leading-5 text-slate-500">
+          另有 {desktopCount} 项需电脑处理的建议，未计入今天待办。
+          <Link href="/workbench" className="text-blue-700">
+            查看工作台 →
+          </Link>
+        </p>
+      )}
     </main>
   );
 }

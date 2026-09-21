@@ -7,7 +7,13 @@ import {
 
 describe("reusable pricing calculator draft", () => {
   it("starts empty with the requested 30 percent default", () => {
-    expect(emptyPricingDraft()).toMatchObject({ cost: "", marginPercent: "30", feePercent: "0" });
+    expect(emptyPricingDraft()).toMatchObject({
+      mode: "forward",
+      cost: "",
+      salePrice: "",
+      marginPercent: "30",
+      feePercent: "0",
+    });
   });
   it("presets preserve entered cost and exchange rate", () => {
     const draft = {
@@ -42,6 +48,7 @@ describe("reusable pricing calculator draft", () => {
       unavailable: null,
     };
     expect(applyPricingBasis(draft, basis)).toMatchObject({
+      mode: "forward",
       cost: "369",
       shipping: "520",
       exchangeRate: "20",

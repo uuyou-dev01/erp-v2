@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildSkuPricingBasis, calculateSuggestedPrice } from "@/lib/application/sku-pricing";
+import {
+  buildSkuPricingBasis,
+  calculateMaxAcquisitionPrice,
+  calculateSuggestedPrice,
+} from "@/lib/application/sku-pricing";
 import type { SkuCatalogDetail } from "@/lib/application/sku-catalog";
 
 const input = {
@@ -25,10 +29,16 @@ const sku = (overrides = {}) =>
 
 describe("suggested selling price", () => {
   it("uses margin on selling price, rounds up, and includes fees and shipping", () => {
-    expect(calculateSuggestedPrice(input).price).toBe("527.15");
-    expect(calculateSuggestedPrice({ ...input, feePercent: "10", shipping: "20" }).price).toBe(
-      "648.34"
-    );
+    expect(calculateSuggestedPrice(input)).toMatchObject({
+      price: "527.15",
+      profit: "158.15",
+      actualMarginPercent: "30.00",
+    });
+    expect(calculateSuggestedPrice({ ...input, feePercent: "10", shipping: "20" })).toMatchObject({
+      price: "648.34",
+      profit: "194.51",
+      actualMarginPercent: "30.00",
+    });
   });
   it("requires explicit foreign exchange and rounds yen up to whole units", () => {
     expect(calculateSuggestedPrice({ ...input, currency: "JPY" }).price).toBeNull();
@@ -44,13 +54,61 @@ describe("suggested selling price", () => {
   });
   it("uses a higher same-currency reference, without treating another currency as comparable", () => {
     const reference = { amount: "600", currency: "CNY", source: "最近成交" };
-    expect(calculateSuggestedPrice({ ...input, reference }).price).toBe("600.00");
+    expect(calculateSuggestedPrice({ ...input, reference })).toMatchObject({
+      price: "600.00",
+      profit: "231.00",
+      actualMarginPercent: "38.50",
+    });
     expect(
       calculateSuggestedPrice({ ...input, reference: { ...reference, amount: "400" } }).price
     ).toBe("527.15");
     expect(
       calculateSuggestedPrice({ ...input, reference: { ...reference, currency: "JPY" } }).price
     ).toBe("527.15");
+  });
+  it("reverses a known yen selling price into the maximum acquisition price", () => {
+    expect(
+      calculateMaxAcquisitionPrice({
+        salePrice: "2400",
+        costCurrency: "CNY",
+        currency: "JPY",
+        exchangeRate: "23",
+        marginPercent: "30",
+        feePercent: "0",
+        shipping: "520",
+      })
+    ).toMatchObject({ maxCost: "50.43", profit: "720", actualMarginPercent: "30.00" });
+    expect(
+      calculateMaxAcquisitionPrice({
+        salePrice: "2400",
+        costCurrency: "CNY",
+        currency: "JPY",
+        exchangeRate: "23",
+        marginPercent: "30",
+        feePercent: "10",
+        shipping: "520",
+      })
+    ).toMatchObject({ maxCost: "40.00", profit: "720", actualMarginPercent: "30.00" });
+  });
+  it("validates reverse pricing inputs and supports same-currency estimates", () => {
+    const reverse = {
+      salePrice: "100",
+      costCurrency: "CNY",
+      currency: "CNY",
+      exchangeRate: "",
+      marginPercent: "30",
+      feePercent: "10",
+      shipping: "5",
+    };
+    expect(calculateMaxAcquisitionPrice(reverse)).toMatchObject({
+      maxCost: "55.00",
+      profit: "30.00",
+      actualMarginPercent: "30.00",
+    });
+    expect(calculateMaxAcquisitionPrice({ ...reverse, currency: "JPY" }).error).toContain("汇率");
+    expect(
+      calculateMaxAcquisitionPrice({ ...reverse, salePrice: "10", shipping: "7" }).error
+    ).toContain("不足");
   });
   it("can show a reference without claiming a margin when no cost is available", () => {
     const result = calculateSuggestedPrice({

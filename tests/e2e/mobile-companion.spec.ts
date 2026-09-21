@@ -14,7 +14,7 @@ test.describe("ERP mobile companion", () => {
     const runId = Date.now().toString(36);
 
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /今天，E2E/ })).toBeVisible();
     await expect(page.getByText("现在需要处理")).toBeVisible();
     await expect
       .poll(async () => (await page.request.get("/api/v1/mobile/devices")).status())
@@ -46,13 +46,14 @@ test.describe("ERP mobile companion", () => {
 
     await page.goto("/m/capture/purchase");
     await expect(page.getByRole("heading", { name: "登记已经购买" })).toBeVisible();
+    await page.getByText("卖家、订单号与物流（可稍后补）", { exact: true }).click();
     await page.getByPlaceholder("卖家备注名").fill(`E2E 卖家 ${runId}`);
     await page.getByPlaceholder("可留空").fill(`ORDER-${runId}`);
     await page.getByLabel("商品 1 名称").fill(`E2E 手机购入 ${runId}`);
     await page.getByLabel("商品 1 规格").fill("蓝色");
     await page.getByLabel("商品 1 数量").fill("1");
     await page.getByLabel("商品 1 单价").fill("399");
-    await page.getByRole("button", { name: "这是新商品，创建待整理 SKU" }).click();
+    await page.getByRole("button", { name: "这是新商品，创建商品档案" }).click();
     await page.getByRole("button", { name: "确认已经购买" }).click();
     await expect(page.getByText("购入已登记，后续物流节点已进入待办")).toBeVisible();
 
@@ -88,7 +89,7 @@ test.describe("ERP mobile companion", () => {
 
   test("mobile API exposes paginated tasks and notification controls", async ({ page }) => {
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /今天，E2E/ })).toBeVisible();
     const home = await page.request.get("/api/v1/mobile/home");
     expect(home.ok()).toBe(true);
     const tasks = await page.request.get("/api/v1/mobile/tasks?scope=today&limit=2");
@@ -102,7 +103,7 @@ test.describe("ERP mobile companion", () => {
 
   test("uploads screenshot evidence and extracts an OCR price candidate", async ({ page }) => {
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /今天，E2E/ })).toBeVisible();
     expect(
       (
         await page.request.post("/api/v1/mobile/devices/register", {
@@ -210,10 +211,11 @@ test.describe("ERP mobile companion", () => {
     const runId = Date.now().toString(36);
     await page.goto("/m/capture/purchase");
     await expect(page.getByRole("heading", { name: "登记已经购买" })).toBeVisible();
+    await page.getByText("卖家、订单号与物流（可稍后补）", { exact: true }).click();
     await page.getByPlaceholder("卖家备注名").fill(`E2E 幂等卖家 ${runId}`);
     await page.getByLabel("商品 1 名称").fill(`E2E 幂等商品 ${runId}`);
     await page.getByLabel("商品 1 单价").fill("88");
-    await page.getByRole("button", { name: "这是新商品，创建待整理 SKU" }).click();
+    await page.getByRole("button", { name: "这是新商品，创建商品档案" }).click();
     await page.getByRole("button", { name: "确认已经购买" }).click();
     await expect(page.getByText("购入已登记，后续物流节点已进入待办")).toBeVisible();
 
@@ -281,15 +283,14 @@ test.describe("ERP mobile companion", () => {
     });
     try {
       await page.goto("/m/capture/purchase");
+      await page.getByText("卖家、订单号与物流（可稍后补）", { exact: true }).click();
       await page.getByPlaceholder("卖家备注名").fill(`E2E 匹配卖家 ${runId}`);
       await page.getByLabel("商品 1 名称").fill(sku.name);
       await page.getByLabel("商品 1 单价").fill("199");
       const candidate = page.locator("button").filter({ hasText: sku.code }).first();
       await expect(candidate).toBeVisible();
       await candidate.click();
-      await expect(
-        page.getByText("采购行将直接使用这个正式 SKU，不再按名称重新猜测。")
-      ).toBeVisible();
+      await expect(page.getByText("已关联到商品档案，可继续填写数量和金额。")).toBeVisible();
       await page.getByRole("button", { name: "确认已经购买" }).click();
       await expect(page.getByText("购入已登记，后续物流节点已进入待办")).toBeVisible();
 

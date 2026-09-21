@@ -14,9 +14,15 @@ interface ReceiveGoodsFormProps {
   purchaseOrderId: string;
   locations: Array<{ id: string; code: string; name: string }>;
   lineCount: number;
+  mobile?: boolean;
 }
 
-export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: ReceiveGoodsFormProps) {
+export function ReceiveGoodsForm({
+  purchaseOrderId,
+  locations,
+  lineCount,
+  mobile = false,
+}: ReceiveGoodsFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -51,7 +57,7 @@ export function ReceiveGoodsForm({ purchaseOrderId, locations, lineCount }: Rece
         return;
       }
 
-      router.push("/procurement");
+      router.push(mobile ? `/m/orders/purchase/${purchaseOrderId}` : "/procurement");
       router.refresh();
     } catch (error) {
       setErrors({

@@ -537,19 +537,20 @@ test.describe("release scenarios 15-17 RC2", () => {
     test.setTimeout(240_000);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/m");
-    await expect(page.getByRole("heading", { name: /好，E2E/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /今天，E2E/ })).toBeVisible();
     await expect
       .poll(async () => (await page.request.get("/api/v1/mobile/devices")).status())
       .toBe(200);
 
     await page.goto("/m/capture/purchase");
+    await page.getByText("卖家、订单号与物流（可稍后补）", { exact: true }).click();
     await page.getByPlaceholder("卖家备注名").fill(`RC 移动任务卖家 ${RUN_ID}`);
     await page.getByPlaceholder("可留空").fill(`RC-MOBILE-${RUN_ID}`);
     await page.getByLabel("商品 1 名称").fill(`RC 移动购入商品 ${RUN_ID}`);
     await page.getByLabel("商品 1 规格").fill("中日验收版");
     await page.getByLabel("商品 1 数量").fill("1");
     await page.getByLabel("商品 1 单价").fill("399");
-    await page.getByRole("button", { name: "这是新商品，创建待整理 SKU" }).click();
+    await page.getByRole("button", { name: "这是新商品，创建商品档案" }).click();
     await page.getByRole("button", { name: "确认已经购买" }).click();
     await expect(page.getByText("购入已登记，后续物流节点已进入待办")).toBeVisible();
     await page.goto("/m/tasks");

@@ -1,21 +1,19 @@
 import Link from "next/link";
-import { ArrowRight, Bell, CircleAlert, Clock3, ScanLine } from "lucide-react";
+import {
+  Bell,
+  UserRound,
+  ShoppingBag,
+  ReceiptText,
+  PackageCheck,
+  ClipboardCheck,
+} from "lucide-react";
 import { getMobileHome } from "@/lib/mobile/tasks";
 import { requireMobilePageContext } from "@/lib/mobile/page-auth";
 import { MobileTaskList } from "@/components/mobile/mobile-task-list";
+import { MobileEntry } from "@/components/mobile/mobile-page";
 import { prisma } from "@/lib/prisma";
-
 export const dynamic = "force-dynamic";
-
-function greeting() {
-  const hour = new Date().getHours();
-  if (hour < 11) return "早上好";
-  if (hour < 14) return "中午好";
-  if (hour < 18) return "下午好";
-  return "晚上好";
-}
-
-export default async function MobileHomePage() {
+export default async function Page() {
   const context = await requireMobilePageContext("/m");
   const [home, organization] = await Promise.all([
     getMobileHome(),
@@ -25,111 +23,99 @@ export default async function MobileHomePage() {
     }),
   ]);
   return (
-    <main className="px-5 pb-6 pt-[max(env(safe-area-inset-top),1.25rem)]">
-      <header className="flex items-start justify-between">
+    <main className="space-y-6 px-5 pb-8 pt-[max(env(safe-area-inset-top),1.25rem)]">
+      <header className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-medium text-slate-400">
+          <p className="text-xs text-slate-500">
             {organization.name} · {home.storeName}
           </p>
-          <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.04em] text-slate-950">
-            {greeting()}，{home.user.name.split(/\s/)[0]}
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+            今天，{home.user.name.split(/\s/)[0]}
           </h1>
         </div>
-        <Link
-          href="/m/notifications"
-          className="relative flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600"
-        >
-          <Bell className="h-[18px] w-[18px]" />
-          {home.counts.unread > 0 ? (
-            <span className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-blue-600" />
-          ) : null}
-        </Link>
-      </header>
-
-      <section className="mt-8 grid grid-cols-3 divide-x divide-slate-200 border-y border-slate-200 py-4">
-        <div className="pr-3">
-          <p className="text-2xl font-semibold tracking-tight text-slate-950">
-            {home.counts.total}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-400">今天待办</p>
-        </div>
-        <div className="px-3">
-          <p className="text-2xl font-semibold tracking-tight text-amber-600">
-            {home.counts.overdue}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-400">已经超时</p>
-        </div>
-        <div className="pl-3">
-          <p className="text-2xl font-semibold tracking-tight text-rose-600">
-            {home.counts.critical}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-400">异常事项</p>
-        </div>
-      </section>
-
-      <section className="mt-5 flex items-center justify-between border-b border-slate-200 pb-4 text-xs">
-        <span className="text-slate-500">30 天完成 {home.sla.completed} 项</span>
-        <span className="font-medium text-slate-700">
-          平均周期{" "}
-          {home.sla.averageCycleHours === null ? "—" : `${home.sla.averageCycleHours.toFixed(1)}h`}{" "}
-          · 24h 内到期 {home.sla.dueSoon}
-        </span>
-      </section>
-
-      <section className="mt-7">
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-blue-600">
-              Now
-            </p>
-            <h2 className="mt-1 text-lg font-semibold text-slate-950">现在需要处理</h2>
-          </div>
+        <div className="flex gap-2">
           <Link
-            href="/m/tasks"
-            className="flex items-center gap-1 text-xs font-medium text-slate-500"
+            href="/m/notifications"
+            aria-label={`通知，${home.counts.unread} 条未读`}
+            className="relative flex h-11 w-11 items-center justify-center rounded-full bg-slate-100"
           >
-            全部 <ArrowRight className="h-3 w-3" />
+            <Bell className="h-5 w-5" />
+            {home.counts.unread > 0 && (
+              <span className="absolute -right-1 -top-1 rounded-full bg-blue-600 px-1.5 text-xs text-white">
+                {home.counts.unread}
+              </span>
+            )}
+          </Link>
+          <Link
+            aria-label="我的账号"
+            href="/m/me"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100"
+          >
+            <UserRound className="h-5 w-5" />
           </Link>
         </div>
-        <div className="mt-2">
-          <MobileTaskList tasks={home.tasks} />
+      </header>
+      <section className="grid grid-cols-2 gap-3">
+        {[
+          {
+            href: "/m/capture/purchase",
+            title: "买了东西",
+            detail: "记采购 · 新建商品",
+            icon: ShoppingBag,
+          },
+          { href: "/m/listings", title: "卖掉了", detail: "找商品 · 登记售出", icon: PackageCheck },
+          {
+            href: "/m/expenses",
+            title: "补邮费 / 费用",
+            detail: "从原单补成本",
+            icon: ReceiptText,
+          },
+          {
+            href: "/m/orders",
+            title: "最近订单",
+            detail: "收货 · 物流 · 结算",
+            icon: ClipboardCheck,
+          },
+        ].map(({ href, title, detail, icon: Icon }, i) => (
+          <Link
+            key={href}
+            href={href}
+            className={`rounded-2xl p-4 ${i === 0 ? "bg-blue-600 text-white" : "border border-slate-200 bg-white text-slate-950"}`}
+          >
+            <Icon className="h-5 w-5" />
+            <p className="mt-4 text-sm font-semibold">{title}</p>
+            <p className={`mt-1 text-xs ${i === 0 ? "text-blue-100" : "text-slate-500"}`}>
+              {detail}
+            </p>
+          </Link>
+        ))}
+      </section>
+      <section>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">
+            今天待办 <span className="text-blue-600">{home.counts.total}</span>
+          </h2>
+          <Link href="/m/tasks" className="py-3 text-sm text-blue-700">
+            全部待办 →
+          </Link>
         </div>
-      </section>
-
-      <section className="mt-6 grid grid-cols-2 gap-3">
-        <Link
-          href="/m/capture/purchase"
-          className="rounded-2xl bg-slate-950 p-4 text-white active:scale-[0.99]"
-        >
-          <ScanLine className="h-5 w-5 text-blue-300" />
-          <p className="mt-5 text-sm font-semibold">登记已购买</p>
-          <p className="mt-1 text-[11px] text-slate-400">截图或快速录入</p>
-        </Link>
-        <Link
-          href="/m/capture/price"
-          className="rounded-2xl bg-blue-50 p-4 text-blue-950 active:scale-[0.99]"
-        >
-          <Clock3 className="h-5 w-5 text-blue-600" />
-          <p className="mt-5 text-sm font-semibold">记录一个价格</p>
-          <p className="mt-1 text-[11px] text-blue-700/60">保留来源与时间</p>
-        </Link>
-      </section>
-      <Link
-        href="/m/prices"
-        className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-xs font-medium text-slate-600"
-      >
-        <span>查看已记录的价格变化</span>
-        <ArrowRight className="h-3.5 w-3.5" />
-      </Link>
-
-      {home.counts.overdue > 0 ? (
-        <div className="mt-4 flex items-start gap-3 rounded-2xl bg-amber-50 px-4 py-3 text-amber-900">
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <p className="text-xs leading-5">
-            有 {home.counts.overdue} 项已超过截止时间，请优先处理或重新委托。
+        {home.counts.overdue > 0 && (
+          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+            {home.counts.overdue} 项已超时，请优先处理
           </p>
-        </div>
-      ) : null}
+        )}
+        <MobileTaskList tasks={home.tasks} />
+      </section>
+      <MobileEntry
+        href="/m/orders?kind=sale"
+        title="销售结算与邮费"
+        description="补实际邮费、平台手续费，核对每单利润"
+      />
+      <MobileEntry
+        href="/m/capture"
+        title="更多随手记录"
+        description="记录市场价格、拍摄实物照片"
+      />
     </main>
   );
 }

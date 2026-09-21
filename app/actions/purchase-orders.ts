@@ -126,6 +126,7 @@ export interface CreatePurchaseLineInput {
 
 export interface AllocatePurchaseCostsInput {
   purchaseOrderId: string;
+  expectedUpdatedAt?: string;
   totalProductCost: string;
   method: "BY_QUANTITY" | "BY_AMOUNT" | "MANUAL";
   manualLineAmounts?: Array<{ purchaseLineId: string; amount: string }>;
@@ -593,6 +594,15 @@ export async function allocatePurchaseOrderCostsAction(data: AllocatePurchaseCos
     );
 
     await prisma.$transaction(async (tx) => {
+      if (data.expectedUpdatedAt) {
+        const expected = new Date(data.expectedUpdatedAt);
+        if (!Number.isFinite(expected.getTime())) throw new Error("订单版本无效，请刷新后重试");
+        const locked = await tx.purchaseOrder.updateMany({
+          where: { id: order.id, updatedAt: expected },
+          data: { updatedAt: new Date() },
+        });
+        if (locked.count !== 1) throw new Error("订单已被更新，请刷新并核对最新费用后重试");
+      }
       await tx.fee.deleteMany({ where: { refType: "PURCHASE_ORDER", refId: order.id } });
       for (const fee of convertedFees) {
         await tx.fee.create({

@@ -49,6 +49,7 @@ interface QuickSellButtonProps {
   defaultShippingFee?: string | null;
   /** 卡片行内紧凑样式 */
   compact?: boolean;
+  mobile?: boolean;
   sellableLocations?: StockLocationBreakdown[];
 }
 
@@ -64,6 +65,7 @@ export function QuickSellButton({
   platformFeeRate,
   defaultShippingFee,
   compact = false,
+  mobile = false,
   sellableLocations = [],
 }: QuickSellButtonProps) {
   const router = useRouter();
@@ -189,7 +191,7 @@ export function QuickSellButton({
       }
 
       setOpen(false);
-      router.push(`/sales/${result.orderId}`);
+      router.push(mobile ? `/m/orders/sale/${result.orderId}` : `/sales/${result.orderId}`);
       router.refresh();
     } catch (error) {
       setError(error instanceof Error ? error.message : "登记售出失败，请重试");
@@ -217,7 +219,7 @@ export function QuickSellButton({
       <Button
         variant="outline"
         size="sm"
-        className={compact ? "h-7 px-2.5 text-xs" : undefined}
+        className={mobile ? "h-11 px-4" : compact ? "h-7 px-2.5 text-xs" : undefined}
         onClick={handleOpen}
       >
         <ShoppingCart className={compact ? "mr-1 h-3 w-3" : "mr-2 h-4 w-4"} />
@@ -233,9 +235,9 @@ export function QuickSellButton({
               role="dialog"
               aria-modal="true"
               aria-labelledby={`quick-sell-title-${listingId}`}
-              className="relative z-10 max-h-[90vh] w-full max-w-3xl overflow-hidden"
+              className="relative z-10 flex max-h-[90dvh] w-full max-w-3xl flex-col overflow-hidden"
             >
-              <CardHeader className="border-b px-6 py-4">
+              <CardHeader className="shrink-0 border-b px-6 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <CardTitle id={`quick-sell-title-${listingId}`}>登记售出</CardTitle>
@@ -256,9 +258,9 @@ export function QuickSellButton({
                   </button>
                 </div>
               </CardHeader>
-              <CardContent className="p-0">
-                <form onSubmit={handleSubmit}>
-                  <div className="max-h-[calc(90vh-220px)] space-y-5 overflow-y-auto px-6 py-5">
+              <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+                <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+                  <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
                     {error ? (
                       <p
                         role="alert"
@@ -630,7 +632,7 @@ export function QuickSellButton({
                     </section>
                   </div>
 
-                  <div className="border-t bg-background px-6 py-4 shadow-[0_-8px_20px_-18px_rgba(15,23,42,0.45)]">
+                  <div className="shrink-0 border-t bg-background px-6 py-4 shadow-[0_-8px_20px_-18px_rgba(15,23,42,0.45)]">
                     <div className="grid grid-cols-2 gap-x-5 gap-y-2 text-sm sm:grid-cols-4">
                       <div>
                         <p className="text-xs text-muted-foreground">成交总额</p>

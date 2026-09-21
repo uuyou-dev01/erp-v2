@@ -5,7 +5,11 @@ import { Calculator, Copy, RotateCcw } from "lucide-react";
 import { ActionDialog } from "@/components/ui/action-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { calculateSuggestedPrice, type SkuPricingBasis } from "@/lib/application/sku-pricing";
+import {
+  calculateMaxAcquisitionPrice,
+  calculateSuggestedPrice,
+  type SkuPricingBasis,
+} from "@/lib/application/sku-pricing";
 import {
   applyPricingBasis,
   applyPricingPreset,
@@ -41,7 +45,18 @@ export function PricingCalculator({
 }) {
   const id = useId();
   const [copied, setCopied] = useState<string | null>(null);
-  const result = calculateSuggestedPrice({ ...draft, reference: basis?.reference ?? null });
+  const forwardResult = calculateSuggestedPrice({ ...draft, reference: basis?.reference ?? null });
+  const reverseResult = calculateMaxAcquisitionPrice(draft);
+  const reverse = draft.mode === "reverse";
+  const resultValue = reverse ? reverseResult.maxCost : forwardResult.price;
+  const resultCurrency = reverse ? draft.costCurrency : draft.currency;
+  const resultSource = reverse
+    ? (reverseResult.error ?? reverseResult.source)
+    : (forwardResult.error ?? forwardResult.source);
+  const profit = reverse ? reverseResult.profit : forwardResult.profit;
+  const actualMargin = reverse
+    ? reverseResult.actualMarginPercent
+    : forwardResult.actualMarginPercent;
   const currencies = [
     ...new Set(
       [draft.currency, draft.costCurrency, basis?.reference?.currency, "CNY", "JPY", "USD"].filter(
@@ -58,13 +73,13 @@ export function PricingCalculator({
       ...(field === "costCurrency" ? { cost: "", exchangeRate: "" } : {}),
     });
   };
-  const field = (key: keyof PricingDraft, label: string, placeholder?: string) => (
+  const field = (key: Exclude<keyof PricingDraft, "mode">, label: string, placeholder?: string) => (
     <label className="block space-y-1.5 text-xs" htmlFor={`${id}-${key}`}>
       <span className="text-muted-foreground">{label}</span>
       <Input
         id={`${id}-${key}`}
         inputMode="decimal"
-        value={draft[key]}
+        value={draft[key] ?? ""}
         onChange={(e) => change(key, e.target.value)}
         placeholder={placeholder}
         className="h-10 bg-background text-sm tabular-nums"
@@ -93,12 +108,56 @@ export function PricingCalculator({
           {name}
         </p>
       ) : null}
+      <div className="grid grid-cols-2 rounded-lg bg-muted p-1" aria-label="计算方向">
+        {(
+          [
+            ["forward", "定售价", "知道进价"],
+            ["reverse", "反推收货价", "知道售价"],
+          ] as const
+        ).map(([mode, label, hint]) => (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={draft.mode === mode}
+            className={`rounded-md px-3 py-2 text-left transition-colors ${
+              draft.mode === mode ? "bg-background shadow-sm" : "text-muted-foreground"
+            }`}
+            onClick={() => {
+              setCopied(null);
+              onChange({
+                ...draft,
+                mode,
+                ...(mode === "reverse" && !draft.salePrice && forwardResult.price
+                  ? { salePrice: forwardResult.price }
+                  : {}),
+              });
+            }}
+          >
+            <span className="block text-xs font-medium text-foreground">{label}</span>
+            <span className="mt-0.5 block text-[10px]">{hint}</span>
+          </button>
+        ))}
+      </div>
       <div className="rounded-lg bg-slate-100 px-4 py-3" aria-live="polite">
-        <p className="text-xs text-slate-600">建议售价 / 件</p>
+        <p className="text-xs text-slate-600">{reverse ? "最高收货价 / 件" : "建议售价 / 件"}</p>
         <p className="mt-1 break-all text-3xl font-semibold tabular-nums tracking-tight text-slate-950">
-          {result.price !== null ? formatCurrency(result.price, draft.currency) : "—"}
+          {resultValue !== null ? formatCurrency(resultValue, resultCurrency) : "—"}
         </p>
-        <p className="mt-2 text-xs leading-5 text-slate-600">{result.error ?? result.source}</p>
+        <div className="mt-3 grid grid-cols-2 border-t border-slate-200 pt-2.5">
+          <div className="pr-3">
+            <p className="text-[10px] text-slate-500">预计单件利润</p>
+            <p className="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
+              {profit !== null ? formatCurrency(profit, draft.currency) : "—"}
+            </p>
+          </div>
+          <div className="border-l border-slate-200 pl-3">
+            <p className="text-[10px] text-slate-500">实际利润率</p>
+            <p className="mt-0.5 text-sm font-medium tabular-nums text-slate-900">
+              {actualMargin !== null ? `${actualMargin}%` : "—"}
+            </p>
+          </div>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-slate-600">{resultSource}</p>
       </div>
       <div className="flex flex-wrap gap-2" aria-label="定价预设">
         {PRICING_PRESETS.map((preset) => (
@@ -118,10 +177,16 @@ export function PricingCalculator({
         ))}
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_100px] gap-3">
-        {field("cost", "每件进价", "输入金额")}
-        {currencyField("costCurrency", "进价币种")}
+        {reverse
+          ? field("salePrice", "已知售价 / 件", "输入售价")
+          : field("cost", "每件进价", "输入金额")}
+        {reverse
+          ? currencyField("currency", "售价币种")
+          : currencyField("costCurrency", "进价币种")}
         {field("shipping", `每件运费等（${draft.currency}）`, "暂按 0")}
-        {currencyField("currency", "售价币种")}
+        {reverse
+          ? currencyField("costCurrency", "收货币种")
+          : currencyField("currency", "售价币种")}
       </div>
       {draft.currency !== draft.costCurrency
         ? field(
@@ -154,7 +219,9 @@ export function PricingCalculator({
         <summary className="cursor-pointer">计算依据与带入数据</summary>
         <div className="mt-2 space-y-1 leading-5">
           <p>
-            （换算后进价 + 运费等）÷（1 − 平台费率 − 目标利润率）。同币种成交参考更高时取较高值。
+            {reverse
+              ? "售价 ×（1 − 平台费率 − 目标利润率）− 运费，再按汇率换算为最高收货价。"
+              : "（换算后进价 + 运费等）÷（1 − 平台费率 − 目标利润率）。同币种成交参考更高时取较高值。"}
           </p>
           {basis?.cost ? (
             <p>
@@ -188,23 +255,27 @@ export function PricingCalculator({
         <Button
           type="button"
           size="sm"
-          disabled={result.price === null}
+          disabled={resultValue === null}
           onClick={async () => {
             try {
-              await navigator.clipboard.writeText(result.price!);
-              setCopied(result.price);
+              await navigator.clipboard.writeText(resultValue!);
+              setCopied(resultValue);
             } catch {
               setCopied("failed");
             }
           }}
         >
           <Copy className="mr-1.5 h-3.5 w-3.5" />
-          {copied !== null && copied === result.price ? "已复制" : "复制售价"}
+          {copied !== null && copied === resultValue
+            ? "已复制"
+            : reverse
+              ? "复制收货价"
+              : "复制售价"}
         </Button>
       </div>
       {copied === "failed" ? (
         <p role="status" className="text-xs text-muted-foreground">
-          复制失败，请手动选取上方售价。
+          复制失败，请手动选取上方结果。
         </p>
       ) : null}
     </div>

@@ -505,28 +505,6 @@ export function MobileCaptureForm({
         </>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>卖家/供应商</Label>
-              <Input
-                aria-label="卖家或供应商"
-                className="h-12 rounded-xl"
-                value={common.supplierName}
-                onChange={(event) => updateCommon("supplierName", event.target.value)}
-                placeholder="卖家备注名"
-              />
-            </div>
-            <div>
-              <Label>订单号</Label>
-              <Input
-                aria-label="外部订单号"
-                className="h-12 rounded-xl"
-                value={common.externalOrderNo}
-                onChange={(event) => updateCommon("externalOrderNo", event.target.value)}
-                placeholder="可留空"
-              />
-            </div>
-          </div>
           {lines.map((line, index) => (
             <section key={line.localId} className="rounded-2xl border border-slate-200 p-4">
               <div className="mb-4 flex items-center justify-between">
@@ -653,6 +631,44 @@ export function MobileCaptureForm({
             <Plus className="mr-2 h-4 w-4" />
             添加同一订单的商品
           </Button>
+          <details className="rounded-xl border border-slate-200 p-4">
+            <summary className="cursor-pointer text-sm font-semibold">
+              卖家、订单号与物流（可稍后补）
+            </summary>
+            <div className="mt-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>卖家/供应商</Label>
+                  <Input
+                    aria-label="卖家或供应商"
+                    className="h-12 rounded-xl"
+                    value={common.supplierName}
+                    onChange={(event) => updateCommon("supplierName", event.target.value)}
+                    placeholder="卖家备注名"
+                  />
+                </div>
+                <div>
+                  <Label>订单号</Label>
+                  <Input
+                    aria-label="外部订单号"
+                    className="h-12 rounded-xl"
+                    value={common.externalOrderNo}
+                    onChange={(event) => updateCommon("externalOrderNo", event.target.value)}
+                    placeholder="可留空"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label>物流单号</Label>
+                <Input
+                  className="h-12 rounded-xl"
+                  value={common.trackingNo}
+                  onChange={(event) => updateCommon("trackingNo", event.target.value)}
+                  placeholder="可稍后补录"
+                />
+              </div>
+            </div>
+          </details>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>购买日期 *</Label>
@@ -673,15 +689,6 @@ export function MobileCaptureForm({
                 onChange={(event) => updateCommon("shippingFee", event.target.value)}
               />
             </div>
-          </div>
-          <div>
-            <Label>物流单号</Label>
-            <Input
-              className="h-12 rounded-xl"
-              value={common.trackingNo}
-              onChange={(event) => updateCommon("trackingNo", event.target.value)}
-              placeholder="没有可稍后补"
-            />
           </div>
         </>
       )}

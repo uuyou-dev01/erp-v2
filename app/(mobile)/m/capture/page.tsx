@@ -1,72 +1,46 @@
-import Link from "next/link";
-import { Camera, ChevronLeft, Eye, ShoppingBag } from "lucide-react";
+import { MobilePage, MobileEntry } from "@/components/mobile/mobile-page";
 import { requireMobilePageContext } from "@/lib/mobile/page-auth";
-
-export default async function MobileCapturePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ intent?: string }>;
-}) {
+export default async function Page() {
   await requireMobilePageContext("/m/capture");
-  const { intent } = await searchParams;
   return (
-    <main className="px-5 pb-8 pt-[max(env(safe-area-inset-top),1rem)]">
-      <header className="flex items-center gap-3 py-2">
-        <Link
-          href="/m"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-semibold text-slate-950">快速采集</h1>
-          <p className="text-xs text-slate-400">先留下事实，再进入正式流程</p>
+    <MobilePage title="记一笔" description="从发生的事情开始，记录后继续跟进。">
+      <MobileEntry
+        href="/m/capture/purchase"
+        title="买了东西"
+        description="已有商品直接选，新商品随采购一起创建"
+      />
+      <MobileEntry
+        href="/m/listings"
+        title="卖掉了"
+        description="登记成交数量与金额，进入发货流程"
+      />
+      <MobileEntry
+        href="/m/expenses"
+        title="记邮费 / 其他费用"
+        description="订单邮费从原单补录，零散费用单独登记"
+      />
+      <MobileEntry
+        href="/m/orders?kind=sale"
+        title="核对销售结算"
+        description="实际售价、邮费与平台手续费"
+      />
+      <MobileEntry
+        href="/m/orders"
+        title="到货与物流"
+        description="找采购单，补运单或确认整单到货"
+      />
+      <details className="rounded-xl border p-4">
+        <summary className="cursor-pointer text-sm font-semibold">价格记录与照片</summary>
+        <div className="mt-4 space-y-3">
+          <MobileEntry
+            href="/m/capture/price"
+            title="记录市场价格"
+            description="看到但还没买，留作价格参考"
+          />
+          <MobileEntry href="/m/prices" title="价格记录" description="查看过去记录的价格" />
+          <MobileEntry href="/m/items" title="实物拍照" description="给库存中的单件商品补照片" />
         </div>
-      </header>
-      <section className="mt-8 space-y-3">
-        <Link
-          href="/m/capture/price"
-          className={`flex items-center gap-4 rounded-2xl border p-4 ${intent === "price" ? "border-blue-500 bg-blue-50" : "border-slate-200"}`}
-        >
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
-            <Eye className="h-5 w-5" />
-          </span>
-          <span>
-            <span className="block text-sm font-semibold text-slate-900">记录市场价格</span>
-            <span className="mt-1 block text-xs text-slate-500">看到但还没有购买</span>
-          </span>
-        </Link>
-        <Link
-          href="/m/capture/purchase"
-          className={`flex items-center gap-4 rounded-2xl border p-4 ${intent === "purchase" ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200"}`}
-        >
-          <span
-            className={`flex h-11 w-11 items-center justify-center rounded-xl ${intent === "purchase" ? "bg-white/10 text-blue-300" : "bg-slate-100 text-slate-700"}`}
-          >
-            <ShoppingBag className="h-5 w-5" />
-          </span>
-          <span>
-            <span className="block text-sm font-semibold">登记已经购买</span>
-            <span
-              className={`mt-1 block text-xs ${intent === "purchase" ? "text-slate-400" : "text-slate-500"}`}
-            >
-              进入采购与在途流程
-            </span>
-          </span>
-        </Link>
-        <Link
-          href="/m/items"
-          className="flex items-center gap-4 rounded-2xl border border-slate-200 p-4 active:bg-slate-50"
-        >
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-            <Camera className="h-5 w-5" />
-          </span>
-          <span>
-            <span className="block text-sm font-semibold text-slate-900">拍摄单件商品</span>
-            <span className="mt-1 block text-xs text-slate-500">照片直接同步到单件库存档案</span>
-          </span>
-        </Link>
-      </section>
-    </main>
+      </details>
+    </MobilePage>
   );
 }

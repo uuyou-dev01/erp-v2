@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, ClipboardCheck, Plus, UserRound } from "lucide-react";
+import { ClipboardCheck, Plus, Package, ShoppingBag, ChartNoAxesCombined } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
   { href: "/m", label: "今天", icon: ClipboardCheck, exact: true },
-  { href: "/m/tasks", label: "待办", icon: ClipboardCheck },
-  { href: "/m/capture", label: "采集", icon: Plus, primary: true },
-  { href: "/m/notifications", label: "消息", icon: Bell },
-  { href: "/m/me", label: "我的", icon: UserRound },
+  { href: "/m/listings", label: "在售", icon: ShoppingBag },
+  { href: "/m/capture", label: "记一笔", icon: Plus, primary: true },
+  { href: "/m/inventory", label: "库存", icon: Package },
+  { href: "/m/reports", label: "报表", icon: ChartNoAxesCombined },
 ];
 
 export function MobileNav() {
@@ -34,7 +34,8 @@ export function MobileNav() {
               <span
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-lg",
-                  item.primary && "h-11 w-11 rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/25",
+                  item.primary &&
+                    "h-11 w-11 rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/25",
                   active && !item.primary && "bg-blue-50"
                 )}
               >

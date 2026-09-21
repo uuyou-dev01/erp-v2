@@ -90,6 +90,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         response.cookies.set(ACTIVE_STORE_COOKIE, storeAccess.storeId, cookieOptions);
       }
     }
+    await prisma.notification.updateMany({
+      where: { id, recipientId: user.id, readAt: null },
+      data: { readAt: new Date() },
+    });
+    response.headers.set("Cache-Control", "private, no-store");
     return response;
   } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -64,6 +64,11 @@ export function MobileSkuMatcher({
 
   useEffect(() => {
     if (!open) return;
+    if (!searchText.trim()) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     const timeout = window.setTimeout(async () => {
       setLoading(true);
@@ -97,7 +102,7 @@ export function MobileSkuMatcher({
             <p className="truncate text-sm font-semibold text-emerald-950">{selected.name}</p>
             <p className="mt-0.5 font-mono text-[11px] text-emerald-700">{selected.code}</p>
             <p className="mt-1 text-[11px] text-emerald-700">
-              采购行将直接使用这个正式 SKU，不再按名称重新猜测。
+              已关联到商品档案，可继续填写数量和金额。
             </p>
           </div>
           <button
@@ -123,12 +128,12 @@ export function MobileSkuMatcher({
           <PackagePlus className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-amber-950">
-              {unmatchedLabel || "创建待整理 SKU"}
+              {unmatchedLabel || "创建新商品，资料稍后完善"}
             </p>
             <p className="mt-1 text-[11px] leading-4 text-amber-800">
               {unmatchedLabel
                 ? "原始价格证据会先进入采集箱，稍后再确认正式 SKU。"
-                : "确认后会创建标记为“待整理”的正式 SKU，后续可以合并，不会静默关联到相似商品。"}
+                : "保存采购时一起创建商品档案，之后可补照片和详细资料。"}
             </p>
           </div>
           <button
@@ -153,7 +158,7 @@ export function MobileSkuMatcher({
         htmlFor={`sku-search-${lineNumber}`}
         className="block text-xs font-semibold text-slate-600"
       >
-        匹配正式 SKU{required ? " *" : "（可稍后确认）"}
+        选择已有商品{required ? " *" : "（可稍后确认）"}
       </label>
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -207,14 +212,15 @@ export function MobileSkuMatcher({
                     </p>
                   ) : null}
                 </div>
-                <span className="mt-0.5 text-xs font-semibold tabular-nums text-blue-700">
-                  {Math.round(candidate.score * 100)}%
-                </span>
               </button>
             ))
           ) : (
             <p className="px-3 py-4 text-center text-xs text-slate-500">
-              {loading ? "正在查找正式 SKU…" : "没有找到可信候选"}
+              {loading
+                ? "正在查找商品…"
+                : searchText.trim()
+                  ? "没有找到匹配商品，可创建新商品"
+                  : "输入名称查找已有商品，或创建新商品"}
             </p>
           )}
           {onCreatePending ? (
@@ -227,7 +233,7 @@ export function MobileSkuMatcher({
               }}
             >
               <PackagePlus className="h-4 w-4" />
-              {unmatchedLabel || "这是新商品，创建待整理 SKU"}
+              {unmatchedLabel || "这是新商品，创建商品档案"}
             </button>
           ) : null}
         </div>

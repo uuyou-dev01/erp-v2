@@ -6,7 +6,9 @@ export const PRICING_PRESETS = [
 ] as const;
 
 export interface PricingDraft {
+  mode: "forward" | "reverse";
   cost: string;
+  salePrice: string;
   costCurrency: string;
   currency: string;
   exchangeRate: string;
@@ -17,7 +19,9 @@ export interface PricingDraft {
 
 export function emptyPricingDraft(): PricingDraft {
   return {
+    mode: "forward",
     cost: "",
+    salePrice: "",
     costCurrency: "CNY",
     currency: "CNY",
     exchangeRate: "",
@@ -32,6 +36,7 @@ export function applyPricingBasis(draft: PricingDraft, basis: SkuPricingBasis): 
   const currency = basis.reference?.currency ?? costCurrency;
   return {
     ...draft,
+    mode: "forward",
     cost: basis.cost?.amount ?? "",
     costCurrency,
     currency,

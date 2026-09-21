@@ -102,8 +102,22 @@ export function calculateSuggestedPrice(input: {
   feePercent: string;
   shipping: string;
   reference: PricingMoney | null;
-}): { price: string | null; floor: string | null; source: string; error: string | null } {
-  const fail = (error: string) => ({ price: null, floor: null, source: "", error });
+}): {
+  price: string | null;
+  floor: string | null;
+  profit: string | null;
+  actualMarginPercent: string | null;
+  source: string;
+  error: string | null;
+} {
+  const fail = (error: string) => ({
+    price: null,
+    floor: null,
+    profit: null,
+    actualMarginPercent: null,
+    source: "",
+    error,
+  });
   const margin = nonnegative(input.marginPercent);
   const fee = nonnegative(input.feePercent || "0");
   const shipping = nonnegative(input.shipping || "0");
@@ -118,6 +132,8 @@ export function calculateSuggestedPrice(input: {
       ? {
           price: reference.toFixed(2),
           floor: null,
+          profit: null,
+          actualMarginPercent: null,
           source: `${input.reference!.source}；待补进价核验利润`,
           error: null,
         }
@@ -132,14 +148,71 @@ export function calculateSuggestedPrice(input: {
     .div(new Decimal(1).minus(margin.plus(fee).div(100)));
   const useReference = reference && reference.gte(floor);
   const rounding = input.currency === "JPY" ? 0 : 2;
+  const price = (useReference ? reference : floor).toDecimalPlaces(rounding, Decimal.ROUND_CEIL);
+  const profit = price
+    .mul(new Decimal(1).minus(fee.div(100)))
+    .minus(cost.mul(rate))
+    .minus(shipping);
   return {
-    price: (useReference ? reference : floor)
-      .toDecimalPlaces(rounding, Decimal.ROUND_CEIL)
-      .toFixed(rounding),
+    price: price.toFixed(rounding),
     floor: floor.toDecimalPlaces(rounding, Decimal.ROUND_CEIL).toFixed(rounding),
+    profit: profit.toDecimalPlaces(rounding, Decimal.ROUND_HALF_UP).toFixed(rounding),
+    actualMarginPercent: profit.div(price).mul(100).toFixed(2),
     source: useReference
       ? `${input.reference!.source}，不低于目标利润售价`
       : "按进价、已填费用和目标利润率估算",
+    error: null,
+  };
+}
+
+export function calculateMaxAcquisitionPrice(input: {
+  salePrice: string;
+  costCurrency: string;
+  currency: string;
+  exchangeRate: string;
+  marginPercent: string;
+  feePercent: string;
+  shipping: string;
+}): {
+  maxCost: string | null;
+  profit: string | null;
+  actualMarginPercent: string | null;
+  source: string;
+  error: string | null;
+} {
+  const fail = (error: string) => ({
+    maxCost: null,
+    profit: null,
+    actualMarginPercent: null,
+    source: "",
+    error,
+  });
+  const salePrice = nonnegative(input.salePrice);
+  const margin = nonnegative(input.marginPercent);
+  const fee = nonnegative(input.feePercent || "0");
+  const shipping = nonnegative(input.shipping || "0");
+  if (!salePrice?.gt(0)) return fail("请输入有效的已知售价");
+  if (!margin || !fee || !shipping) return fail("请输入有效的非负利润率、费率和运费");
+  if (margin.plus(fee).gte(100)) return fail("目标利润率与平台费率合计必须小于 100%");
+  const rate =
+    input.costCurrency === input.currency ? new Decimal(1) : nonnegative(input.exchangeRate);
+  if (!rate?.gt(0)) return fail(`请填写汇率：1 ${input.costCurrency} 等于多少 ${input.currency}`);
+  const availableCost = salePrice
+    .mul(new Decimal(1).minus(margin.plus(fee).div(100)))
+    .minus(shipping);
+  if (availableCost.lte(0)) return fail("当前售价不足以覆盖费用和目标利润");
+  const rounding = input.costCurrency === "JPY" ? 0 : 2;
+  const maxCost = availableCost.div(rate).toDecimalPlaces(rounding, Decimal.ROUND_FLOOR);
+  const profit = salePrice
+    .mul(new Decimal(1).minus(fee.div(100)))
+    .minus(maxCost.mul(rate))
+    .minus(shipping);
+  const profitRounding = input.currency === "JPY" ? 0 : 2;
+  return {
+    maxCost: maxCost.toFixed(rounding),
+    profit: profit.toDecimalPlaces(profitRounding, Decimal.ROUND_HALF_UP).toFixed(profitRounding),
+    actualMarginPercent: profit.div(salePrice).mul(100).toFixed(2),
+    source: "按售价扣除平台费、运费和目标利润后反推",
     error: null,
   };
 }
