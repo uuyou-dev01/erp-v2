@@ -98,6 +98,38 @@ beforeEach(() => {
 });
 
 describe("operating report financial boundaries", () => {
+  it("reconciles discounted bundle lines with the order and preserves each inventory cost", async () => {
+    const original = order();
+    const baseLine = original.lines[0];
+    db.customerOrder.findMany.mockResolvedValue([
+      order({
+        totalPaid: "9000",
+        lines: [
+          {
+            ...baseLine,
+            sku: { id: "a", name: "A", code: "A", parentSku: { id: "g", name: "系列", code: "G" } },
+            lineAmount: "6000",
+            allocations: [{ ...baseLine.allocations[0], costAmount: "100" }],
+          },
+          {
+            ...baseLine,
+            sku: { id: "b", name: "B", code: "B", parentSku: { id: "g", name: "系列", code: "G" } },
+            lineAmount: "4000",
+            allocations: [{ ...baseLine.allocations[0], costAmount: "80" }],
+          },
+        ],
+      }),
+    ]);
+    const result = await getOperatingReport("store-1", "org-1", range());
+    const sale = result.sales[0];
+    expect(sale.items.map((item) => item.baseRevenue)).toEqual(["270.00", "180.00"]);
+    expect(sale.items.map((item) => item.baseCost)).toEqual(["100.00", "80.00"]);
+    expect(sale.items.every((item) => item.groupId === "g")).toBe(true);
+    expect(
+      sale.items.reduce((sum, item) => sum.plus(item.baseProfit!), new Decimal(0)).toFixed(2)
+    ).toBe(sale.profit);
+  });
+
   it("converts revenue and fees in order currency, but cost in inventory currency; totals reconcile", async () => {
     db.customerOrder.findMany.mockResolvedValue([
       order(),
@@ -221,6 +253,7 @@ describe("operating report financial boundaries", () => {
     const purchase = {
       id: "po-1",
       orderNo: "PO-001",
+      lines: [{ quantity: "2", sku: { name: "测试端盒", code: "BOX-001" } }],
       currency: "JPY",
       fxRate: "0.048",
       totalAmount: "10000",
@@ -235,6 +268,8 @@ describe("operating report financial boundaries", () => {
     ]);
     const result = await getOperatingReport("store-1", "org-1", range());
     expect(result.summary.purchase).toBe("480.00");
+    expect(result.procurement[0].itemSummary).toBe("测试端盒 × 2");
+    expect(result.procurement[0].label).toBe("PO-001");
     expect(result.procurement[0].money.basis).toBe("单据约定汇率");
     expect(db.purchaseOrder.findMany.mock.calls[0][0].where.OR[0].orderedAt).toEqual({
       gte: range().dateFrom,

@@ -112,6 +112,13 @@ export default async function LocationDetailPage({
         <div className="flex flex-wrap items-center gap-2">
           {canManageInventory ? (
             <>
+              <Button asChild variant="outline" size="sm">
+                <Link
+                  href={`/inventory/opening-stock?${new URLSearchParams({ locationId: location.id })}`}
+                >
+                  期初库存记录
+                </Link>
+              </Button>
               <Button asChild size="sm">
                 <Link href={openingStockHref}>
                   <PackagePlus className="mr-1.5 h-4 w-4" />

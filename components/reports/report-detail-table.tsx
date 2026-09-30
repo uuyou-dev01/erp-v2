@@ -1,4 +1,5 @@
 "use client";
+import Decimal from "decimal.js";
 import { Fragment, useState } from "react";
 import Link from "next/link";
 import {
@@ -61,7 +62,7 @@ export function DetailTable({
     (row) =>
       (!currency || row.money.currency === currency) &&
       (!status || row.status === status) &&
-      `${row.label} ${row.detail} ${kind === "sales" ? (row as ReportSale).items.map((item) => `${item.name} ${item.code}`).join(" ") : ""}`
+      `${row.label} ${row.itemSummary ?? ""} ${row.detail} ${kind === "sales" ? (row as ReportSale).items.map((item) => `${item.name} ${item.code}`).join(" ") : ""}`
         .toLowerCase()
         .includes(query.toLowerCase())
   );
@@ -98,7 +99,7 @@ export function DetailTable({
       ],
       ...filtered.map((row) => [
         row.date,
-        row.label,
+        row.itemSummary ? `${row.itemSummary} · ${row.label}` : row.label,
         row.detail,
         statusLabels[row.status] ?? row.status,
         row.money.currency,
@@ -214,7 +215,9 @@ export function DetailTable({
                     ? "商品 / 渠道"
                     : kind === "stock"
                       ? "商品 / 位置"
-                      : "单据 / 分类"}
+                      : rows.some((row) => row.itemSummary)
+                        ? "商品 / 供应商"
+                        : "单据 / 分类"}
                 </TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead className={numberClass}>原币金额</TableHead>
@@ -247,7 +250,7 @@ export function DetailTable({
                           ? (row as ReportSale).items
                               .map((item) => `${item.name} × ${item.quantity}`)
                               .join("、")
-                          : row.label}
+                          : row.itemSummary || row.label}
                       </Link>
                       <div
                         className={cn(
@@ -256,7 +259,7 @@ export function DetailTable({
                         )}
                       >
                         {row.detail}
-                        {kind === "sales" ? ` · ${row.label}` : ""}
+                        {kind === "sales" || row.itemSummary ? ` · ${row.label}` : ""}
                         {kind === "stock" && "location" in row
                           ? ` · ${row.location} · ${String((row as ReportStock).quantity)} 件`
                           : ""}
@@ -300,6 +303,18 @@ export function DetailTable({
                         {row.included ? (
                           <>
                             <Amount value={(row as ReportSale).profit} />
+                            {(row as ReportSale).profit !== null &&
+                              row.money.base !== null &&
+                              new Decimal(row.money.base).gt(0) && (
+                                <div className="text-xs text-muted-foreground">
+                                  利润率{" "}
+                                  {new Decimal((row as ReportSale).profit!)
+                                    .div(row.money.base)
+                                    .mul(100)
+                                    .toFixed(1)}
+                                  %
+                                </div>
+                              )}
                             {(row as ReportSale).provisional && (
                               <div className="text-xs text-amber-700">参考值</div>
                             )}

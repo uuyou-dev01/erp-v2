@@ -481,6 +481,7 @@ export interface SkuCatalogDetail extends SkuCatalogListItem {
       allocatedInventoryCost: string;
       grossProfit: string;
       profitRate: string;
+      fulfilledQuantity?: string;
       fulfilledLineCount: number;
       pendingCostLineCount: number;
       currency: string | null;
@@ -998,7 +999,8 @@ export async function getSkuCatalogDetail(id: string): Promise<SkuCatalogDetail 
     parentSkuId: sku.parentSkuId,
     childCount: sku.childSkus.length,
   });
-  const metricSkuIds = catalogRole === "GROUP" ? sku.childSkus.map((child) => child.id) : [sku.id];
+  const metricSkuIds =
+    catalogRole === "GROUP" ? [sku.id, ...sku.childSkus.map((child) => child.id)] : [sku.id];
   const metricSkuIdSet = new Set(metricSkuIds);
 
   const [

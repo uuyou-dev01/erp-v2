@@ -235,15 +235,18 @@ export default async function SalesPage({
   const columns: Column<OrderRow>[] = [
     {
       key: "order",
-      header: "订单",
+      header: "商品 / 客户",
       className: "min-w-[180px]",
       cell: (order) => (
         <div className="space-y-1">
           <Link href={`/sales/${order.id}`} className="font-medium hover:underline">
-            {order.externalOrderNo || order.orderNumber}
+            {itemSummary(order).title}
           </Link>
           <p className="text-xs text-muted-foreground">
-            {order.customerName} · {new Date(order.orderDate).toLocaleDateString("zh-CN")}
+            {order.customerName || "散客"} · {new Date(order.orderDate).toLocaleDateString("zh-CN")}
+          </p>
+          <p className="break-all text-xs text-muted-foreground">
+            {order.externalOrderNo || order.orderNumber}
           </p>
         </div>
       ),

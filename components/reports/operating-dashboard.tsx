@@ -2,6 +2,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Decimal from "decimal.js";
+import { salesCurrencyBreakdown } from "@/lib/application/sales-contribution";
+import { SalesContributionTable } from "./sales-contribution-table";
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -77,6 +79,13 @@ export function OperatingDashboard({
     window.history.replaceState(null, "", url);
   };
   const s = data.summary;
+  const currencyBreakdown = salesCurrencyBreakdown(data.sales);
+  const currencySecondary = (key: "revenue" | "profit" | "averageOrderValue") =>
+    currencyBreakdown.map((row) => (
+      <span className="block" key={row.currency}>
+        {key === "profit" ? "折算" : "原币"} {reportMoney(row[key], row.currency)}
+      </span>
+    ));
   const period = `${data.from} 至 ${data.to}`;
   const profitRate =
     s.revenue !== null && Number(s.revenue) > 0 && s.profit !== null
@@ -248,19 +257,22 @@ export function OperatingDashboard({
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <Metric
                 title="销售收入"
+                secondary={currencySecondary("revenue")}
                 value={reportMoney(s.revenue)}
                 description={`${s.orderCount} 笔成交订单 · 查看销售明细`}
                 onClick={() => changeTab("sales")}
                 highlight
               />
               <Metric
-                title="客单价"
+                title="客单价（CNY）"
+                secondary={currencySecondary("averageOrderValue")}
                 value={reportMoney(averageOrderValue(s.revenue, s.orderCount))}
                 description="所选期间销售收入 ÷ 成交订单数"
                 onClick={() => changeTab("sales")}
               />
               <Metric
                 title="订单贡献利润"
+                secondary={currencySecondary("profit")}
                 value={reportMoney(s.profit)}
                 description={`贡献利润率 ${profitRate}${s.provisionalCount ? " · 含预估运费，仅供参考" : " · 查看成本拆解"}`}
                 onClick={() => changeTab("sales")}
@@ -416,6 +428,7 @@ export function OperatingDashboard({
             <div className="grid gap-3 sm:grid-cols-3">
               <Metric
                 title="销售收入"
+                secondary={currencySecondary("revenue")}
                 value={reportMoney(s.revenue)}
                 description={`${s.orderCount} 笔成交订单`}
                 onClick={() =>
@@ -433,6 +446,7 @@ export function OperatingDashboard({
               />
               <Metric
                 title="订单贡献利润"
+                secondary={currencySecondary("profit")}
                 value={reportMoney(s.profit)}
                 description={`利润率 ${profitRate} · ${s.provisionalCount} 笔运费待确认`}
                 onClick={() =>
@@ -452,8 +466,12 @@ export function OperatingDashboard({
               </div>
             </Section>
             <MonthlyTable data={data} />
+            <SalesContributionTable sales={data.sales} />
             <div className="grid gap-4 lg:grid-cols-2">
-              <Section title="原币核对" description="各币种单独合计，折算金额逐笔汇总。">
+              <Section
+                title="原币核对"
+                description="各币种单独合计；原币利润以每笔成交汇率折算库存成本后的贡献利润，非实际到账金额。"
+              >
                 {s.orderCount ? (
                   <CurrencySummary rows={data.sales} />
                 ) : (

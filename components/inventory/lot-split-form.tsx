@@ -41,8 +41,8 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
 
     try {
       const qty = parseFloat(quantity);
-      if (isNaN(qty) || qty <= 0) {
-        setError("请输入有效的数量");
+      if (!Number.isInteger(qty) || qty <= 0) {
+        setError("请输入正整数数量");
         return;
       }
       if (qty > parseFloat(availableQty)) {
@@ -62,6 +62,7 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
         return;
       }
 
+      router.push(`/inventory/items/${result.itemUnitId}`);
       router.refresh();
       setQuantity("1");
       setNotes("");
@@ -73,14 +74,17 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
   };
 
   return (
-    <Card>
+    <Card id="convert-to-item">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Scissors className="h-5 w-5" />
-          标记瑕疵 · 拆出单品
+          标记瑕疵 · 转为单件
         </CardTitle>
       </CardHeader>
       <CardContent>
+        <p className="mb-4 text-sm text-muted-foreground">
+          从当前批次取出指定数量，每件生成独立编号；SKU、仓库和单位成本保持一致。不同瑕疵情况请分次操作。
+        </p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
@@ -95,9 +99,7 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
                 onChange={(e) => setQuantity(e.target.value)}
                 placeholder="1"
               />
-              <p className="text-xs text-muted-foreground">
-                可用: {availableQty}
-              </p>
+              <p className="text-xs text-muted-foreground">可用: {availableQty}</p>
             </div>
 
             <div className="space-y-2">
@@ -129,7 +131,9 @@ export function LotSplitForm({ lotId, storeId, availableQty }: LotSplitFormProps
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-destructive">{error}</p>
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
           )}
 
           <Button type="submit" disabled={loading} variant="default">

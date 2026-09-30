@@ -129,7 +129,8 @@ describe("replenishment view scope", () => {
     expect(matchesReplenishmentVariant(product, used, { stockType: "LOT" })).toBe(false);
     const mixed = variant({ sellableLotQty: 2, sellableItemUnitCount: 1 });
     expect(matchesReplenishmentVariant(product, mixed, { stockType: "MIXED" })).toBe(true);
-    expect(matchesReplenishmentVariant(product, mixed, { stockType: "LOT" })).toBe(false);
+    expect(matchesReplenishmentVariant(product, mixed, { stockType: "LOT" })).toBe(true);
+    expect(matchesReplenishmentVariant(product, mixed, { stockType: "ITEM_UNIT" })).toBe(true);
   });
 });
 
@@ -274,7 +275,9 @@ describe("replenishment product groups", () => {
     expect(urgentGroup.totalVariantCount).toBe(2);
     expect(urgentGroup.rows.map((row) => row.variant.skuId)).toEqual(["hidden"]);
     expect(urgentGroup.rows.reduce((sum, row) => sum + row.variant.sellableQty, 0)).toBe(0);
-    expect(urgentGroup.rows.reduce((sum, row) => sum + (row.decision?.sales30Qty ?? 0), 0)).toBe(30);
+    expect(urgentGroup.rows.reduce((sum, row) => sum + (row.decision?.sales30Qty ?? 0), 0)).toBe(
+      30
+    );
   });
 
   it("globally deduplicates SKU rows and uses the entry that has a forecast", () => {
@@ -339,10 +342,9 @@ describe("replenishment product groups", () => {
       "second",
       "third",
     ]);
-    expect(buildReplenishmentPoolGroups(products, {}, "healthy").map((group) => group.key)).toEqual([
-      "second",
-      "first",
-    ]);
+    expect(buildReplenishmentPoolGroups(products, {}, "healthy").map((group) => group.key)).toEqual(
+      ["second", "first"]
+    );
   });
 
   it("uses SKU code and then group identity to make equal urgency ordering deterministic", () => {
@@ -397,6 +399,10 @@ describe("replenishment product groups", () => {
     expect(isExcludedReplenishmentRow(bySku.get("used")!)).toBe(true);
     expect(replenishmentCategoryFor(bySku.get("disabled")!)).toBe("excluded");
     expect(replenishmentCategoryFor(bySku.get("slow")!)).toBe("slow");
-    expect(countReplenishmentPoolGroups([group])).toMatchObject({ urgent: 1, excluded: 1, slow: 1 });
+    expect(countReplenishmentPoolGroups([group])).toMatchObject({
+      urgent: 1,
+      excluded: 1,
+      slow: 1,
+    });
   });
 });

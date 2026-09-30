@@ -139,7 +139,7 @@ export function aggregateWorkMetrics(
     rows: Array.from(rows.values()).sort(
       (a, b) => b.eventCount - a.eventCount || a.userName.localeCompare(b.userName, "zh-CN")
     ),
-    records: filtered.slice(0, 200).map((fact) => ({
+    records: filtered.map((fact) => ({
       id: fact.id,
       userName: fact.userName,
       workName: fact.workName,
@@ -193,7 +193,6 @@ async function loadWorkMetrics(where: Prisma.WorkRecordWhereInput, platformId?: 
       workType: { select: { settlementRate: true, settlementCurrency: true } },
     },
     orderBy: { occurredAt: "desc" },
-    take: 2000,
   });
   const locationIds = Array.from(
     new Set(records.map((record) => record.locationId).filter(Boolean) as string[])

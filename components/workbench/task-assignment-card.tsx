@@ -31,16 +31,18 @@ export function TaskAssignmentCard({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [assigneeId, setAssigneeId] = useState(item?.taskAssignedToId ?? "");
+  const [savedAssigneeId, setSavedAssigneeId] = useState(item?.taskAssignedToId ?? "");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setAssigneeId(item?.taskAssignedToId ?? "");
+    setSavedAssigneeId(item?.taskAssignedToId ?? "");
     setError(null);
   }, [item?.taskId, item?.taskAssignedToId]);
 
   if (!item?.taskId) return null;
 
-  const currentAssignee = members.find((member) => member.id === item.taskAssignedToId);
+  const currentAssignee = members.find((member) => member.id === savedAssigneeId);
   const fulfillmentLocationIds = item.taskFulfillmentLocationIds?.length
     ? item.taskFulfillmentLocationIds
     : item.taskFulfillmentLocationId
@@ -71,8 +73,8 @@ export function TaskAssignmentCard({
             {isBundleSale
               ? `${item.lineItems?.length ?? 0} 种 SKU、共 ${totalQuantity} 件作为一个包裹，统一指派给一名负责人。`
               : fulfillmentLocationLabel
-              ? `仅显示具备 ${fulfillmentLocationLabel} 对应任务权限的人员。`
-              : "指派后，对方会收到站内通知并可在“我的任务”中看到。"}
+                ? `仅显示具备 ${fulfillmentLocationLabel} 对应任务权限的人员。`
+                : "指派后，对方会收到站内通知并可在“我的任务”中看到。"}
           </p>
         </div>
         <Badge variant="outline">
@@ -104,7 +106,7 @@ export function TaskAssignmentCard({
         <Button
           type="button"
           variant="outline"
-          disabled={pending || !assigneeId || assigneeId === item.taskAssignedToId}
+          disabled={pending || !assigneeId || assigneeId === savedAssigneeId}
           onClick={() => {
             startTransition(async () => {
               try {
@@ -114,6 +116,7 @@ export function TaskAssignmentCard({
                   setError(result.error);
                   return;
                 }
+                setSavedAssigneeId(assigneeId);
                 router.refresh();
                 onAssigned?.();
               } catch (error) {

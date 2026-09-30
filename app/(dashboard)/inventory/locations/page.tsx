@@ -1,3 +1,9 @@
+import Link from "next/link";
+import {
+  inferMarketFromLocation,
+  marketLabel,
+  type SellableMarketCode,
+} from "@/lib/application/sellable-market";
 import { requireUserContext } from "@/lib/auth/user-context";
 import { getLocations } from "@/app/actions/locations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,12 +44,18 @@ type LocationRow = Awaited<ReturnType<typeof getLocations>>[number];
 export default async function LocationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ create?: string; returnTo?: string }>;
+  searchParams: Promise<{ create?: string; returnTo?: string; market?: string }>;
 }) {
   const { activeStoreId: storeId } = await requireUserContext();
   const params = await searchParams;
   const returnTo = safeLocationReturnPath(params.returnTo);
-  const locations = await getLocations(storeId);
+  const allLocations = await getLocations(storeId);
+  const selectedMarket = ["CN", "JP", "US", "EU", "GLOBAL", "UNKNOWN"].includes(params.market ?? "")
+    ? (params.market as SellableMarketCode)
+    : undefined;
+  const locations = selectedMarket
+    ? allLocations.filter((location) => inferMarketFromLocation(location) === selectedMarket)
+    : allLocations;
 
   const stats = {
     total: locations.length,
@@ -152,7 +164,14 @@ export default async function LocationsPage({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">仓库位置</h1>
+          <h1 className="text-3xl font-bold">
+            {selectedMarket ? `${marketLabel(selectedMarket)} · 仓库位置` : "仓库位置"}
+          </h1>
+          {selectedMarket && (
+            <Link href="/inventory/locations" className="text-sm text-primary hover:underline">
+              查看全部地区仓库
+            </Link>
+          )}
           <p className="text-muted-foreground">
             将仓库、集运点和持有人作为履约网络节点；实际地区、运营能力和发货范围分别配置。
           </p>

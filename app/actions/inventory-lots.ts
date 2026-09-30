@@ -13,6 +13,7 @@ import { actionSuccess, toActionFailure } from "@/lib/application/action-result"
 import { createItemUnitWithIdentity } from "@/lib/application/item-unit-identity";
 import { assertOperationalSku } from "@/lib/application/sku-operability";
 import { requireUserContext } from "@/lib/auth/user-context";
+import { normalizeUsedItemGrade } from "@/lib/inventory/item-condition";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 
 /**
@@ -211,9 +212,10 @@ export interface ConvertLotToItemUnitInput {
 
 export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
   const { lotId, storeId, quantity, conditionGrade, notes } = data;
+  await requireUserContext({ storeId });
   const requestedQuantity = new Decimal(quantity);
-  if (!requestedQuantity.isFinite() || requestedQuantity.lte(0)) {
-    throw new Error("拆分数量必须大于 0");
+  if (!requestedQuantity.isFinite() || !requestedQuantity.isInteger() || requestedQuantity.lte(0)) {
+    throw new Error("转为单件的数量必须是正整数");
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -276,31 +278,48 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
       },
     });
 
-    const itemUnit = await createItemUnitWithIdentity(tx, {
-      storeId,
-      data: {
+    const itemUnits = [];
+    for (let index = 0; index < quantity; index += 1) {
+      const itemUnit = await createItemUnitWithIdentity(tx, {
         storeId,
-        skuId: lot.skuId,
-        locationId: lot.locationId,
-        unitCost: lot.unitCost,
-        costCurrency: lot.costCurrency,
-        conditionGrade,
-        notes,
-        sourceType: "SPLIT",
-        sourceId: split.id,
-        status: "AVAILABLE",
-      },
-    });
-
-    await tx.inventorySplitLine.create({
-      data: {
-        splitId: split.id,
-        targetType: "ITEM_UNIT",
-        targetId: itemUnit.id,
-        quantity: requestedQuantity.toFixed(4),
-        allocatedCost: new Decimal(lot.unitCost.toString()).mul(requestedQuantity).toFixed(4),
-      },
-    });
+        data: {
+          storeId,
+          skuId: lot.skuId,
+          locationId: lot.locationId,
+          unitCost: lot.unitCost,
+          costCurrency: lot.costCurrency,
+          costStatus: lot.costStatus,
+          conditionType: conditionGrade === "NEW" ? "NEW" : "USED",
+          conditionGrade: conditionGrade === "NEW" ? null : normalizeUsedItemGrade(conditionGrade),
+          notes,
+          sourceType: "SPLIT",
+          sourceId: split.id,
+          status: "AVAILABLE",
+        },
+      });
+      itemUnits.push(itemUnit);
+      await tx.inventorySplitLine.create({
+        data: {
+          splitId: split.id,
+          targetType: "ITEM_UNIT",
+          targetId: itemUnit.id,
+          quantity: "1",
+          allocatedCost: lot.unitCost,
+        },
+      });
+      await tx.stockLedger.create({
+        data: {
+          storeId,
+          entityType: "ITEM_UNIT",
+          entityId: itemUnit.id,
+          locationId: lot.locationId,
+          deltaQty: "1",
+          reason: "SPLIT_IN",
+          refType: "SPLIT",
+          refId: split.id,
+        },
+      });
+    }
 
     await tx.stockLedger.create({
       data: {
@@ -315,24 +334,13 @@ export async function convertLotToItemUnit(data: ConvertLotToItemUnitInput) {
       },
     });
 
-    await tx.stockLedger.create({
-      data: {
-        storeId,
-        entityType: "ITEM_UNIT",
-        entityId: itemUnit.id,
-        locationId: lot.locationId,
-        deltaQty: requestedQuantity.toFixed(4),
-        reason: "SPLIT_IN",
-        refType: "SPLIT",
-        refId: split.id,
-      },
-    });
-
-    return { split, itemUnit };
+    return { split, itemUnit: itemUnits[0], itemUnits };
   });
 
   revalidatePath(`/inventory/lots/${lotId}`);
   revalidatePath("/inventory/items");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/inventory/skus");
   return result;
 }
 
@@ -342,6 +350,7 @@ export async function convertLotToItemUnitAction(data: ConvertLotToItemUnitInput
     return actionSuccess({
       splitId: result.split.id,
       itemUnitId: result.itemUnit.id,
+      itemUnitIds: result.itemUnits.map((item) => item.id),
     });
   } catch (error) {
     return toActionFailure(error, "拆出单品失败，请重试");

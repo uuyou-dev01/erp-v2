@@ -330,6 +330,7 @@ export default async function SellableInventoryPage({
             </Button>
           </Link>
           <InventoryDashboardActions
+            market={selectedMarket}
             storeId={storeId}
             pendingFirstListingCount={guide.awaitingFirstListing}
             pendingHref={withSellableParams(params, { unlisted: "1" })}

@@ -228,7 +228,9 @@ export function PendingActionPanel({
             <TaskAssignmentCard
               item={taskItem}
               members={assignableMembers}
-              onAssigned={onComplete}
+              onAssigned={() =>
+                setNotice({ tone: "success", message: "已指派负责人，可以继续补充发货资料。" })
+              }
             />
           }
         />
@@ -343,7 +345,9 @@ export function PendingActionPanel({
             <TaskAssignmentCard
               item={taskItem}
               members={assignableMembers}
-              onAssigned={onComplete}
+              onAssigned={() =>
+                setNotice({ tone: "success", message: "已指派负责人，可以继续处理当前任务。" })
+              }
             />
             <ContextSummaryCard detail={detail} />
             <PurchaseLinesCard detail={detail} />

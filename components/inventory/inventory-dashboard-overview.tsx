@@ -7,12 +7,14 @@ interface InventoryDashboardActionsProps {
   storeId: string;
   pendingFirstListingCount: number;
   pendingHref: string;
+  market?: string;
 }
 
 export function InventoryDashboardActions({
   storeId,
   pendingFirstListingCount,
   pendingHref,
+  market,
 }: InventoryDashboardActionsProps) {
   return (
     <div className="relative z-20 flex flex-wrap justify-end gap-1.5">
@@ -67,7 +69,13 @@ export function InventoryDashboardActions({
           </Link>
         </div>
       </details>
-      <Link href="/inventory/locations">
+      <Link
+        href={
+          market
+            ? `/inventory/locations?market=${encodeURIComponent(market)}`
+            : "/inventory/locations"
+        }
+      >
         <Button variant="ghost" size="sm" className="h-9 shrink-0">
           <MapPinned className="h-3.5 w-3.5" />
           仓位

@@ -104,12 +104,14 @@ export function Metric({
   description,
   onClick,
   highlight,
+  secondary,
 }: {
   title: string;
   value: string;
   description: string;
   onClick: () => void;
   highlight?: boolean;
+  secondary?: React.ReactNode;
 }) {
   return (
     <button
@@ -131,6 +133,9 @@ export function Metric({
       >
         {value}
       </span>
+      {secondary && (
+        <span className="mt-2 block space-y-1 text-xs text-muted-foreground">{secondary}</span>
+      )}
       <span className="mt-2 block text-xs leading-5 text-muted-foreground">{description}</span>
     </button>
   );

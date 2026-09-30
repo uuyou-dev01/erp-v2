@@ -29,6 +29,7 @@ import { BackButton } from "@/components/shared/back-button";
 import { fulfillmentDestinationLabel } from "@/lib/inventory/location-fulfillment";
 import { canShipOrders } from "@/lib/auth/permissions";
 import { getLatestFxRate } from "@/lib/fx";
+import { getStoreStockBreakdown } from "@/lib/application/inventory";
 import { parseShippingProof } from "@/lib/application/shipping-proof";
 
 export const dynamic = "force-dynamic";
@@ -75,6 +76,15 @@ export default async function CustomerOrderDetailPage({
     notFound();
   }
 
+  const stock =
+    ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(order.orderStatus) && !order.resaleListing
+      ? await getStoreStockBreakdown(order.storeId)
+      : new Map();
+  const relistLines = order.lines.filter(
+    (line, index, lines) =>
+      lines.findIndex((other) => other.skuId === line.skuId) === index &&
+      (stock.get(line.skuId)?.sellableQty ?? 0) > 0
+  );
   const resale = order.resaleListing;
   const preparation = parseShippingProof(order.shippingProof);
   const fulfillmentRequest = order.fulfillmentRequests[0];
@@ -170,18 +180,41 @@ export default async function CustomerOrderDetailPage({
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5" data-testid="order-detail-workspace">
+      {relistLines.length > 0 && (
+        <section
+          className="rounded-lg border border-blue-200 bg-blue-50/40 p-4"
+          aria-label="继续上架"
+        >
+          <p className="font-medium">这些商品还有可售库存，可以继续上架</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {relistLines.map((line) => (
+              <Button key={line.skuId} asChild variant="outline" size="sm">
+                <Link
+                  href={`/listing/new?${new URLSearchParams({ skuId: line.skuId, ...(order.platformId ? { platformId: order.platformId } : {}), returnTo: "/inventory/sellable" })}`}
+                >
+                  继续上架 · {line.sku.name}（可售 {stock.get(line.skuId)?.sellableQty}）
+                </Link>
+              </Button>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <BackButton label="" fallbackHref="/sales" className="mt-0.5 shrink-0" />
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold" title={order.orderNumber}>
-              {order.orderNumber || order.id.slice(0, 8)}
+            <h1 className="text-xl font-semibold">
+              {order.lines[0]?.sku.name || resale?.title || "销售订单"}
+              {order.lines.length > 1 ? ` 等 ${order.lines.length} 项商品` : ""}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {order.platform?.name || "未指定平台"}
               {channelAccount ? ` / ${channelAccount.name}` : ""} ·{" "}
               {new Date(order.orderDate).toLocaleDateString("zh-CN")} ·{" "}
               {order.customerName || "散客"}
+            </p>
+            <p className="mt-1 break-all text-xs text-muted-foreground">
+              订单号：{order.orderNumber}
             </p>
             {order.externalOrderNo && (
               <p className="mt-1 break-all text-xs text-muted-foreground">
@@ -194,6 +227,11 @@ export default async function CustomerOrderDetailPage({
           <Badge variant={statusColors[order.orderStatus as keyof typeof statusColors]}>
             {statusLabels[order.orderStatus] || order.orderStatus}
           </Badge>
+          {["CONFIRMED", "SHIPPED", "DELIVERED"].includes(order.orderStatus) && (
+            <Button asChild variant="outline">
+              <Link href="/inventory/sellable">返回上架</Link>
+            </Button>
+          )}
           {canConfirm && <ConfirmOrderButton orderId={order.id} />}
           {order.orderStatus === "CONFIRMED" && canShipOrders(context.role) && (
             <Button asChild>

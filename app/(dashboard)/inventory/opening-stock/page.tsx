@@ -16,18 +16,42 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function OpeningStockPage() {
+export default async function OpeningStockPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ locationId?: string }>;
+}) {
+  const { locationId } = await searchParams;
+  const returnHref = locationId
+    ? `/inventory/locations/${encodeURIComponent(locationId)}`
+    : "/inventory/locations";
+  const historyHref = locationId
+    ? `/inventory/opening-stock?${new URLSearchParams({ locationId })}`
+    : "/inventory/opening-stock";
+  const createHref = locationId
+    ? `/inventory/opening-stock/new?${new URLSearchParams({ locationId, returnTo: returnHref })}`
+    : "/inventory/locations";
   const { activeStoreId: storeId } = await requireUserContext();
-  const documents = await getOpeningStocks(storeId);
+  const documents = await getOpeningStocks(storeId, locationId);
 
   return (
     <div className="space-y-4">
+      <Link
+        href={returnHref}
+        className="inline-block text-sm text-muted-foreground hover:underline"
+      >
+        ← 返回{locationId ? "仓库" : "仓库与位置"}
+      </Link>
       <PageHeader
         className="mb-0"
-        title="期初库存"
-        description="查看系统启用时的库存开账单据；每一行都可追溯到库存批次、单件和流水。"
+        title={locationId ? "本仓库期初库存记录" : "期初库存记录"}
+        description={
+          locationId
+            ? "仅统计本仓库的录入行和数量；打开单据可查看完整记录。"
+            : "查看已有库存的录入记录；选择具体仓库后可继续录入。"
+        }
         actions={
-          <Link href="/inventory/opening-stock/new">
+          <Link href={createHref}>
             <Button size="sm">
               <Plus className="mr-1.5 h-4 w-4" />
               录入期初库存
@@ -43,7 +67,7 @@ export default async function OpeningStockPage() {
             <p className="mt-1 text-sm text-muted-foreground">
               如果系统启用前已有实物库存，请先完成开账，再开始采购和销售。
             </p>
-            <Link href="/inventory/opening-stock/new">
+            <Link href={createHref}>
               <Button size="sm" className="mt-4">
                 开始录入
               </Button>
@@ -66,16 +90,12 @@ export default async function OpeningStockPage() {
               {documents.map((document) => {
                 const totalQuantity = document.lines.reduce(
                   (sum, line) => sum.plus(line.quantity.toString()),
-                  new Decimal(0),
+                  new Decimal(0)
                 );
                 return (
                   <TableRow key={document.id}>
-                    <TableCell className="font-medium">
-                      {document.documentNo}
-                    </TableCell>
-                    <TableCell>
-                      {document.openingAt.toLocaleDateString("zh-CN")}
-                    </TableCell>
+                    <TableCell className="font-medium">{document.documentNo}</TableCell>
+                    <TableCell>{document.openingAt.toLocaleDateString("zh-CN")}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {document.lines.length}
                     </TableCell>
@@ -91,7 +111,9 @@ export default async function OpeningStockPage() {
                       {document.note || "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Link href={`/inventory/opening-stock/${document.id}`}>
+                      <Link
+                        href={`/inventory/opening-stock/${document.id}?${new URLSearchParams({ returnTo: historyHref })}`}
+                      >
                         <Button variant="ghost" size="sm">
                           查看
                         </Button>

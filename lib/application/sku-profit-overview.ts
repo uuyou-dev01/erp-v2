@@ -26,6 +26,7 @@ export async function buildSkuProfitOverview(
   let sales = new Decimal(0),
     matched = new Decimal(0),
     cost = new Decimal(0);
+  let fulfilledQuantity = new Decimal(0);
   let fulfilledLineCount = 0,
     pendingCostLineCount = 0;
   for (const line of lines) {
@@ -69,6 +70,7 @@ export async function buildSkuProfitOverview(
       matched = matched.plus(revenue);
       cost = cost.plus(lineCost);
       fulfilledLineCount++;
+      fulfilledQuantity = fulfilledQuantity.plus(line.quantity.toString());
     } catch (error) {
       if (!(error instanceof FxRateUnavailableError)) throw error;
       pendingCostLineCount++;
@@ -81,6 +83,7 @@ export async function buildSkuProfitOverview(
     allocatedInventoryCost: cost.toFixed(2),
     grossProfit: profit.toFixed(2),
     profitRate: matched.gt(0) ? profit.div(matched).mul(100).toFixed(1) : "0.0",
+    fulfilledQuantity: fulfilledQuantity.toString(),
     fulfilledLineCount,
     pendingCostLineCount,
     currency: converter.baseCurrency,

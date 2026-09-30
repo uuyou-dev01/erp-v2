@@ -39,6 +39,7 @@ describe("SKU profit currency and completeness", () => {
       grossProfit: "111.00",
       profitRate: "77.1",
       fulfilledLineCount: 1,
+      fulfilledQuantity: "1",
     });
   });
   it("excludes partial allocations and unknown costs", async () => {

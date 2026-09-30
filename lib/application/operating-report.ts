@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { allocateReportAmount } from "./sales-contribution";
 import { prisma } from "@/lib/prisma";
 import { createStoreMoneyConverter, FxRateUnavailableError } from "@/lib/fx";
 import { isValidSalesStatus } from "@/lib/application/sales-metrics";
@@ -22,6 +23,7 @@ export type ReportRow = {
   date: string;
   label: string;
   detail: string;
+  itemSummary?: string;
   status: string;
   href: string;
   money: ReportMoney;
@@ -34,6 +36,13 @@ export type ReportSale = ReportRow & {
   items: Array<{
     name: string;
     code: string;
+    skuId?: string;
+    groupId?: string;
+    groupName?: string;
+    groupCode?: string;
+    baseRevenue?: string | null;
+    baseCost?: string | null;
+    baseProfit?: string | null;
     quantity: string;
     unitPrice: string | null;
     lineAmount: string;
@@ -81,7 +90,14 @@ export async function getOperatingReport(storeId: string, organizationId: string
               quantity: true,
               unitPrice: true,
               lineAmount: true,
-              sku: { select: { name: true, code: true } },
+              sku: {
+                select: {
+                  id: true,
+                  name: true,
+                  code: true,
+                  parentSku: { select: { id: true, name: true, code: true } },
+                },
+              },
               allocations: {
                 select: {
                   quantity: true,
@@ -105,6 +121,7 @@ export async function getOperatingReport(storeId: string, organizationId: string
           id: true,
           orderNo: true,
           supplierName: true,
+          lines: { select: { quantity: true, sku: { select: { name: true, code: true } } } },
           currency: true,
           fxRate: true,
           totalAmount: true,
@@ -231,10 +248,13 @@ export async function getOperatingReport(storeId: string, organizationId: string
           : "0.00"
         : null;
       const costValues: Array<string | null> = [];
+      const lineCosts: Array<string | null> = [];
       const costDetails: ReportMoney[] = [];
       let missingCost = included && order.lines.length === 0;
       if (included)
         for (const line of order.lines) {
+          const lineValues: Array<string | null> = [];
+          let lineMissing = false;
           const allocations = line.allocations.filter((a) =>
             ["PENDING", "ALLOCATED", "SHIPPED", "DELIVERED"].includes(a.status)
           );
@@ -242,12 +262,16 @@ export async function getOperatingReport(storeId: string, organizationId: string
             (sum, a) => sum.plus(a.quantity.toString()),
             new Decimal(0)
           );
-          if (!allocatedQty.eq(line.quantity.toString())) missingCost = true;
+          if (!allocatedQty.eq(line.quantity.toString())) {
+            missingCost = true;
+            lineMissing = true;
+          }
           for (const a of allocations) {
             const source = a.inventoryLot ?? a.itemUnit;
             const currency = a.costCurrency ?? source?.costCurrency;
             if (!currency || source?.costStatus === "PENDING") {
               missingCost = true;
+              lineMissing = true;
               continue;
             }
             const converted = await money(
@@ -256,20 +280,40 @@ export async function getOperatingReport(storeId: string, organizationId: string
               a.inventoryLot?.receivedAt ?? a.itemUnit?.createdAt ?? order.orderDate
             );
             costValues.push(converted.base);
+            lineValues.push(converted.base);
             costDetails.push(converted);
           }
+          lineCosts.push(lineMissing ? null : sumReportMoney(lineValues));
         }
       const cost = !included || missingCost ? null : sumReportMoney(costValues);
       const profit = included
         ? reportProfit(saleMoney.base, [platformFee, shippingFee, cost])
         : null;
       const provisional = included && order.shippingFeeStatus !== "ACTUAL";
+      const lineAmounts = order.lines.map((line) => line.lineAmount.toString());
+      const weights = lineAmounts.some((amount) => new Decimal(amount).gt(0))
+        ? lineAmounts
+        : order.lines.map((line) => line.quantity.toString());
+      const revenues = allocateReportAmount(saleMoney.base, weights);
+      const platformFees = allocateReportAmount(platformFee, weights);
+      const shippingFees = allocateReportAmount(shippingFee, weights);
       return {
         id: order.id,
         date: reportDay(order.orderDate),
         occurredAt: order.orderDate.toISOString(),
         settled: Boolean(order.settledAt),
-        items: order.lines.map((line) => ({
+        items: order.lines.map((line, index) => ({
+          skuId: line.sku?.id,
+          groupId: line.sku?.parentSku?.id ?? line.sku?.id,
+          groupName: line.sku?.parentSku?.name ?? line.sku?.name,
+          groupCode: line.sku?.parentSku?.code ?? line.sku?.code,
+          baseRevenue: revenues[index] ?? null,
+          baseCost: lineCosts[index] ?? null,
+          baseProfit: reportProfit(revenues[index] ?? null, [
+            lineCosts[index] ?? null,
+            platformFees[index] ?? null,
+            shippingFees[index] ?? null,
+          ]),
           name: line.sku?.name ?? "未命名商品",
           code: line.sku?.code ?? "",
           quantity: line.quantity.toString(),
@@ -308,6 +352,9 @@ export async function getOperatingReport(storeId: string, organizationId: string
       return {
         id: order.id,
         label: order.orderNo,
+        itemSummary:
+          order.lines.map((line) => `${line.sku.name} × ${line.quantity}`).join("、") ||
+          "未添加商品",
         detail: order.supplierName ?? "未填写供应商",
         date: reportDay(date),
         status: order.status,

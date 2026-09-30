@@ -106,7 +106,10 @@ export default async function Page({
             className="block space-y-2 border-b pb-4"
           >
             <p className="text-sm font-semibold">
-              {row.lines.map((l) => l.sku.name).join("、") || "未添加商品"}
+              {row.lines.map((l) => `${l.sku.name} × ${l.quantity}`).join("、") || "未添加商品"}
+            </p>
+            <p className="text-sm font-medium">
+              {isPurchase ? row.supplierName || "未填写供应商" : row.customerName || "散客"}
             </p>
             <p className="break-all text-xs text-slate-500">
               {isPurchase ? row.orderNo : row.orderNumber} ·{" "}

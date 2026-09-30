@@ -242,10 +242,35 @@ export async function listTransferShipments(storeId?: string) {
     include: {
       fromLocation: true,
       toLocation: true,
-      inventoryLines: { select: { id: true, quantity: true, status: true } },
+      inventoryLines: {
+        select: { id: true, quantity: true, status: true, entityType: true, entityId: true },
+      },
     },
     orderBy: [{ createdAt: "desc" }],
   });
+  const lines = shipments.flatMap((shipment) => shipment.inventoryLines);
+  const [lots, units] = await Promise.all([
+    prisma.inventoryLot.findMany({
+      where: {
+        storeId: context.activeStoreId,
+        id: { in: lines.filter((line) => line.entityType === "LOT").map((line) => line.entityId) },
+      },
+      select: { id: true, sku: { select: { name: true, code: true } } },
+    }),
+    prisma.itemUnit.findMany({
+      where: {
+        storeId: context.activeStoreId,
+        id: {
+          in: lines.filter((line) => line.entityType === "ITEM_UNIT").map((line) => line.entityId),
+        },
+      },
+      select: { id: true, sku: { select: { name: true, code: true } } },
+    }),
+  ]);
+  const names = new Map<string, { name: string; code: string }>([
+    ...lots.map((lot) => [`LOT:${lot.id}`, lot.sku] as const),
+    ...units.map((unit) => [`ITEM_UNIT:${unit.id}`, unit.sku] as const),
+  ]);
   return shipments.map((shipment) => ({
     id: shipment.id,
     status: shipment.status,
@@ -272,6 +297,11 @@ export async function listTransferShipments(storeId?: string) {
           region: shipment.toLocation.region,
         }
       : null,
+    items: shipment.inventoryLines.map((line) => ({
+      name: names.get(`${line.entityType}:${line.entityId}`)?.name ?? "商品资料已移除",
+      code: names.get(`${line.entityType}:${line.entityId}`)?.code ?? "",
+      quantity: line.quantity.toString(),
+    })),
     lineCount: shipment.inventoryLines.length,
     totalQuantity: shipment.inventoryLines
       .reduce((sum, line) => sum.plus(line.quantity.toString()), new Decimal(0))

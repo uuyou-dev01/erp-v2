@@ -61,12 +61,16 @@ function openingDocumentNo(openingAt: Date) {
   return `OPEN-${date}-${randomUUID().slice(0, 6).toUpperCase()}`;
 }
 
-export async function getOpeningStocks(storeId: string) {
+export async function getOpeningStocks(storeId: string, locationId?: string) {
   const context = await requireUserContext({ storeId });
   return prisma.openingStock.findMany({
-    where: { storeId: context.activeStoreId },
+    where: {
+      storeId: context.activeStoreId,
+      ...(locationId ? { lines: { some: { locationId } } } : {}),
+    },
     include: {
       lines: {
+        ...(locationId ? { where: { locationId } } : {}),
         select: {
           id: true,
           quantity: true,

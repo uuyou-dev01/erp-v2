@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchPicker } from "@/components/ui/search-picker";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatLocationRegion } from "@/lib/inventory/location-regions";
@@ -53,6 +55,8 @@ export function TransferShipmentForm({
   const [fromLocationId, setFromLocationId] = useState(initialSource);
   const [toLocationId, setToLocationId] = useState("");
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [onlySelected, setOnlySelected] = useState(false);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [transportMode, setTransportMode] = useState<
     "HAND_CARRY" | "CONSOLIDATOR" | "POSTAL" | "COURIER" | "FREIGHT" | "OTHER"
@@ -88,6 +92,10 @@ export function TransferShipmentForm({
         return aFocused - bFocused || a.skuCode.localeCompare(b.skuCode);
       });
   }, [candidates, focusPurchaseOrderId, fromLocationId, query]);
+  const visibleCandidates = onlySelected
+    ? sourceCandidates.filter((candidate) => numeric(selected[candidate.key]) > 0)
+    : sourceCandidates;
+  const safePage = Math.min(page, Math.max(1, Math.ceil(visibleCandidates.length / 20)));
   const selectedCandidates = candidates.filter(
     (candidate) => candidate.locationId === fromLocationId && numeric(selected[candidate.key]) > 0
   );
@@ -165,44 +173,47 @@ export function TransferShipmentForm({
           <div className="grid gap-4 border-b bg-muted/20 p-4 md:grid-cols-[1fr_auto_1fr] md:items-end">
             <div className="space-y-2">
               <Label htmlFor="transfer-package-from">起运位置</Label>
-              <Select
+              <SearchPicker
                 id="transfer-package-from"
+                label="起运位置"
                 value={fromLocationId}
-                onChange={(event) => {
-                  setFromLocationId(event.target.value);
+                placeholder="选择库存所在位置"
+                options={locations.map((location) => ({
+                  id: location.id,
+                  name: location.name,
+                  detail: location.code,
+                  group: formatLocationRegion(location.region),
+                }))}
+                onChange={(value) => {
+                  setFromLocationId(value);
                   setSelected({});
+                  setPage(1);
                   setError(null);
-                  if (event.target.value === toLocationId) setToLocationId("");
+                  if (value === toLocationId) setToLocationId("");
                 }}
-              >
-                <option value="">请选择库存所在位置</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {locationLabel(location)}
-                  </option>
-                ))}
-              </Select>
+              />
             </div>
             <ArrowRight className="mb-3 hidden h-4 w-4 text-muted-foreground md:block" />
             <div className="space-y-2">
               <Label htmlFor="transfer-package-to">目标位置</Label>
-              <Select
+              <SearchPicker
                 id="transfer-package-to"
+                label="目标位置"
                 value={toLocationId}
-                onChange={(event) => {
-                  setToLocationId(event.target.value);
+                placeholder="选择收货位置"
+                options={locations
+                  .filter((location) => location.id !== fromLocationId)
+                  .map((location) => ({
+                    id: location.id,
+                    name: location.name,
+                    detail: location.code,
+                    group: formatLocationRegion(location.region),
+                  }))}
+                onChange={(value) => {
+                  setToLocationId(value);
                   setError(null);
                 }}
-              >
-                <option value="">请选择收货位置</option>
-                {locations
-                  .filter((location) => location.id !== fromLocationId)
-                  .map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {locationLabel(location)}
-                    </option>
-                  ))}
-              </Select>
+              />
             </div>
           </div>
 
@@ -218,20 +229,38 @@ export function TransferShipmentForm({
               <Input
                 aria-label="搜索可转运库存"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
                 className="pl-9"
                 placeholder="搜索 SKU、商品或采购单"
               />
             </label>
           </div>
 
+          <div className="flex items-center justify-between gap-3 border-t px-4 py-3 text-sm">
+            <span>
+              已选 {selectedCandidates.length} 项 · 共 {selectedQuantity} 件
+            </span>
+            <label className="flex items-center gap-2">
+              <Checkbox
+                checked={onlySelected}
+                onChange={(event) => {
+                  setOnlySelected(event.target.checked);
+                  setPage(1);
+                }}
+              />
+              只看已选
+            </label>
+          </div>
           {!fromLocationId ? (
             <div className="flex flex-col items-center gap-2 border-t px-4 py-12 text-center">
               <PackageSearch className="h-8 w-8 text-muted-foreground" />
               <p className="text-sm font-medium">先选择起运位置</p>
               <p className="text-xs text-muted-foreground">系统会列出该位置可用于转运的库存。</p>
             </div>
-          ) : sourceCandidates.length === 0 ? (
+          ) : visibleCandidates.length === 0 ? (
             <div className="flex flex-col items-center gap-2 border-t px-4 py-12 text-center">
               <Box className="h-8 w-8 text-muted-foreground" />
               <p className="text-sm font-medium">当前没有可转运库存</p>
@@ -241,7 +270,7 @@ export function TransferShipmentForm({
             </div>
           ) : (
             <div className="divide-y border-t">
-              {sourceCandidates.map((candidate) => {
+              {visibleCandidates.slice((safePage - 1) * 20, safePage * 20).map((candidate) => {
                 const checked = numeric(selected[candidate.key]) > 0;
                 const quantity = selected[candidate.key] ?? "";
                 const remaining = Math.max(
@@ -312,6 +341,13 @@ export function TransferShipmentForm({
                   </div>
                 );
               })}
+              <ListPagination
+                page={safePage}
+                pageSize={20}
+                total={visibleCandidates.length}
+                onPageChange={setPage}
+                label="转运库存分页"
+              />
             </div>
           )}
         </section>

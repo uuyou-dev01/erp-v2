@@ -34,7 +34,6 @@ describe("navigation structure", () => {
     expect(inventoryGroup?.items.map((item) => item.name)).toEqual([
       "库存看板",
       "库存明细",
-      "期初库存",
       "盘点调整",
       "转运包裹",
       "集运批次",

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { Download, Loader2, Save } from "lucide-react";
 import type { WorkMetricsResult } from "@/lib/application/work-metrics";
 import { updateWorkTypeSettlementRateAction } from "@/app/actions/team-reports";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ListPagination } from "@/components/ui/list-pagination";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
@@ -173,6 +174,11 @@ export function WorkloadDashboard({
   canManageRates,
   filters,
 }: WorkloadDashboardProps) {
+  const [page, setPage] = useState(1);
+  const filterKey = JSON.stringify(filters);
+  useEffect(() => setPage(1), [filterKey]);
+  const safePage = Math.min(page, Math.max(1, Math.ceil(workload.records.length / 20)));
+  const visibleRecords = workload.records.slice((safePage - 1) * 20, safePage * 20);
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -243,6 +249,47 @@ export function WorkloadDashboard({
         <Button type="submit">查询</Button>
       </form>
 
+      <section className="rounded-lg border p-4" aria-label="当前范围工作统计">
+        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
+          <h2 className="font-semibold">
+            {filters.userId
+              ? (people.find((person) => person.id === filters.userId)?.name ?? "所选人员")
+              : filters.scope === "mine"
+                ? "我"
+                : "团队"}
+            的工作统计
+          </h2>
+          <p className="text-sm">
+            完成 <strong className="text-xl tabular-nums">{workload.eventCount}</strong> 次工作
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {workload.rows.length} 人参与 · {workload.types.length} 类工作
+          </p>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          统计当前筛选范围；次数与商品件数分别计算。
+        </p>
+        <div className="mt-4 flex flex-wrap gap-x-8 gap-y-3 border-t pt-3">
+          {workload.types.map((type) => {
+            const values = workload.rows.map((row) => row.values[type.id]).filter(Boolean);
+            return (
+              <div key={type.id}>
+                <p className="text-xs text-muted-foreground">{type.name}</p>
+                <p className="mt-1 text-sm font-medium">
+                  {formatNumber(
+                    String(values.reduce((sum, value) => sum + Number(value.quantity), 0))
+                  )}{" "}
+                  {type.unit}
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    / {values.reduce((sum, value) => sum + value.eventCount, 0)} 次
+                  </span>
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       <nav className="flex gap-5 overflow-x-auto border-b" aria-label="工作量视图">
         {Object.entries(TAB_LABELS).map(([tab, label]) => (
           <Link
@@ -283,7 +330,7 @@ export function WorkloadDashboard({
               </TableHeader>
               <TableBody>
                 {workload.records.length ? (
-                  workload.records.map((record) => (
+                  visibleRecords.map((record) => (
                     <TableRow key={record.id}>
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {new Date(record.occurredAt).toLocaleString("zh-CN")}
@@ -319,6 +366,16 @@ export function WorkloadDashboard({
         </section>
       ) : null}
 
+      {filters.tab === "records" || filters.tab === "settlement" ? (
+        <ListPagination
+          page={safePage}
+          pageSize={20}
+          total={workload.records.length}
+          onPageChange={setPage}
+          label="工作记录分页"
+        />
+      ) : null}
+
       {filters.tab === "people" ? (
         <section>
           <h2 className="mb-3 text-base font-semibold">人员汇总</h2>
@@ -340,7 +397,14 @@ export function WorkloadDashboard({
                 {workload.rows.length ? (
                   workload.rows.map((row) => (
                     <TableRow key={row.userId}>
-                      <TableCell className="font-medium">{row.userName}</TableCell>
+                      <TableCell className="font-medium">
+                        <Link
+                          className="text-primary hover:underline"
+                          href={buildHref(filters, { userId: row.userId, tab: "records" })}
+                        >
+                          {row.userName}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         {row.relationshipTypes
                           .map((type) => RELATIONSHIP_LABELS[type] ?? type)
@@ -439,7 +503,7 @@ export function WorkloadDashboard({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {workload.records.map((record) => (
+                {visibleRecords.map((record) => (
                   <TableRow key={record.id}>
                     <TableCell>{record.userName}</TableCell>
                     <TableCell>{record.workName}</TableCell>

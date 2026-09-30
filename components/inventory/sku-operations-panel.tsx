@@ -165,6 +165,11 @@ function buildSaleSignal(sku: SkuCatalogDetail) {
 export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
   const profitCurrency =
     sku.analysis.profitOverview.currency ?? sku.business.salesCurrency ?? sku.currency ?? "CNY";
+  const profit = sku.analysis.profitOverview;
+  const matchedQty = new Decimal(profit.fulfilledQuantity ?? "0");
+  const averageRealGrossProfit = matchedQty.gt(0)
+    ? new Decimal(profit.grossProfit).div(matchedQty).toFixed(2)
+    : null;
   const itemSummary = sku.inventorySections.itemUnitSummary;
   const sellThrough = sku.analysis.listingSellThrough;
   const averages = sku.analysis.skuAverages;
@@ -206,11 +211,11 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
             </div>
             <div className="grid divide-y bg-muted/15 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-3 xl:grid-cols-6">
               <PriceMetric
-                label="参考售价"
+                label="档案参考售价"
                 value={
                   sku.referencePrice
                     ? formatCurrency(sku.referencePrice, sku.currency ?? salesCurrency)
-                    : "-"
+                    : "未设置"
                 }
                 subtext="档案维护价"
               />
@@ -221,7 +226,7 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                     ? formatCurrency(averages.averageSalePrice, salesCurrency)
                     : "-"
                 }
-                subtext={averages.salesCount ? `${averages.salesCount} 笔真实销售` : "暂无成交"}
+                subtext={averages.salesCount ? `${averages.salesCount} 条成交明细` : "暂无成交"}
                 tone="blue"
               />
               <PriceMetric
@@ -236,15 +241,21 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                 }
               />
               <PriceMetric
-                label="平均毛利"
+                label="每件已售毛利"
                 value={
-                  averages.averageGrossProfit
-                    ? formatCurrency(averages.averageGrossProfit, salesCurrency)
+                  averageRealGrossProfit !== null
+                    ? formatCurrency(averageRealGrossProfit, profitCurrency)
                     : "-"
                 }
-                subtext={averages.grossMarginRate ? `${averages.grossMarginRate}%` : "尚不能计算"}
+                subtext={
+                  profit.pendingCostLineCount
+                    ? `${profit.pendingCostLineCount} 条待补成本或汇率；已核算 ${profit.fulfilledLineCount} 条`
+                    : profit.fulfilledLineCount
+                      ? `毛利率 ${profit.profitRate}% · 未扣平台费和运费`
+                      : "暂无可核算成交"
+                }
                 tone={
-                  averages.averageGrossProfit && Number(averages.averageGrossProfit) > 0
+                  averageRealGrossProfit !== null && Number(averageRealGrossProfit) > 0
                     ? "green"
                     : "default"
                 }
@@ -390,6 +401,7 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                           <TableHead>数量</TableHead>
                           <TableHead>成本</TableHead>
                           <TableHead>入库日</TableHead>
+                          <TableHead>操作</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -404,6 +416,14 @@ export function SkuOperationsPanel({ sku, section }: SkuOperationsPanelProps) {
                             <TableCell>{formatQuantity(lot.quantity)}</TableCell>
                             <TableCell>{formatCurrency(lot.unitCost, lot.costCurrency)}</TableCell>
                             <TableCell>{formatDateLabel(lot.receivedAt)}</TableCell>
+                            <TableCell>
+                              <Link
+                                className="text-primary hover:underline"
+                                href={`/inventory/lots/${lot.id}#convert-to-item`}
+                              >
+                                瑕疵转单件
+                              </Link>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

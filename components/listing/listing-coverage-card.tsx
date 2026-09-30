@@ -616,7 +616,17 @@ export function ListingCoverageCard({
           </div>
           <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
             <span className="tabular-nums">在途 {product.inTransitQty}</span>
-            <span className="tabular-nums">单件 {product.sellableItemUnitCount}</span>
+            <button
+              type="button"
+              className="tabular-nums text-primary underline underline-offset-2"
+              onClick={() => {
+                const variant = product.variantRows.find((row) => row.sellableItemUnitCount > 0);
+                if (variant) setSelectedVariantSkuId(variant.skuId);
+                setDetailsOpen(true);
+              }}
+            >
+              单件 {product.sellableItemUnitCount} · 查看
+            </button>
           </div>
         </div>
 
@@ -745,10 +755,12 @@ export function ListingCoverageCard({
             仓位
           </span>
           <LocationDistribution locations={product.sellableLocations} />
-          <p className="mt-1 truncate text-[10px] text-muted-foreground">库存归属：{palletLabel}</p>
+          <p className="mt-1 truncate text-[10px] text-muted-foreground">
+            现货所在地：{palletLabel}
+          </p>
           {fulfillmentLabels.length ? (
             <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              可配送：{fulfillmentLabels.join("、")}
+              配送目的地：{fulfillmentLabels.join("、")}
             </p>
           ) : null}
         </div>

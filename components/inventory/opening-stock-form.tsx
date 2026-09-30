@@ -20,6 +20,7 @@ import { createSKUAction } from "@/app/actions/skus";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchPicker } from "@/components/ui/search-picker";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ActionDialog } from "@/components/ui/action-dialog";
@@ -492,23 +493,19 @@ export function OpeningStockForm({
                         第 {index + 1} 行商品
                       </Label>
                       <div className="flex items-start gap-1.5">
-                        <Select
+                        <SearchPicker
                           id={`opening-sku-${line.key}`}
-                          className="h-9 min-w-0 flex-1"
+                          label={`第 ${index + 1} 行商品`}
                           value={line.skuId}
-                          onChange={(event) => updateLine(line.key, { skuId: event.target.value })}
-                          required
-                        >
-                          <option value="">选择商品</option>
-                          {skuOptions.map((sku) => (
-                            <option key={sku.id} value={sku.id}>
-                              {sku.parentName && !sku.name.startsWith(sku.parentName)
-                                ? `${sku.parentName} · `
-                                : ""}
-                              {sku.name} · {sku.code}
-                            </option>
-                          ))}
-                        </Select>
+                          placeholder="搜索并选择商品"
+                          onChange={(skuId) => updateLine(line.key, { skuId })}
+                          options={skuOptions.map((sku) => ({
+                            id: sku.id,
+                            name: sku.name,
+                            detail: sku.code,
+                            group: sku.parentName ?? undefined,
+                          }))}
+                        />
                         <Button
                           type="button"
                           variant="outline"
@@ -528,23 +525,18 @@ export function OpeningStockForm({
                       ) : null}
                     </td>
                     <td className="px-3 py-2">
-                      <Select
-                        aria-label={`第 ${index + 1} 行存放位置`}
-                        className="h-9"
+                      <SearchPicker
+                        label={`第 ${index + 1} 行存放位置`}
                         value={line.locationId}
-                        onChange={(event) =>
-                          updateLine(line.key, { locationId: event.target.value })
-                        }
+                        onChange={(locationId) => updateLine(line.key, { locationId })}
                         disabled={Boolean(fixedLocationId)}
-                        required
-                      >
-                        {!line.locationId ? <option value="">选择存放位置</option> : null}
-                        {locations.map((location) => (
-                          <option key={location.id} value={location.id}>
-                            {location.name} · {location.code}
-                          </option>
-                        ))}
-                      </Select>
+                        options={locations.map((location) => ({
+                          id: location.id,
+                          name: location.name,
+                          detail: location.code,
+                          group: location.region ?? undefined,
+                        }))}
+                      />
                     </td>
                     <td className="px-3 py-2">
                       <Select

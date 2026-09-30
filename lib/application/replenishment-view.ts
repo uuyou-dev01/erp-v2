@@ -51,11 +51,11 @@ export function isSlowReplenishmentRow(row: ReplenishmentPoolRow): boolean {
   const stocking = row.variant.stockingDecision;
   return Boolean(
     row.variant.sellableQty > 0 &&
-      stocking &&
-      (stocking.pool === "pressure" ||
-        stocking.pool === "clearance" ||
-        stocking.pool === "slowProfit" ||
-        (stocking.sales30Qty === 0 && stocking.sales90Qty > 0))
+    stocking &&
+    (stocking.pool === "pressure" ||
+      stocking.pool === "clearance" ||
+      stocking.pool === "slowProfit" ||
+      (stocking.sales30Qty === 0 && stocking.sales90Qty > 0))
   );
 }
 
@@ -203,14 +203,10 @@ export function matchesReplenishmentVariant(
     const hasItems = variant.sellableItemUnitCount > 0;
     const noStock = !hasLots && !hasItems;
     // A sold-out SKU must remain visible when a stock-form filter is selected.
-    if (filters.stockType === "LOT" && !(hasLots && !hasItems) && !(noStock && kind === "NEW")) {
+    if (filters.stockType === "LOT" && !hasLots && !(noStock && kind === "NEW")) {
       return false;
     }
-    if (
-      filters.stockType === "ITEM_UNIT" &&
-      !(hasItems && !hasLots) &&
-      !(noStock && kind === "USED")
-    ) {
+    if (filters.stockType === "ITEM_UNIT" && !hasItems && !(noStock && kind === "USED")) {
       return false;
     }
     if (filters.stockType === "MIXED" && !(hasLots && hasItems)) return false;
