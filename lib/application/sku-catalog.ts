@@ -86,6 +86,7 @@ const RESERVED_KEYS = new Set([
   "physicalDetails",
   "newFields",
   "usedFields",
+  "agentImport",
 ]);
 
 const DEFAULT_META: SkuCatalogMeta = {
@@ -295,6 +296,9 @@ export function mergeSkuCatalogAttributes(
 
   return {
     ...parsed.variantAttributes,
+    ...(asRecord(existing).agentImport !== undefined
+      ? { agentImport: asRecord(existing).agentImport }
+      : {}),
     catalogStatus: meta.catalogStatus ?? parsed.catalogStatus,
     productKind: meta.productKind ?? parsed.productKind,
     barcode:

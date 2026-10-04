@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "externalId": "example-brand/example-series-v1",
+  "product": {
+    "name": "示例品牌 示例系列",
+    "brand": "示例品牌",
+    "categoryId": "请替换为 categories 返回的 ID",
+    "productKind": "NEW",
+    "description": "请用已核实的商品说明替换，不确定的信息省略。",
+    "series": "示例系列",
+    "tags": ["示例"],
+    "images": [],
+    "sourceUrls": [],
+    "notes": "此文件仅演示结构，不是真实调查资料。"
+  },
+  "variantAxis": "款式",
+  "variants": [
+    { "label": "款式 A", "images": [], "observations": [] },
+    { "label": "款式 B", "images": [], "observations": [] }
+  ]
+}

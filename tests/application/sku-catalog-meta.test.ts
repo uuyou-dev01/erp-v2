@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { mergeSkuCatalogAttributes, parseSkuCatalogMeta } from "@/lib/application/sku-catalog";
 
 describe("sku catalog metadata compatibility", () => {
+  it("keeps import identity out of editable variant fields and preserves it on edits", () => {
+    const agentImport = { externalId: "brand/series", fingerprint: "test-fingerprint" };
+    const attributes = { agentImport, color: "blue" };
+    expect(parseSkuCatalogMeta(attributes).variantAttributes).toEqual({ color: "blue" });
+    expect(mergeSkuCatalogAttributes(attributes, { notes: "edited" }).agentImport).toEqual(
+      agentImport
+    );
+  });
   it("uses the legacy shared currency for both prices", () => {
     const parsed = parseSkuCatalogMeta({ currency: "JPY" });
 

@@ -96,6 +96,20 @@ describe("sku action results", () => {
     }
   });
 
+  it("preserves CLI import identity when a web edit omits or replaces attributes", async () => {
+    const agentImport = { externalId: `${runId}/import`, fingerprint: "original-fingerprint" };
+    const sku = await createSKU({ storeId, name: "CLI 导入商品", attributes: { agentImport } });
+    const result = await updateSKUAction({
+      id: sku.id,
+      storeId,
+      name: "编辑后的商品",
+      attributes: { notes: "网页修改", agentImport: { externalId: "replaced" } },
+    });
+    expect(result.success).toBe(true);
+    const saved = await prisma.sKU.findUniqueOrThrow({ where: { id: sku.id } });
+    expect(saved.attributes).toMatchObject({ agentImport, notes: "网页修改" });
+  });
+
   it("returns a structured failure when deleting a missing SKU", async () => {
     const result = await deleteSKUAction(`missing_sku_${runId}`);
 

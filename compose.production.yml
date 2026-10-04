@@ -109,6 +109,24 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  cli:
+    profiles: ["tools"]
+    image: erp-v2-app:v${APP_VERSION:?APP_VERSION is required}-${GIT_SHA:?GIT_SHA is required}
+    entrypoint: ["node", "scripts/erp-cli.mjs"]
+    command: ["help"]
+    environment:
+      ERP_CLI_CONFIG: /app/.cli/config.json
+    volumes:
+      - ./.runtime/cli:/app/.cli
+    networks:
+      - frontend
+    healthcheck:
+      disable: true
+    mem_limit: 128m
+    cpus: 0.2
+    security_opt:
+      - no-new-privileges:true
+
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped

@@ -46,6 +46,9 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY --from=builder /app/scripts/production-scheduler.mjs ./scripts/production-scheduler.mjs
 COPY --from=builder /app/scripts/verify-container-runtime.mjs ./scripts/verify-container-runtime.mjs
+COPY --from=builder /app/scripts/erp-cli.mjs ./scripts/erp-cli.mjs
+COPY --from=builder /app/docs/agent-catalog-cli.md ./docs/agent-catalog-cli.md
+COPY --from=builder /app/docs/examples/catalog-product.json ./docs/examples/catalog-product.json
 
 ARG APP_VERSION=0.0.0-rc
 ARG GIT_SHA=unbuilt
@@ -54,8 +57,8 @@ ENV APP_VERSION=${APP_VERSION} GIT_SHA=${GIT_SHA} BUILD_DATE=${BUILD_DATE}
 
 RUN groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs --home-dir /app nextjs \
-    && mkdir -p /app/.data/assets /app/.data/mobile-assets \
-    && chown -R nextjs:nodejs /app/.data
+    && mkdir -p /app/.data/assets /app/.data/mobile-assets /app/.cli \
+    && chown -R nextjs:nodejs /app/.data /app/.cli
 
 USER nextjs
 EXPOSE 3000

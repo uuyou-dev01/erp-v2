@@ -25,14 +25,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "File too large. Maximum size is 8MB." }, { status: 400 });
     }
     const requestedPurpose = String(formData.get("purpose") || "BUSINESS_EVIDENCE");
-    const purpose = requestedPurpose === "CATALOG_IMAGE"
-      ? "CATALOG_IMAGE"
-      : requestedPurpose === "INTELLIGENCE_IMAGE"
-        ? "INTELLIGENCE_IMAGE"
-        : "BUSINESS_EVIDENCE";
-    const visibility = formData.get("visibility") === "CATALOG_PUBLIC"
-      ? "CATALOG_PUBLIC"
-      : "ORGANIZATION_PRIVATE";
+    const purpose =
+      requestedPurpose === "CATALOG_IMAGE"
+        ? "CATALOG_IMAGE"
+        : requestedPurpose === "INTELLIGENCE_IMAGE"
+          ? "INTELLIGENCE_IMAGE"
+          : "BUSINESS_EVIDENCE";
+    const visibility =
+      formData.get("visibility") === "CATALOG_PUBLIC" ? "CATALOG_PUBLIC" : "ORGANIZATION_PRIVATE";
     const collaborationTaskId = String(formData.get("taskId") || "").trim();
     let scope: {
       organizationId: string;
@@ -85,7 +85,14 @@ export async function POST(request: NextRequest) {
         refId: task.refId,
       };
     } else {
-      const context = await requireUserContext();
+      const requestedStoreId = String(formData.get("storeId") || "").trim();
+      const requestedOrganizationId = String(formData.get("organizationId") || "").trim();
+      const context = await requireUserContext(
+        requestedStoreId ? { storeId: requestedStoreId } : undefined
+      );
+      if (requestedOrganizationId && requestedOrganizationId !== context.organizationId) {
+        throw new Error("无权向此企业上传图片");
+      }
       scope = { organizationId: context.organizationId, storeId: context.activeStoreId };
     }
     await assertMobileRateLimit({

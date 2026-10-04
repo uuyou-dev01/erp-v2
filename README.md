@@ -132,6 +132,8 @@ production use only checked-in migrations through `prisma migrate deploy`.
 
 ## Documentation
 
+- [AI 商品调查与建档 CLI](docs/agent-catalog-cli.md)：登录、上传图片、预检并批量创建商品组及规格，保存带来源的价格调查。运行 `npm run -s erp -- help`。
+
 See the `/docs` directory for detailed business domain documentation:
 - `overview.md` - Project overview
 - `domain.md` - Core domain abstractions
