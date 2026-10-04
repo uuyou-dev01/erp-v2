@@ -148,7 +148,15 @@ node scripts/erp-cli.mjs product import --file product.json
 
 线上地址为 `https://erp-test.lianyuapt.com`。外部调查 agent 在自己的运行环境调用 CLI，通过 HTTPS 写入同一线上 ERP，**不需要 SSH、Workbench 或数据库权限**；只需要 Node.js 22、CLI 文件和一次 ERP 账号登录。需要在 ECS 本机运行时，rc.28 镜像提供独立 `cli` 服务，无需在宿主机安装 Node.js，也不向 CLI 容器提供数据库或应用密钥。
 
-管理员首次发布时创建持久目录：`install -d -m 0700 -o 1001 -g 1001 /opt/erp-v2/runtime/cli`。后续更新无需重建目录。
+管理员首次发布时创建持久目录，并设置容器用户的数字 UID/GID：
+
+```bash
+mkdir -p /opt/erp-v2/runtime/cli
+chown 1001:1001 /opt/erp-v2/runtime/cli
+chmod 0700 /opt/erp-v2/runtime/cli
+```
+
+后续更新无需重建目录。
 
 ```bash
 cd /opt/erp-v2/current
