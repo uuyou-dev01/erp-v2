@@ -24,6 +24,7 @@ export default async function NotificationsPage() {
     orderNumber: notification.orderNumber,
     externalOrderNo: notification.externalOrderNo,
     platformName: notification.platformName,
+    productSummary: notification.productSummary,
   }));
 
   return (

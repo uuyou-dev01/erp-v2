@@ -46,7 +46,7 @@ export function ActionDrawerHeader({
   onClose?: () => void;
 }) {
   return (
-    <header className="border-b px-4 py-4">
+    <header className="border-b px-4 py-4 pr-12">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-medium text-muted-foreground">下一步动作</p>
@@ -54,7 +54,7 @@ export function ActionDrawerHeader({
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
         </div>
         {onClose && (
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={onClose}>
             关闭
           </Button>
         )}
@@ -112,7 +112,7 @@ export function PurchaseLinesCard({ detail }: { detail: WorkItemDetail }) {
   return (
     <section className="rounded-lg border bg-card p-3">
       <div className="mb-2">
-        <p className="text-xs font-medium text-foreground">采购明细</p>
+        <p className="text-xs font-medium text-foreground">{detail.entityType === "customerOrder" ? "订单商品" : "采购明细"}</p>
         {detail.entityType === "purchaseOrder" && (
           <p className="mt-1 text-xs text-muted-foreground">
             当前操作会应用到整张采购单，共 {lines.length} 个购入明细。

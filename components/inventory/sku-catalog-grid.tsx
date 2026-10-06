@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Box, Search, ChevronDown, ChevronRight } from "lucide-react";
 import Decimal from "decimal.js";
 import {
@@ -99,13 +99,33 @@ function compactVariantName(group: SkuCatalogDisplayGroup, variant: SkuCatalogLi
 
 export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCatalogGridProps) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("active");
-  const [brand, setBrand] = useState("");
-  const [category, setCategory] = useState("");
-  const [view, setView] = useState<"stock" | "business">(initialView);
+  const searchParams = useSearchParams();
+  const updateFilter = (key: string, value: string, reset = true) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set(key, value);
+    if (reset) params.delete("page");
+    window.history.replaceState(null, "", `?${params.toString()}`);
+  };
+  const query = searchParams.get("q") ?? "";
+  const status = searchParams.get("status") ?? "active";
+  const brand = searchParams.get("brand") ?? "";
+  const category = searchParams.get("category") ?? "";
+  const view = searchParams.has("view")
+    ? searchParams.get("view") === "business"
+      ? "business"
+      : "stock"
+    : initialView;
+  const setQuery = (value: string) => updateFilter("q", value);
+  const setStatus = (value: string) => updateFilter("status", value);
+  const setBrand = (value: string) => updateFilter("brand", value);
+  const setCategory = (value: string) => updateFilter("category", value);
+  const setView = (value: string) => updateFilter("view", value, false);
+  const returnHref = `/inventory/skus?${searchParams.toString()}`;
+  const detailHref = (id: string) =>
+    `/inventory/skus/${id}?returnTo=${encodeURIComponent(returnHref)}`;
   const [range, setRange] = useState(period?.range ?? "30d");
-  const [page, setPage] = useState(1);
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  const setPage = (value: number) => updateFilter("page", String(value), false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMode, setBulkMode] = useState<"disabled" | "category" | null>(null);
@@ -283,6 +303,10 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
         </div>
         <form method="get" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="view" value={view} />
+          <input type="hidden" name="q" value={query} />
+          <input type="hidden" name="status" value={status} />
+          <input type="hidden" name="brand" value={brand} />
+          <input type="hidden" name="category" value={category} />
           <label htmlFor="catalog-period" className="text-xs text-muted-foreground">
             销售统计
           </label>
@@ -523,7 +547,7 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                               ) : (
                                 <Link
                                   className="font-medium hover:text-primary hover:underline"
-                                  href={`/inventory/skus/${group.head.id}`}
+                                  href={detailHref(group.head.id)}
                                 >
                                   {group.displayName}
                                 </Link>
@@ -538,7 +562,7 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                               </p>
                               {variants.length === 1 && (
                                 <Link
-                                  href={`/inventory/skus/${variants[0].id}`}
+                                  href={detailHref(variants[0].id)}
                                   className="mt-1 inline-block text-xs text-muted-foreground hover:text-primary"
                                 >
                                   规格：{compactVariantName(group, variants[0])}
@@ -584,7 +608,7 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                               查看规格
                             </Button>
                           ) : (
-                            <SkuCatalogRowActions item={group.head} />
+                            <SkuCatalogRowActions item={group.head} returnHref={returnHref} />
                           )}
                         </TableCell>
                       </TableRow>
@@ -606,7 +630,7 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                             <TableCell className="pl-8">
                               <Link
                                 className="font-normal hover:text-primary"
-                                href={`/inventory/skus/${variant.id}`}
+                                href={detailHref(variant.id)}
                               >
                                 {compactVariantName(group, variant)}
                               </Link>
@@ -617,7 +641,7 @@ export function SkuCatalogGrid({ items, period, initialView = "stock" }: SkuCata
                             </TableCell>
                             {renderData([variant])}
                             <TableCell>
-                              <SkuCatalogRowActions item={variant} />
+                              <SkuCatalogRowActions item={variant} returnHref={returnHref} />
                             </TableCell>
                           </TableRow>
                         ))}

@@ -37,7 +37,13 @@ function compactCurrency(value: string, currency: string) {
 
 function saleRangeText(ranges?: Array<{ currency: string; min: string; max: string }>) {
   if (!ranges || ranges.length === 0) return "暂无售价";
-  return ranges.map((range) => `${compactCurrency(range.min, range.currency)} 起`).join(" / ");
+  return ranges
+    .map((range) =>
+      range.min === range.max
+        ? compactCurrency(range.min, range.currency)
+        : `${compactCurrency(range.min, range.currency)} ～ ${compactCurrency(range.max, range.currency)}`
+    )
+    .join(" / ");
 }
 
 function conditionRank(condition: string) {
@@ -449,7 +455,7 @@ export default async function ProductIntelligencePage({
                       <div className={pricePanelClass}>
                         <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                           <span>SKU 售价参考 · {priceViewLabel}</span>
-                          <span>成色 / 最低价</span>
+                          <span>成色 / 观察价区间</span>
                         </div>
                         {hasSignals ? (
                           <>

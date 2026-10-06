@@ -15,6 +15,12 @@ import { WorkflowCard, getOldestWaitLabel } from "./workflow-card";
 import { ActionDrawer } from "./action-drawer";
 import { QuickEntryWorkbench } from "./quick-entry-workbench";
 import { getVisibleWorkflowStages, workItemMatchesSearch } from "@/lib/application/next-actions";
+import {
+  parseWorkFocus,
+  workQueueFocus,
+  WORK_FOCUS_LABELS,
+  type WorkFocus,
+} from "@/lib/application/workbench-focus";
 import { cn } from "@/lib/utils";
 import { BulkActionToolbar } from "./bulk-action-toolbar";
 import { PendingActionPanel } from "./pending-action-panel";
@@ -133,7 +139,22 @@ export function NextActionWorkbench({
 }: NextActionWorkbenchProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(searchParams.get("q") ?? "");
+  const linkedQueue = parseQueue(searchParams.get("queue"));
+  const focus = searchParams.has("focus")
+    ? parseWorkFocus(searchParams.get("focus"))
+    : linkedQueue !== "all"
+      ? workQueueFocus(linkedQueue)
+      : "now";
+  const selectFocus = (next: WorkFocus) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("focus", next);
+    params.delete("queue");
+    params.delete("open");
+    setSelectedQueue("all");
+    setCheckedIds([]);
+    router.replace(`/workbench?${params.toString()}`, { scroll: false });
+  };
   const [selectedQueue, setSelectedQueue] = useState<WorkQueue | "all">(
     parseQueue(searchParams.get("queue"))
   );
@@ -149,7 +170,10 @@ export function NextActionWorkbench({
   const [pending, startTransition] = useTransition();
 
   const filteredItems = useMemo(() => {
-    let items = initialItems;
+    let items =
+      selectedQueue === "all"
+        ? initialItems.filter((item) => workQueueFocus(item.queue) === focus)
+        : initialItems;
     if (selectedQueue !== "all") {
       items = items.filter((i) => i.queue === selectedQueue);
     }
@@ -163,7 +187,7 @@ export function NextActionWorkbench({
       items = items.filter((item) => workItemMatchesSearch(item, search));
     }
     return items;
-  }, [currentUserId, initialItems, selectedQueue, search, taskScope]);
+  }, [currentUserId, initialItems, selectedQueue, search, taskScope, focus]);
 
   const exceptionItems = useMemo(
     () => initialItems.filter((i) => i.queue === "exception" || i.queue === "inspectionException"),
@@ -187,7 +211,10 @@ export function NextActionWorkbench({
     params.delete("action");
     params.delete("open");
     if (queue === "all") params.delete("queue");
-    else params.set("queue", queue);
+    else {
+      params.set("queue", queue);
+      params.set("focus", workQueueFocus(queue));
+    }
     router.replace(`/workbench?${params.toString()}`, { scroll: false });
   };
 
@@ -262,6 +289,8 @@ export function NextActionWorkbench({
   };
 
   useEffect(() => {
+    setSelectedQueue(parseQueue(searchParams.get("queue")));
+    setSearch(searchParams.get("q") ?? "");
     if (searchParams.get("action") === "quickEntry") {
       openQuickEntry();
     }
@@ -300,34 +329,71 @@ export function NextActionWorkbench({
         search={search}
         onSearchChange={(value) => {
           setSearch(value);
+          const params = new URLSearchParams(window.location.search);
+          params.set("q", value);
+          window.history.replaceState(null, "", `?${params.toString()}`);
           setCheckedIds([]);
         }}
         onQuickEntry={openQuickEntry}
         onPasteImport={openQuickEntry}
       />
 
-      <div className="flex gap-3 overflow-x-auto pb-1">
-        {getVisibleWorkflowStages(initialCounts, selectedQueue).map(({ key }) => {
-          const queueItems = initialItems.filter((i) => i.queue === key);
-          return (
-            <WorkflowCard
-              key={key}
-              queue={key}
-              count={initialCounts[key]}
-              oldestWaitLabel={getOldestWaitLabel(queueItems)}
-              selected={selectedQueue === key}
-              onClick={() => handleSelectQueue(key)}
-            />
-          );
-        })}
-      </div>
+      <nav aria-label="工作优先级" className="flex gap-2 overflow-x-auto border-b pb-2">
+        {(Object.keys(WORK_FOCUS_LABELS) as WorkFocus[]).map((key) => (
+          <Button
+            key={key}
+            variant={focus === key ? "default" : "ghost"}
+            size="sm"
+            aria-pressed={focus === key}
+            onClick={() => selectFocus(key)}
+          >
+            {WORK_FOCUS_LABELS[key]}{" "}
+            <span className="ml-2 tabular-nums">
+              {initialItems.filter((item) => workQueueFocus(item.queue) === key).length}
+            </span>
+          </Button>
+        ))}
+      </nav>
+      {focus === "opportunity" && (
+        <p className="text-xs text-muted-foreground">
+          未覆盖平台是可选经营机会，请按实际销售渠道选择上架。
+        </p>
+      )}
+      <details className="rounded-lg border px-3 py-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">
+          流程概览与等待时长
+        </summary>
+        <div className="mt-2 flex gap-3 overflow-x-auto pb-1">
+          {getVisibleWorkflowStages(initialCounts, selectedQueue).map(({ key }) => {
+            const queueItems = initialItems.filter((i) => i.queue === key);
+            return (
+              <WorkflowCard
+                key={key}
+                queue={key}
+                count={initialCounts[key]}
+                oldestWaitLabel={getOldestWaitLabel(queueItems)}
+                selected={selectedQueue === key}
+                onClick={() => handleSelectQueue(key)}
+              />
+            );
+          })}
+        </div>
+      </details>
 
       {exceptionItems.length > 0 && (
         <ExceptionPanel items={exceptionItems} onSelect={handleSelectItem} />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[240px_1fr_220px]">
-        <Panel title="任务分组" className="h-fit">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[190px_minmax(0,1fr)_200px]">
+        <details className="h-fit rounded-lg border bg-card p-2 xl:hidden">
+          <summary className="cursor-pointer px-1 py-1 text-xs">按流程筛选</summary>
+          <StatusQueue
+            counts={initialCounts}
+            selectedQueue={selectedQueue}
+            onSelect={handleSelectQueue}
+          />
+        </details>
+        <Panel title="任务分组" className="hidden h-fit xl:block">
           <StatusQueue
             counts={initialCounts}
             selectedQueue={selectedQueue}
@@ -338,7 +404,7 @@ export function NextActionWorkbench({
         <Panel
           title={
             selectedQueue === "all"
-              ? `全部待办 · ${filteredItems.length}`
+              ? `${WORK_FOCUS_LABELS[focus]} · ${filteredItems.length}`
               : `待处理 · ${filteredItems.length}`
           }
         >
@@ -421,7 +487,7 @@ export function NextActionWorkbench({
           />
         </Panel>
 
-        <Panel title="最近操作" className="h-fit">
+        <Panel title="最近操作" className="h-fit xl:col-start-2 2xl:col-start-auto">
           <RecentActivityFeed items={recentActivity} />
         </Panel>
       </div>
@@ -439,7 +505,6 @@ export function NextActionWorkbench({
             platforms={platforms}
             locations={locations}
             consolidationBatches={consolidationBatches}
-            onClose={handleCloseDrawer}
             onComplete={() => {
               handleCloseDrawer();
               router.refresh();
@@ -471,6 +536,7 @@ export function NextActionWorkbench({
       </ActionDrawer>
 
       <ActionDrawer
+        title="快速录入"
         open={showQuickEntry}
         onClose={handleCloseQuickEntry}
         className="max-w-[min(1440px,calc(100vw-1rem))]"

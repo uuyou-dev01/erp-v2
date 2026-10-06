@@ -1,3 +1,4 @@
+import { summarizeSalesOrders, isPendingPresale } from "@/lib/application/sales-metrics";
 import { salesDateFilter } from "@/lib/application/sales-date-filter";
 import { reportDay } from "@/lib/application/operating-report-math";
 import { shippingTaskStatusLabels } from "@/lib/application/order-shipping-progress";
@@ -36,8 +37,8 @@ const orderStatusLabels: Record<string, string> = {
   PLACED: "已下单",
   PAID: "已付款",
   CONFIRMED: "待发货",
-  SHIPPED: "运输中",
-  DELIVERED: "已完成",
+  SHIPPED: "仓库已发出",
+  DELIVERED: "买家已收货",
   RETURNED: "已退货",
   CANCELLED: "已取消",
 };
@@ -178,6 +179,7 @@ export default async function SalesPage({
   );
   const counts = {
     all: allOrders.length,
+    presale: allOrders.filter(isPendingPresale).length,
     todo: allOrders.filter((order) => orderMatchesSalesWorkbenchView(order, "todo")).length,
     shipment: allOrders.filter((order) => orderMatchesSalesWorkbenchView(order, "shipment")).length,
     collaboration: allOrders.filter((order) =>
@@ -225,6 +227,7 @@ export default async function SalesPage({
     icon: typeof Package;
   }> = [
     { key: "all", label: "全部订单", count: counts.all, icon: Package },
+    { key: "presale", label: "预售待履约", count: counts.presale, icon: Package },
     { key: "todo", label: "待我处理", count: counts.todo, icon: Package },
     { key: "shipment", label: "待发货", count: counts.shipment, icon: Truck },
     { key: "collaboration", label: "协作中", count: counts.collaboration, icon: Handshake },
@@ -311,7 +314,7 @@ export default async function SalesPage({
           <div className="space-y-1">
             <p className="font-medium">
               {state.businessMode === "DIRECT"
-                ? order.shippingProgress.location
+                ? isPendingPresale(order) ? state.presaleReadyToConfirm ? "库存已分配，待确认" : "等待补货 / 库存分配" : order.shippingProgress.location
                   ? `仓库发货 · ${order.shippingProgress.location.name}`
                   : "待安排发货"
                 : fulfillmentModeLabels[state.fulfillmentMode] || state.fulfillmentMode}
@@ -354,7 +357,9 @@ export default async function SalesPage({
       className: "whitespace-nowrap",
       cell: (order) => (
         <Badge variant={statusBadgeVariant(order.orderStatus)}>
-          {orderStatusLabels[order.orderStatus] || order.orderStatus}
+          {order.isPresale && order.orderStatus === "DRAFT"
+            ? orderStates.get(order.id)?.presaleReadyToConfirm ? "预售待确认" : "预售待补货 / 分配"
+            : orderStatusLabels[order.orderStatus] || order.orderStatus}
         </Badge>
       ),
     },
@@ -401,7 +406,7 @@ export default async function SalesPage({
 
       <nav
         aria-label="订单工作视图"
-        className="grid overflow-hidden rounded-lg border bg-background sm:grid-cols-3 xl:grid-cols-6"
+        className="flex overflow-x-auto rounded-lg border bg-background [&>a]:min-w-28 [&>a]:flex-1"
       >
         {views.map((item) => {
           const Icon = item.icon;
@@ -414,7 +419,7 @@ export default async function SalesPage({
               })}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex min-h-16 items-center gap-3 border-b px-4 transition-colors hover:bg-muted/50 sm:border-r xl:border-b-0",
+                "flex min-h-12 items-center gap-3 border-b px-4 transition-colors hover:bg-muted/50 sm:border-r xl:border-b-0",
                 active && "bg-primary/[0.06] shadow-[inset_0_-2px_0_hsl(var(--primary))]",
                 item.key === "exception" && item.count > 0 && "text-destructive"
               )}
@@ -429,38 +434,50 @@ export default async function SalesPage({
         })}
       </nav>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        {[
-          [
-            "本周订单量",
-            allOrders.filter(
-              (o) =>
-                reportDay(o.orderDate) >= dateFilter.monday &&
-                reportDay(o.orderDate) <= dateFilter.today
-            ).length,
-          ],
-          [
-            "本月订单量",
-            allOrders.filter(
-              (o) =>
-                reportDay(o.orderDate) >= `${dateFilter.today.slice(0, 7)}-01` &&
-                reportDay(o.orderDate) <= dateFilter.today
-            ).length,
-          ],
-          ["选定时间订单量", allOrders.filter((o) => dateFilter.matches(o.orderDate)).length],
-        ].map(([label, count]) => (
-          <div key={label} className="rounded-lg border p-4">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-xl font-semibold">{count} 单</p>
-          </div>
-        ))}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        订单量按下单日期（北京时间）统计，含所有状态；星期筛选可叠加时间范围。列表同时应用业务、状态及平台筛选。
-      </p>
+      {counts.presale > 0 && <div className="rounded-lg border p-3 text-sm space-y-1">
+        <p className="font-medium">筛选内预售待履约 {orders.filter(isPendingPresale).length} 单</p>
+        <p className="text-muted-foreground">以下待履约金额按列表筛选范围、分币种统计，尚未计入已确认销售额；库存成本待分配后核算。</p>
+        {[...new Set(orders.filter(isPendingPresale).map((order) => order.currency))].map((currency) => {
+          const summary = summarizeSalesOrders(orders.filter((order) => order.currency === currency));
+          return <p key={currency}>{currency} · {summary.pendingPresaleCount} 单 · {formatCurrency(summary.pendingPresaleAmount.toString(), currency)}</p>;
+        })}
+      </div>}
+
+      <details className="rounded-lg border p-3">
+        <summary className="cursor-pointer text-sm font-medium">订单量统计</summary>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          {[
+            [
+              "本周订单量",
+              allOrders.filter(
+                (o) =>
+                  reportDay(o.orderDate) >= dateFilter.monday &&
+                  reportDay(o.orderDate) <= dateFilter.today
+              ).length,
+            ],
+            [
+              "本月订单量",
+              allOrders.filter(
+                (o) =>
+                  reportDay(o.orderDate) >= `${dateFilter.today.slice(0, 7)}-01` &&
+                  reportDay(o.orderDate) <= dateFilter.today
+              ).length,
+            ],
+            ["选定时间订单量", allOrders.filter((o) => dateFilter.matches(o.orderDate)).length],
+          ].map(([label, count]) => (
+            <div key={label} className="rounded-lg border p-4">
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="mt-1 text-xl font-semibold">{count} 单</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          订单量按下单日期（北京时间）统计，含所有状态；星期筛选可叠加时间范围。列表同时应用业务、状态及平台筛选。
+        </p>
+      </details>
       <form
         method="get"
-        className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3 lg:flex-row lg:flex-wrap lg:items-center"
+        className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-3"
       >
         {view !== "all" ? <input type="hidden" name="view" value={view} /> : null}
         <div className="relative min-w-0 flex-1">
@@ -473,90 +490,97 @@ export default async function SalesPage({
             aria-label="搜索销售订单"
           />
         </div>
-        <Select
-          name="mode"
-          defaultValue={mode}
-          className="h-9 bg-background lg:w-36"
-          aria-label="业务类型"
-        >
-          <option value="">全部业务</option>
-          <option value="DIRECT">自营销售</option>
-          <option value="RESALE">我方代卖</option>
-        </Select>
-        <Select
-          name="status"
-          defaultValue={status}
-          className="h-9 bg-background lg:w-36"
-          aria-label="订单状态"
-        >
-          <option value="">全部状态</option>
-          {Object.entries(orderStatusLabels).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </Select>
-        <Select
-          name="platform"
-          defaultValue={params.platform || ""}
-          className="h-9 bg-background lg:w-44"
-          aria-label="销售平台"
-        >
-          <option value="">全部平台</option>
-          {platforms.map((platform) => (
-            <option key={platform.id} value={platform.id}>
-              {platform.name}
-            </option>
-          ))}
-        </Select>
-        <Select
-          name="period"
-          defaultValue={params.period ?? ""}
-          aria-label="时间范围"
-          className="lg:w-36"
-        >
-          <option value="">全部时间</option>
-          <option value="today">今天</option>
-          <option value="week">本周</option>
-          <option value="month">本月</option>
-          <option value="selectedMonth">指定月份</option>
-          <option value="custom">指定日期范围</option>
-        </Select>
-        <Input
-          type="month"
-          name="month"
-          defaultValue={params.month}
-          aria-label="指定月份"
-          className="lg:w-40"
-        />
-        <Input
-          type="date"
-          name="from"
-          defaultValue={params.from}
-          aria-label="开始日期"
-          className="lg:w-40"
-        />
-        <span className="text-xs text-muted-foreground">至</span>
-        <Input
-          type="date"
-          name="to"
-          defaultValue={params.to}
-          aria-label="结束日期"
-          className="lg:w-40"
-        />
-        <Select
-          name="weekday"
-          defaultValue={params.weekday ?? ""}
-          aria-label="星期"
-          className="lg:w-32"
-        >
-          <option value="">全部星期</option>
-          {["日", "一", "二", "三", "四", "五", "六"].map((day, i) => (
-            <option key={i} value={i}>
-              星期{day}
-            </option>
-          ))}
-        </Select>
+        <details className="w-full">
+          <summary className="cursor-pointer py-1 text-xs text-muted-foreground">
+            高级筛选（业务、状态、平台与日期）
+          </summary>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <Select
+              name="mode"
+              defaultValue={mode}
+              className="h-9 bg-background lg:w-36"
+              aria-label="业务类型"
+            >
+              <option value="">全部业务</option>
+              <option value="DIRECT">自营销售</option>
+              <option value="RESALE">我方代卖</option>
+            </Select>
+            <Select
+              name="status"
+              defaultValue={status}
+              className="h-9 bg-background lg:w-36"
+              aria-label="订单状态"
+            >
+              <option value="">全部状态</option>
+              {Object.entries(orderStatusLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+            <Select
+              name="platform"
+              defaultValue={params.platform || ""}
+              className="h-9 bg-background lg:w-44"
+              aria-label="销售平台"
+            >
+              <option value="">全部平台</option>
+              {platforms.map((platform) => (
+                <option key={platform.id} value={platform.id}>
+                  {platform.name}
+                </option>
+              ))}
+            </Select>
+            <Select
+              name="period"
+              defaultValue={params.period ?? ""}
+              aria-label="时间范围"
+              className="lg:w-36"
+            >
+              <option value="">全部时间</option>
+              <option value="today">今天</option>
+              <option value="week">本周</option>
+              <option value="month">本月</option>
+              <option value="selectedMonth">指定月份</option>
+              <option value="custom">指定日期范围</option>
+            </Select>
+            <Input
+              type="month"
+              name="month"
+              defaultValue={params.month}
+              aria-label="指定月份"
+              className="lg:w-40"
+            />
+            <Input
+              type="date"
+              name="from"
+              defaultValue={params.from}
+              aria-label="开始日期"
+              className="lg:w-40"
+            />
+            <span className="text-xs text-muted-foreground">至</span>
+            <Input
+              type="date"
+              name="to"
+              defaultValue={params.to}
+              aria-label="结束日期"
+              className="lg:w-40"
+            />
+            <Select
+              name="weekday"
+              defaultValue={params.weekday ?? ""}
+              aria-label="星期"
+              className="lg:w-32"
+            >
+              <option value="">全部星期</option>
+              {["日", "一", "二", "三", "四", "五", "六"].map((day, i) => (
+                <option key={i} value={i}>
+                  星期{day}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </details>
         <Button type="submit" variant="secondary" size="sm">
           筛选
         </Button>

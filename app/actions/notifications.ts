@@ -51,6 +51,10 @@ export async function getMyNotifications() {
         orderNumber: true,
         externalOrderNo: true,
         platform: { select: { name: true } },
+        lines: {
+          orderBy: { createdAt: "asc" },
+          select: { quantity: true, sku: { select: { name: true } } },
+        },
       },
     }),
   ]);
@@ -69,6 +73,9 @@ export async function getMyNotifications() {
       orderNumber: customerOrder?.orderNumber ?? null,
       externalOrderNo: customerOrder?.externalOrderNo ?? null,
       platformName: customerOrder?.platform?.name ?? null,
+      productSummary: customerOrder?.lines
+        .map((line) => `${line.sku.name} × ${line.quantity.toString()}`)
+        .join("；") || null,
     };
   });
 }

@@ -438,11 +438,24 @@ export function ListingCoverageCard({
   const transitSkuCount = variantViews.filter((variant) => variant.scopedInTransitQty > 0).length;
   const headerMeta = [product.brand, product.category].filter(Boolean).join(" · ");
   const canAddSkuListing =
-    cardProduct.sellableLotQty > 0 && cardNewStockSummary.pendingListingCount > 0;
+    (cardProduct.sellableLotQty > 0 && cardNewStockSummary.pendingListingCount > 0) ||
+    (cardProduct.sellableQty <= 0 &&
+      cardProduct.productKind !== "USED" &&
+      cardProduct.allPlatforms.some(
+        (platform) =>
+          !cardProduct.records.some(
+            (record) =>
+              record.platformId === platform.id &&
+              record.state === "active" &&
+              record.listingScope === "SKU"
+          )
+      ));
   const primaryActionLabel = canAddSkuListing
-    ? cardNewStockSummary.activeListingCount > 0
-      ? "补充上架"
-      : "上架此 SKU"
+    ? cardProduct.sellableQty <= 0
+      ? "预售上架"
+      : cardNewStockSummary.activeListingCount > 0
+        ? "补充上架"
+        : "上架此 SKU"
     : "管理上架";
   const stockFormLabel =
     product.hasLotStock && product.hasItemUnits
@@ -615,7 +628,7 @@ export function ListingCoverageCard({
             <span className="text-[10px] text-muted-foreground">现货</span>
           </div>
           <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-            <span className="tabular-nums">在途 {product.inTransitQty}</span>
+            <button type="button" className="tabular-nums text-primary underline underline-offset-2" title="查看采购、转运和集运物流明细" onClick={() => setDetailsOpen(true)}>在途 {product.inTransitQty}</button>
             <button
               type="button"
               className="tabular-nums text-primary underline underline-offset-2"

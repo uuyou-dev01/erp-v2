@@ -20,6 +20,7 @@ interface AllocateInventoryFormProps {
   requiredQty: string;
   storeId: string;
   shippingCountry?: string | null;
+  onAllocated?: () => void;
 }
 
 export function AllocateInventoryForm({
@@ -29,6 +30,7 @@ export function AllocateInventoryForm({
   requiredQty,
   storeId,
   shippingCountry,
+  onAllocated,
 }: AllocateInventoryFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -127,6 +129,7 @@ export function AllocateInventoryForm({
         return;
       }
       router.refresh();
+      onAllocated?.();
     } catch (error) {
       setErrors({
         form: error instanceof Error ? error.message : "分配库存失败，请重试",

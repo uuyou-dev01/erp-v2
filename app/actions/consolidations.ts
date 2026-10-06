@@ -1,5 +1,7 @@
 "use server";
 
+import { resolvePurchaseLineInventory, type PurchaseLineInventory } from "@/lib/application/purchase-inventory-lineage";
+
 import Decimal from "decimal.js";
 import { resolveInventoryAcquisitions } from "@/lib/application/inventory-acquisition";
 import type { Prisma } from "@prisma/client";
@@ -132,10 +134,6 @@ type AddPurchaseOrdersResult = {
   errors: string[];
 };
 
-type PurchaseLineInventory = {
-  lots: Array<{ id: string }>;
-  units: Array<{ id: string }>;
-};
 
 function uniqueSortedIds(ids: Array<string | null | undefined>) {
   return [...new Set(ids.filter((id): id is string => Boolean(id)))].sort();
@@ -162,114 +160,6 @@ async function lockConsolidationEntityRows(
   }
 }
 
-async function resolvePurchaseLineInventory(
-  tx: Prisma.TransactionClient,
-  input: {
-    storeId: string;
-    locationId: string;
-    purchaseLines: Array<{ id: string; purchaseOrderId: string }>;
-    lotStatuses: string[];
-    unitStatuses: string[];
-  }
-) {
-  const result = new Map<string, PurchaseLineInventory>(
-    input.purchaseLines.map((line) => [line.id, { lots: [], units: [] }])
-  );
-  if (input.purchaseLines.length === 0) return result;
-
-  const purchaseLineIds = input.purchaseLines.map((line) => line.id);
-  const purchaseOrderIds = Array.from(
-    new Set(input.purchaseLines.map((line) => line.purchaseOrderId))
-  );
-  const [originalLots, originalUnits, receivedTransferLines] = await Promise.all([
-    tx.inventoryLot.findMany({
-      where: {
-        storeId: input.storeId,
-        sourceType: "PURCHASE",
-        sourceId: { in: purchaseLineIds },
-      },
-      select: { id: true, sourceId: true },
-    }),
-    tx.itemUnit.findMany({
-      where: {
-        storeId: input.storeId,
-        sourceType: "PURCHASE",
-        sourceId: { in: purchaseLineIds },
-      },
-      select: { id: true, sourceId: true },
-    }),
-    tx.inboundShipmentInventoryLine.findMany({
-      where: {
-        status: "RECEIVED",
-        destinationEntityId: { not: null },
-        shipment: { purchaseOrderId: { in: purchaseOrderIds } },
-      },
-      select: { entityType: true, entityId: true, destinationEntityId: true },
-      orderBy: { createdAt: "asc" },
-    }),
-  ]);
-
-  const purchaseLineByEntity = new Map<string, string>();
-  for (const lot of originalLots) purchaseLineByEntity.set(`LOT:${lot.id}`, lot.sourceId);
-  for (const unit of originalUnits) purchaseLineByEntity.set(`ITEM_UNIT:${unit.id}`, unit.sourceId);
-
-  // Preserve the purchase-line identity across every completed logistics leg.
-  for (let pass = 0; pass <= receivedTransferLines.length; pass += 1) {
-    let changed = false;
-    for (const line of receivedTransferLines) {
-      const purchaseLineId = purchaseLineByEntity.get(`${line.entityType}:${line.entityId}`);
-      if (!purchaseLineId || !line.destinationEntityId) continue;
-      const destinationKey = `${line.entityType}:${line.destinationEntityId}`;
-      if (purchaseLineByEntity.has(destinationKey)) continue;
-      purchaseLineByEntity.set(destinationKey, purchaseLineId);
-      changed = true;
-    }
-    if (!changed) break;
-  }
-
-  const lotIds = Array.from(purchaseLineByEntity.keys())
-    .filter((key) => key.startsWith("LOT:"))
-    .map((key) => key.slice(4));
-  const unitIds = Array.from(purchaseLineByEntity.keys())
-    .filter((key) => key.startsWith("ITEM_UNIT:"))
-    .map((key) => key.slice(10));
-  const [currentLots, currentUnits] = await Promise.all([
-    lotIds.length
-      ? tx.inventoryLot.findMany({
-          where: {
-            id: { in: lotIds },
-            storeId: input.storeId,
-            locationId: input.locationId,
-            status: { in: input.lotStatuses },
-          },
-          select: { id: true },
-          orderBy: { createdAt: "asc" },
-        })
-      : [],
-    unitIds.length
-      ? tx.itemUnit.findMany({
-          where: {
-            id: { in: unitIds },
-            storeId: input.storeId,
-            locationId: input.locationId,
-            status: { in: input.unitStatuses },
-          },
-          select: { id: true },
-          orderBy: { createdAt: "asc" },
-        })
-      : [],
-  ]);
-
-  for (const lot of currentLots) {
-    const purchaseLineId = purchaseLineByEntity.get(`LOT:${lot.id}`);
-    if (purchaseLineId) result.get(purchaseLineId)?.lots.push(lot);
-  }
-  for (const unit of currentUnits) {
-    const purchaseLineId = purchaseLineByEntity.get(`ITEM_UNIT:${unit.id}`);
-    if (purchaseLineId) result.get(purchaseLineId)?.units.push(unit);
-  }
-  return result;
-}
 
 async function resolveAndLockPurchaseLineInventory(
   tx: Prisma.TransactionClient,
@@ -524,6 +414,9 @@ async function addPurchaseOrdersToBatch(batchId: string, purchaseOrderIds: strin
   revalidatePath("/logistics/consolidations");
   revalidatePath(`/logistics/consolidations/${batch.id}`);
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   return { success, failed, errors } satisfies AddPurchaseOrdersResult;
 }
 
@@ -1260,6 +1153,9 @@ export async function removeInventoryFromConsolidationBatchAction(input: {
     revalidatePath("/inventory/items");
     revalidatePath("/inventory/sellable");
     revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
     return actionSuccess({ batchId: input.batchId, lineId: input.lineId });
   } catch (error) {
     return toActionFailure(error, "移除集运商品失败，请重试");
@@ -1442,6 +1338,9 @@ export async function updateConsolidationStatus(
   revalidatePath("/logistics/consolidations");
   revalidatePath(`/logistics/consolidations/${id}`);
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   if (status === "RECEIVED") {
     revalidatePath("/inventory/lots");
     revalidatePath("/inventory/items");
@@ -1494,6 +1393,9 @@ export async function updateConsolidationDestination(id: string, toLocationId: s
   revalidatePath(`/logistics/consolidations/${id}`);
   revalidatePath("/logistics/consolidations");
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   return { id, toLocationId: destination.id, toLocationName: destination.name };
 }
 
@@ -2423,6 +2325,9 @@ export async function repairConsolidationOriginInventory(id: string) {
   revalidatePath(`/logistics/consolidations/${id}`);
   revalidatePath("/logistics/consolidations");
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
   return { id, repairedLines };

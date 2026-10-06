@@ -78,6 +78,7 @@ export async function getOperatingReport(storeId: string, organizationId: string
           orderDate: true,
           settledAt: true,
           orderStatus: true,
+          isPresale: true,
           currency: true,
           totalPaid: true,
           platformFee: true,
@@ -322,7 +323,7 @@ export async function getOperatingReport(storeId: string, organizationId: string
         })),
         label: order.orderNumber,
         detail: order.platform?.name ?? "直销",
-        status: order.orderStatus,
+        status: order.isPresale && order.orderStatus === "DRAFT" ? "预售待履约" : order.orderStatus,
         href: `/sales/${order.id}`,
         money: saleMoney,
         included,
@@ -333,7 +334,9 @@ export async function getOperatingReport(storeId: string, organizationId: string
         provisional,
         costDetails,
         providerFeeEstimate,
-        note: !included
+        note: order.isPresale && order.orderStatus === "DRAFT"
+          ? "预售已接单，等待补货及库存分配，暂不计入已确认销售额和利润"
+          : !included
           ? "未成交、已取消及整单退货不计入销售"
           : missingCost
             ? "库存分配或成本未完整确认"

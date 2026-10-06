@@ -36,7 +36,7 @@ export function StocktakeToolbar({
 
   return (
     <div className="space-y-3 rounded-xl border bg-card p-4">
-      <div className="grid gap-3 lg:grid-cols-[1fr_220px_180px]">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px] xl:grid-cols-[minmax(0,1fr)_220px_180px]">
         <form
           className="flex gap-2"
           onSubmit={(event) => {
@@ -48,6 +48,7 @@ export function StocktakeToolbar({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="pl-9"
+              aria-label="搜索盘点商品"
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
               placeholder="搜索 SKU 编码/名称"
@@ -59,6 +60,7 @@ export function StocktakeToolbar({
         </form>
 
         <Select
+          aria-label="盘点仓位"
           value={activeLocationId ?? ""}
           onChange={(event) => pushWith({ locationId: event.target.value })}
         >

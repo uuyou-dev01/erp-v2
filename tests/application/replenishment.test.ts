@@ -311,3 +311,11 @@ describe("SKU replenishment decisions", () => {
     );
   });
 });
+
+it("covers existing presale debt even without a sales forecast, counting arrivals once", () => {
+  const decision = buildReplenishmentDecision({ ...input, sales7Qty: 0, sales30Qty: 0, sales90Qty: 0,
+    orderCount30: 0, sellableQty: 2, pendingPresaleQty: 10, timelyIncomingQty: 3, inTransitQty: 3 });
+  expect(decision.suggestedQty).toBe(5);
+  expect(decision.status).toBe("reorder_now");
+  expect(decision.coverageDays).toBeNull();
+});

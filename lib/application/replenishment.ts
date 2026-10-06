@@ -21,6 +21,7 @@ export interface ReplenishmentSales {
 
 export interface ReplenishmentInput extends ReplenishmentSales {
   sellableQty: number;
+  pendingPresaleQty?: number;
   inTransitQty?: number;
   onOrderQty?: number;
   /**
@@ -54,6 +55,7 @@ export interface ReplenishmentDecision extends ReplenishmentSales {
   /** ISO calendar dates (YYYY-MM-DD), estimated in UTC. */
   projectedStockoutDate: string | null;
   reorderByDate: string | null;
+  pendingPresaleQty?: number;
   inTransitQty: number;
   onOrderQty: number;
   timelyIncomingQty: number;
@@ -110,7 +112,9 @@ export function isReplenishmentAlert(decision?: ReplenishmentDecision): boolean 
 }
 
 export function buildReplenishmentDecision(input: ReplenishmentInput): ReplenishmentDecision {
-  const sellableQty = quantity(input.sellableQty);
+  const pendingPresaleQty = quantity(input.pendingPresaleQty);
+  const sellableQty = Math.max(0, quantity(input.sellableQty) - pendingPresaleQty);
+  const uncoveredPresaleQty = Math.max(0, pendingPresaleQty - quantity(input.sellableQty));
   const sales7Qty = quantity(input.sales7Qty);
   const sales30Qty = quantity(input.sales30Qty);
   const sales90Qty = quantity(input.sales90Qty);
@@ -143,13 +147,14 @@ export function buildReplenishmentDecision(input: ReplenishmentInput): Replenish
   const hasRecentSales = sales7Qty > 0 || sales30Qty > 0 || sales90Qty > 0;
   const incomingNote =
     inTransitQty + onOrderQty > 0
-      ? ` 当前转运在途 ${inTransitQty} 件、已采购待入库 ${onOrderQty} 件；下单前核对到货安排，仅抵扣补货窗口内预计到货的确认数量。`
+      ? ` 当前物流在途 ${inTransitQty} 件、已采购待入库 ${onOrderQty} 件；下单前核对到货安排，仅抵扣补货窗口内预计到货的确认数量。`
       : "";
   const base: ReplenishmentDecision = {
     status: "insufficient_data",
     label: "数据不足",
     priority: 10,
     dailySales,
+    pendingPresaleQty,
     coverageDays: null,
     daysUntilReorder: null,
     suggestedQty: null,
@@ -189,6 +194,19 @@ export function buildReplenishmentDecision(input: ReplenishmentInput): Replenish
     };
   }
 
+  if (!hasSufficientSample && pendingPresaleQty > 0) {
+    const missing = Math.max(0, uncoveredPresaleQty - timelyIncomingQty);
+    return {
+      ...base,
+      status: missing > 0 ? "reorder_now" : "covered",
+      label: missing > 0 ? "预售需补货" : "预售待分配 / 到货",
+      priority: missing > 0 ? 100 : 60,
+      suggestedQty: Math.ceil(missing),
+      reason: `已接预售尚待分配 ${pendingPresaleQty} 件；按现货及补货窗口内预计到货抵扣，缺口 ${missing} 件。销量样本不足，不额外推算备货。${incomingNote}`,
+      action: "按承诺发货日核对到货安排，先满足已接预售订单。",
+    };
+  }
+
   if (!hasSufficientSample) {
     const isSoldOut = sellableQty === 0 && hasRecentSales;
     return {
@@ -209,7 +227,10 @@ export function buildReplenishmentDecision(input: ReplenishmentInput): Replenish
   const suggestedQty = Math.max(
     0,
     Math.ceil(
-      dailySales * (reorderWindow + policy.targetCoverDays) - sellableQty - timelyIncomingQty
+      dailySales * (reorderWindow + policy.targetCoverDays) +
+        uncoveredPresaleQty -
+        sellableQty -
+        timelyIncomingQty
     )
   );
   const now = input.now && Number.isFinite(input.now.getTime()) ? input.now : new Date();
@@ -225,7 +246,7 @@ export function buildReplenishmentDecision(input: ReplenishmentInput): Replenish
     timelyIncomingQty > 0
       ? ` 已按补货窗口内预计到货的 ${timelyIncomingQty} 件抵扣计划补量，到货前的现货缺口仍需处理。`
       : "";
-  const reason = `${demandNote}${timelyNote}${incomingNote}`;
+  const reason = `${pendingPresaleQty > 0 ? `已接预售尚待分配 ${pendingPresaleQty} 件，已优先计入补货需求。` : ""}${demandNote}${timelyNote}${incomingNote}`;
   const action =
     suggestedQty > 0
       ? `建议补充 ${suggestedQty} 件，采购前确认交期和未到货订单。`

@@ -561,6 +561,8 @@ export function QuickEntryWorkbench({
   const [saveSummary, setSaveSummary] = useState<{ success: number; failed: number } | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const [entryMode, setEntryMode] = useState<"single" | "batch">("single");
+  const singleEntry = entryMode === "single" && rows.length === 1;
   const [isPending, startTransition] = useTransition();
 
   const validRows = useMemo(
@@ -840,7 +842,23 @@ export function QuickEntryWorkbench({
         <div className="rounded-lg border bg-card p-3 sm:p-4">
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">快速录入表</h2>
+              <div className="flex gap-1" aria-label="录入方式">
+                <Button
+                  size="sm"
+                  variant={singleEntry ? "default" : "ghost"}
+                  disabled={rows.length > 1}
+                  onClick={() => setEntryMode("single")}
+                >
+                  单笔录入
+                </Button>
+                <Button
+                  size="sm"
+                  variant={!singleEntry ? "default" : "ghost"}
+                  onClick={() => setEntryMode("batch")}
+                >
+                  批量表格
+                </Button>
+              </div>
               <p className="text-sm text-muted-foreground">
                 先记录采购事实；保存后进入待补物流。需要补充上架或售出信息时可展开高级字段。
               </p>
@@ -856,7 +874,10 @@ export function QuickEntryWorkbench({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setRows((c) => [...c, blankRow(storeId)])}
+                onClick={() => {
+                  setEntryMode("batch");
+                  setRows((c) => [...c, blankRow(storeId)]);
+                }}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 新增行
@@ -899,10 +920,14 @@ export function QuickEntryWorkbench({
           <div className="overflow-x-auto rounded-lg border bg-muted/20 p-1">
             <table
               className={`w-full border-separate border-spacing-y-1 text-xs ${
-                showAdvancedFields ? "min-w-[2020px]" : "min-w-[1460px]"
+                singleEntry
+                  ? "block [&_tbody]:block [&_tr]:grid [&_tr]:grid-cols-1 [&_tr]:gap-2 sm:[&_tr]:grid-cols-2 lg:[&_tr]:grid-cols-3 [&_td]:block [&_td]:rounded-md"
+                  : showAdvancedFields
+                    ? "min-w-[2020px]"
+                    : "min-w-[1460px]"
               }`}
             >
-              <thead>
+              <thead className={singleEntry ? "hidden" : undefined}>
                 <tr className="text-left text-[11px] text-muted-foreground">
                   <th className="sticky left-0 z-20 w-10 bg-muted/90 px-2 py-1.5 backdrop-blur">
                     <div className="flex justify-center">
@@ -952,7 +977,14 @@ export function QuickEntryWorkbench({
               <tbody className="[&_td]:bg-card [&_tr:hover_td]:bg-muted/40">
                 {rows.map((row) => (
                   <tr key={row.localId} className="group align-top">
-                    <td className="sticky left-0 z-10 p-2 shadow-[1px_0_0_0_hsl(var(--border))]">
+                    <td
+                      hidden={singleEntry}
+                      className={
+                        singleEntry
+                          ? "!hidden"
+                          : "sticky left-0 z-10 p-2 shadow-[1px_0_0_0_hsl(var(--border))]"
+                      }
+                    >
                       <div className="flex h-8 items-center justify-center">
                         <Checkbox
                           checked={selectedRowIds.includes(row.localId)}
@@ -965,8 +997,14 @@ export function QuickEntryWorkbench({
                       </div>
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          品牌
+                        </span>
+                      )}
                       <Input
                         list="brand-list"
+                        aria-label="品牌"
                         value={row.rawBrand ?? ""}
                         onChange={(e) => updateRow(row.localId, { rawBrand: e.target.value })}
                         placeholder="POP MART"
@@ -974,8 +1012,14 @@ export function QuickEntryWorkbench({
                       />
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          商品组 / 商品名
+                        </span>
+                      )}
                       <Input
                         list="product-list"
+                        aria-label="商品组 / 商品名"
                         value={row.rawProductName}
                         onChange={(e) => updateProductName(row, e.target.value)}
                         placeholder="例如：Dunk SB Low 芝加哥"
@@ -983,8 +1027,14 @@ export function QuickEntryWorkbench({
                       />
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          具体规格
+                        </span>
+                      )}
                       <Input
                         list={`variant-list-${row.localId}`}
+                        aria-label="具体规格"
                         value={row.rawVariant ?? ""}
                         onChange={(e) => updateRow(row.localId, { rawVariant: e.target.value })}
                         placeholder="例如：43码、红色；无规格可留空"
@@ -1001,7 +1051,13 @@ export function QuickEntryWorkbench({
                       </p>
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          商品状态 / 品级
+                        </span>
+                      )}
                       <Select
+                        aria-label="商品状态"
                         value={normalizeItemConditionType(row.conditionType)}
                         onChange={(e) => {
                           const conditionType = e.target.value;
@@ -1045,6 +1101,11 @@ export function QuickEntryWorkbench({
                       ) : null}
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          数量
+                        </span>
+                      )}
                       <Input
                         type="text"
                         inputMode="decimal"
@@ -1056,9 +1117,15 @@ export function QuickEntryWorkbench({
                       />
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          购入单价（原币）
+                        </span>
+                      )}
                       <Input
                         type="text"
                         inputMode="decimal"
+                        aria-label="购入单价（原币）"
                         value={row.purchasePrice ?? ""}
                         onChange={(e) => updateRow(row.localId, { purchasePrice: e.target.value })}
                         placeholder="53"
@@ -1066,7 +1133,13 @@ export function QuickEntryWorkbench({
                       />
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          币种
+                        </span>
+                      )}
                       <Select
+                        aria-label="采购币种"
                         value={row.purchaseCurrency ?? "CNY"}
                         onChange={(e) =>
                           updateRow(row.localId, { purchaseCurrency: e.target.value })
@@ -1081,8 +1154,14 @@ export function QuickEntryWorkbench({
                       </Select>
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          采购渠道 / 卖家
+                        </span>
+                      )}
                       <Input
                         list="pplat-list"
+                        aria-label="采购渠道 / 卖家"
                         value={row.purchasePlatformText ?? ""}
                         onChange={(e) =>
                           updateRow(row.localId, { purchasePlatformText: e.target.value })
@@ -1092,6 +1171,11 @@ export function QuickEntryWorkbench({
                       />
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          采购日期
+                        </span>
+                      )}
                       <Input
                         type="date"
                         value={row.purchaseDate ?? ""}
@@ -1101,7 +1185,13 @@ export function QuickEntryWorkbench({
                       />
                     </td>
                     <td className="p-2">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          品相 / 采购备注
+                        </span>
+                      )}
                       <Input
+                        aria-label="品相 / 采购备注"
                         value={row.batchNote ?? ""}
                         onChange={(e) => updateRow(row.localId, { batchNote: e.target.value })}
                         placeholder={
@@ -1115,7 +1205,13 @@ export function QuickEntryWorkbench({
                     {showAdvancedFields && (
                       <>
                         <td className="p-2">
+                          {singleEntry && (
+                            <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                              采购物流单号
+                            </span>
+                          )}
                           <Input
+                            aria-label="采购物流单号"
                             value={row.purchaseTrackingNo ?? ""}
                             onChange={(e) =>
                               updateRow(row.localId, { purchaseTrackingNo: e.target.value })
@@ -1125,8 +1221,14 @@ export function QuickEntryWorkbench({
                           />
                         </td>
                         <td className="p-2">
+                          {singleEntry && (
+                            <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                              所在地
+                            </span>
+                          )}
                           <Input
                             list="loc-list"
+                            aria-label="所在地"
                             value={row.currentLocationText ?? ""}
                             onChange={(e) =>
                               updateRow(row.localId, { currentLocationText: e.target.value })
@@ -1136,8 +1238,14 @@ export function QuickEntryWorkbench({
                           />
                         </td>
                         <td className="p-2">
+                          {singleEntry && (
+                            <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                              上架平台
+                            </span>
+                          )}
                           <Input
                             list="listplat-list"
+                            aria-label="上架平台"
                             value={row.listingPlatformsText ?? ""}
                             onChange={(e) =>
                               updateRow(row.localId, { listingPlatformsText: e.target.value })
@@ -1147,8 +1255,14 @@ export function QuickEntryWorkbench({
                           />
                         </td>
                         <td className="p-2">
+                          {singleEntry && (
+                            <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                              售出平台
+                            </span>
+                          )}
                           <Input
                             list="saleplat-list"
+                            aria-label="售出平台"
                             value={row.salePlatformText ?? ""}
                             onChange={(e) =>
                               updateRow(row.localId, { salePlatformText: e.target.value })
@@ -1158,9 +1272,15 @@ export function QuickEntryWorkbench({
                           />
                         </td>
                         <td className="p-2">
+                          {singleEntry && (
+                            <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                              售出价（原币）
+                            </span>
+                          )}
                           <Input
                             type="text"
                             inputMode="decimal"
+                            aria-label="售出价（原币）"
                             value={row.salePrice ?? ""}
                             onChange={(e) => updateRow(row.localId, { salePrice: e.target.value })}
                             placeholder="售出价"
@@ -1168,6 +1288,11 @@ export function QuickEntryWorkbench({
                           />
                         </td>
                         <td className="p-2">
+                          {singleEntry && (
+                            <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                              售出日期
+                            </span>
+                          )}
                           <Input
                             type="date"
                             value={row.saleDate ?? ""}
@@ -1179,6 +1304,11 @@ export function QuickEntryWorkbench({
                       </>
                     )}
                     <td className="p-2 whitespace-nowrap">
+                      {singleEntry && (
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          处理状态
+                        </span>
+                      )}
                       {row.result === "success" ? (
                         <Badge className="bg-emerald-600">
                           <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -1190,7 +1320,14 @@ export function QuickEntryWorkbench({
                         <Badge variant="outline">未保存</Badge>
                       )}
                     </td>
-                    <td className="sticky right-0 z-10 p-2 text-center shadow-[-1px_0_0_0_hsl(var(--border))]">
+                    <td
+                      hidden={singleEntry}
+                      className={
+                        singleEntry
+                          ? "!hidden"
+                          : "sticky right-0 z-10 p-2 text-center shadow-[-1px_0_0_0_hsl(var(--border))]"
+                      }
+                    >
                       <Button
                         type="button"
                         variant="ghost"

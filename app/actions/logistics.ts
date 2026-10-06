@@ -101,6 +101,9 @@ export async function dispatchInventoryTransfer(input: DispatchInventoryTransfer
   });
 
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
   revalidatePath("/inventory/sellable");
@@ -379,6 +382,9 @@ export async function confirmInboundShipmentDelivered(
   });
 
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   revalidatePath("/procurement");
   revalidatePath("/inventory/lots");
   revalidatePath("/inventory/items");
@@ -408,5 +414,8 @@ export async function bulkConfirmInboundShipmentsDelivered(
   }
 
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   return { success, failed, errors };
 }

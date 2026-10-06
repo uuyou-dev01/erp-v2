@@ -26,13 +26,16 @@ function compactVariantName(groupTitle: string, variantName: string) {
 export default async function LotsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ query?: string }>;
+  searchParams: Promise<{ query?: string; skuId?: string }>;
 }) {
   const context = await requireUserContext();
   const storeId = context.activeStoreId;
-  const { query: rawQuery } = await searchParams;
+  const { query: rawQuery, skuId } = await searchParams;
   const query = rawQuery?.trim() ?? "";
-  const allLots = await getInventoryLots(storeId);
+  const storeLots = await getInventoryLots(storeId);
+  const allLots = skuId
+    ? storeLots.filter((lot) => lot.skuId === skuId || lot.sku.parentSkuId === skuId)
+    : storeLots;
   const normalizedQuery = query.toLocaleLowerCase();
   const lots = normalizedQuery
     ? allLots.filter((lot) =>
@@ -73,7 +76,7 @@ export default async function LotsPage({
           <CardContent>
             <div className="text-2xl font-bold">{lots.length}</div>
             <p className="text-xs text-muted-foreground">
-              {query ? "当前筛选范围" : "所有批次记录"}
+              {query || skuId ? "当前筛选范围" : "所有批次记录"}
             </p>
           </CardContent>
         </Card>
@@ -95,8 +98,10 @@ export default async function LotsPage({
             <Warehouse className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">¥{totalValue.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">按流水数量计算</p>
+            <div className="text-2xl font-bold">
+              {formatCurrency(totalValue.toFixed(2), lots[0]?.inventoryValueCurrency ?? "CNY")}
+            </div>
+            <p className="text-xs text-muted-foreground">按流水数量计算，折算为本位币</p>
           </CardContent>
         </Card>
 
@@ -117,6 +122,20 @@ export default async function LotsPage({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle>按商品组汇总</CardTitle>
+              {skuId && (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  已限定当前商品 · {lots.length} 个批次{" "}
+                  <Link
+                    className="ml-2 text-primary underline"
+                    href={`/inventory/skus/${encodeURIComponent(skuId)}`}
+                  >
+                    返回商品
+                  </Link>
+                  <Link className="ml-2 text-primary underline" href="/inventory/lots">
+                    查看全部
+                  </Link>
+                </p>
+              )}
               {query ? (
                 <p className="mt-1 text-sm font-normal text-muted-foreground">
                   正在筛选“{query}”，找到 {lots.length} 个批次
@@ -124,6 +143,7 @@ export default async function LotsPage({
               ) : null}
             </div>
             <form className="flex w-full min-w-0 gap-2 lg:w-auto" action="/inventory/lots">
+              {skuId ? <input type="hidden" name="skuId" value={skuId} /> : null}
               <label className="relative min-w-0 flex-1 lg:w-80">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -205,7 +225,12 @@ export default async function LotsPage({
                     </div>
                     <div>
                       <p className="text-[11px] text-muted-foreground">库存成本</p>
-                      <p className="font-semibold tabular-nums">¥{group.totalValue.toFixed(2)}</p>
+                      <p className="font-semibold tabular-nums">
+                        {formatCurrency(
+                          group.totalValue.toFixed(2),
+                          lots[0]?.inventoryValueCurrency ?? "CNY"
+                        )}
+                      </p>
                     </div>
                     <div className="flex min-w-16 justify-end text-xs font-medium text-primary">
                       <span className="group-open:hidden">展开详情</span>

@@ -10,6 +10,7 @@ export type WorkQueue =
   | "inStock"
   | "pendingListing"
   | "listed"
+  | "presaleWaiting"
   | "pendingShipment"
   | "shipped"
   | "pendingSettlement"
@@ -136,6 +137,7 @@ export interface QueueCounts {
   inStock: number;
   pendingListing: number;
   listed: number;
+  presaleWaiting: number;
   pendingShipment: number;
   shipped: number;
   pendingSettlement: number;
@@ -177,11 +179,12 @@ export const QUEUE_LABELS: Record<WorkQueue, string> = {
   inStock: "库存中",
   pendingListing: "待上架检查",
   listed: "已有上架记录",
+  presaleWaiting: "预售待补货",
   pendingShipment: "待发货",
-  shipped: "已发货",
+  shipped: "仓库已发出",
   pendingSettlement: "待结算",
   returnInspection: "待检查 / 补资料",
-  completed: "已完成",
+  completed: "已结算",
   exception: "异常商品",
 };
 
@@ -216,7 +219,7 @@ export function deriveLifecycleStageFromQueue(
   ) {
     return "IN_STOCK";
   }
-  if (queue === "pendingShipment" || queue === "shipped" || queue === "pendingSettlement") {
+  if (queue === "presaleWaiting" || queue === "pendingShipment" || queue === "shipped" || queue === "pendingSettlement") {
     return "SELLING";
   }
   return "COMPLETED";
@@ -246,7 +249,7 @@ export function deriveSubProcesses(queue: WorkQueue): SubProcessState[] {
   if (queue === "pendingListing" || queue === "listed")
     return [active("LISTING", QUEUE_LABELS[queue])];
   if (queue === "returnInspection") return [active("INSPECTION", QUEUE_LABELS[queue])];
-  if (queue === "pendingShipment" || queue === "shipped")
+  if (queue === "presaleWaiting" || queue === "pendingShipment" || queue === "shipped")
     return [active("FULFILLMENT", QUEUE_LABELS[queue])];
   if (queue === "pendingSettlement") return [active("SETTLEMENT", QUEUE_LABELS[queue])];
   if (queue === "exception") return [active("LOGISTICS", "异常处理", true)];
@@ -279,6 +282,7 @@ export const WORKFLOW_STAGES: Array<{ key: WorkQueue; label: string }> = [
   { key: "pendingDisposition", label: "待分流" },
   { key: "inspectionException", label: "检查异常" },
   { key: "pendingListing", label: "待上架检查" },
+  { key: "presaleWaiting", label: "预售待补货" },
   { key: "pendingShipment", label: "待发货" },
   { key: "shipped", label: "已发货" },
   { key: "pendingSettlement", label: "待结算" },
@@ -372,6 +376,7 @@ export function emptyQueueCounts(): QueueCounts {
     inStock: 0,
     pendingListing: 0,
     listed: 0,
+    presaleWaiting: 0,
     pendingShipment: 0,
     shipped: 0,
     pendingSettlement: 0,
@@ -485,6 +490,7 @@ export function buildLifecycleEvents(input: {
     pendingListing: 6,
     listed: 6,
     returnInspection: 5,
+    presaleWaiting: 8,
     pendingShipment: 8,
     shipped: 8,
     pendingSettlement: 9,

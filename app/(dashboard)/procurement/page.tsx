@@ -140,8 +140,7 @@ function hasAmountMismatch(order: OrderRow): boolean {
     new Decimal(0)
   );
   return (
-    !lineTotal.eq(new Decimal(order.subtotal)) ||
-    !lineTotal.eq(new Decimal(order.totalAmount))
+    !lineTotal.eq(new Decimal(order.subtotal)) || !lineTotal.eq(new Decimal(order.totalAmount))
   );
 }
 
@@ -226,9 +225,7 @@ export default async function ProcurementPage({
     selectedStatus === ALL_STATUSES
       ? currencyFilteredOrders
       : currencyFilteredOrders.filter((order) => order.status === selectedStatus);
-  const filteredOrders = statusFilteredOrders.filter((order) =>
-    matchesIssue(order, selectedIssue)
-  );
+  const filteredOrders = statusFilteredOrders.filter((order) => matchesIssue(order, selectedIssue));
   const analyticsOrders = filteredOrders.filter((order) => !isTerminalOrder(order));
   const missingFxOrders = statusFilteredOrders.filter(
     (order) => !isTerminalOrder(order) && hasMissingFx(order)
@@ -535,77 +532,83 @@ export default async function ProcurementPage({
         </div>
       </div>
 
-      {/* 核心统计 */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          title="采购订单总数"
-          value={stats.total}
-          subtitle={`草稿 ${stats.draft} / 待收货 ${stats.pendingReceiveCount}（含在途 ${stats.shipped}）/ 已收货 ${stats.received} / 已退货 ${stats.returned} / 已取消 ${stats.cancelled}`}
-          icon={ShoppingCart}
-          iconColor="text-muted-foreground"
-        />
-        <StatCard
-          title={`${range.label}采购金额（CNY）`}
-          value={formatCurrency(stats.periodAmountCny, "CNY")}
-          subtitle={`${stats.periodOrderCount} 笔采购单（可换算）`}
-          icon={CalendarDays}
-          iconColor="text-brand-blue"
-        />
-        <StatCard
-          title="待收货采购单"
-          value={stats.pendingReceiveCount}
-          subtitle={`${range.label}共 ${stats.periodOrderCount} 笔下单`}
-          icon={Truck}
-          iconColor="text-brand-blue"
-        />
-        <StatCard
-          title="当前收货完成率"
-          value={`${stats.overallReceiveRate}%`}
-          subtitle="按采购单状态计算"
-          icon={CheckCircle}
-          iconColor="text-green-500"
-        />
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">采购金额汇总（原币种）</CardTitle>
-            <Package className="h-4 w-4 text-orange-500" />
-          </CardHeader>
-          <CardContent>
-            {currencySummary.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无金额</p>
-            ) : (
-              <div className="space-y-1.5">
-                {currencySummary.map((entry) => (
-                  <Link
-                    key={entry.currency}
-                    href={buildHref({ currency: entry.currency })}
-                    className="flex items-baseline justify-between gap-3 rounded-sm hover:bg-muted"
-                  >
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {entry.currency}
-                    </span>
-                    <span className="truncate text-sm font-semibold">
-                      {formatCurrency(entry.amount, entry.currency)}
-                      <span className="ml-1 text-xs font-normal text-muted-foreground">
-                        {entry.orderCount} 单
+      <details className="rounded-lg border bg-card p-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          采购概览与统计 · 待收货 {stats.pendingReceiveCount} 单 · {range.label}{" "}
+          {formatCurrency(stats.periodAmountCny, "CNY")}
+        </summary>
+        {/* 核心统计 */}
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <StatCard
+            title="采购订单总数"
+            value={stats.total}
+            subtitle={`草稿 ${stats.draft} / 待收货 ${stats.pendingReceiveCount}（含在途 ${stats.shipped}）/ 已收货 ${stats.received} / 已退货 ${stats.returned} / 已取消 ${stats.cancelled}`}
+            icon={ShoppingCart}
+            iconColor="text-muted-foreground"
+          />
+          <StatCard
+            title={`${range.label}采购金额（CNY）`}
+            value={formatCurrency(stats.periodAmountCny, "CNY")}
+            subtitle={`${stats.periodOrderCount} 笔采购单（可换算）`}
+            icon={CalendarDays}
+            iconColor="text-brand-blue"
+          />
+          <StatCard
+            title="待收货采购单"
+            value={stats.pendingReceiveCount}
+            subtitle={`${range.label}共 ${stats.periodOrderCount} 笔下单`}
+            icon={Truck}
+            iconColor="text-brand-blue"
+          />
+          <StatCard
+            title="当前收货完成率"
+            value={`${stats.overallReceiveRate}%`}
+            subtitle="按采购单状态计算"
+            icon={CheckCircle}
+            iconColor="text-green-500"
+          />
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">采购金额汇总（原币种）</CardTitle>
+              <Package className="h-4 w-4 text-orange-500" />
+            </CardHeader>
+            <CardContent>
+              {currencySummary.length === 0 ? (
+                <p className="text-sm text-muted-foreground">暂无金额</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {currencySummary.map((entry) => (
+                    <Link
+                      key={entry.currency}
+                      href={buildHref({ currency: entry.currency })}
+                      className="flex items-baseline justify-between gap-3 rounded-sm hover:bg-muted"
+                    >
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {entry.currency}
                       </span>
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-            <p className="mt-2 text-xs text-muted-foreground">按订单币种分别汇总</p>
-          </CardContent>
-        </Card>
-      </div>
+                      <span className="truncate text-sm font-semibold">
+                        {formatCurrency(entry.amount, entry.currency)}
+                        <span className="ml-1 text-xs font-normal text-muted-foreground">
+                          {entry.orderCount} 单
+                        </span>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">按订单币种分别汇总</p>
+            </CardContent>
+          </Card>
+        </div>
+      </details>
 
       {missingFxOrders.length > 0 ? (
         <Link
           href={buildHref({ issue: "missing_fx" })}
           className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 hover:bg-amber-100"
         >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          有 {missingFxOrders.length} 笔有效外币订单缺少汇率，未计入 CNY 趋势图金额。查看并处理
+          <AlertTriangle className="h-4 w-4 shrink-0" />有 {missingFxOrders.length}{" "}
+          笔有效外币订单缺少汇率，未计入 CNY 趋势图金额。查看并处理
         </Link>
       ) : null}
       {amountMismatchOrders.length > 0 ? (
@@ -613,17 +616,20 @@ export default async function ProcurementPage({
           href={buildHref({ issue: "amount_mismatch" })}
           className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
         >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          有 {amountMismatchOrders.length} 笔采购单的订单金额与明细合计不一致。查看并处理
+          <AlertTriangle className="h-4 w-4 shrink-0" />有 {amountMismatchOrders.length}{" "}
+          笔采购单的订单金额与明细合计不一致。查看并处理
         </Link>
       ) : null}
 
-      <ProcurementAnalytics
-        monthlyData={monthlyDataWithKey}
-        breakdownData={breakdownData}
-        breakdownTitle={breakdownTitle}
-        scopeLabel={getCurrencyLabel(selectedCurrency)}
-      />
+      <details className="rounded-lg border bg-card p-3">
+        <summary className="cursor-pointer text-sm font-medium">查看采购趋势与分析</summary>
+        <ProcurementAnalytics
+          monthlyData={monthlyDataWithKey}
+          breakdownData={breakdownData}
+          breakdownTitle={breakdownTitle}
+          scopeLabel={getCurrencyLabel(selectedCurrency)}
+        />
+      </details>
 
       <Card>
         <CardHeader>

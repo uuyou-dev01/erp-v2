@@ -1,3 +1,4 @@
+import { listingPriceRisks } from "@/lib/application/listing-price-risk";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, Package, Percent } from "lucide-react";
@@ -55,6 +56,10 @@ export default async function ListingDetailPage({
   if (!sku) {
     notFound();
   }
+  const priceRisks = listingPriceRisks({
+    ...listing,
+    defaultShippingFee: listing.shippingFeeOverride ?? listing.platform.defaultShippingFee,
+  });
   const returnHref = safeReturnPath(returnTo, "/listing");
 
   return (
@@ -75,7 +80,16 @@ export default async function ListingDetailPage({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <ListingPlatformMark code={listing.platform.code} name={listing.platform.name} />
-              <Badge>{statusLabel(listing.status)}</Badge>
+              <Badge>
+                {listing.isPresale && listing.status === "ACTIVE"
+                  ? "预售中"
+                  : statusLabel(listing.status)}
+              </Badge>
+              {listing.isPresale ? (
+                <span className="text-sm text-amber-700">
+                  预计发货 {listing.expectedShipDate?.toISOString().slice(0, 10)}
+                </span>
+              ) : null}
               <Badge variant="secondary">
                 {listing.listingType === "ITEM_UNIT" ? "中古单品" : "SKU"}
               </Badge>
@@ -87,6 +101,9 @@ export default async function ListingDetailPage({
         <div className="flex flex-wrap gap-2">
           {listing.status === "ACTIVE" ? (
             <ListingEditButton
+              listingType={listing.listingType}
+              isPresale={listing.isPresale}
+              expectedShipDate={listing.expectedShipDate?.toISOString().slice(0, 10)}
               listingId={listing.id}
               productLabel={`${sku.code} · ${sku.name}`}
               platformName={listing.platform.name}
@@ -105,12 +122,25 @@ export default async function ListingDetailPage({
         </div>
       </div>
 
+      {priceRisks.length > 0 && (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
+        >
+          {priceRisks.map((risk) => (
+            <p key={risk.key}>{risk.label}</p>
+          ))}
+          <p className="mt-1 text-xs">
+            以下显示历史记录的原币金额，尚未换算。请核对平台原始记录后再编辑。
+          </p>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Package className="h-4 w-4" />
-              平台售价
+              平台售价（原币）
             </CardTitle>
           </CardHeader>
           <CardContent>

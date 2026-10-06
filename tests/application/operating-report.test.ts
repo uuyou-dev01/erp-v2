@@ -400,3 +400,10 @@ describe("report period and export", () => {
     expect(csv).toContain("待核算");
   });
 });
+
+it("shows waiting presales without manufacturing revenue or zero-cost profit", async () => {
+  db.customerOrder.findMany.mockResolvedValue([order({ isPresale: true, orderStatus: "DRAFT", lines: [] })]);
+  const report = await getOperatingReport("store-1", "org-1", range());
+  expect(report.sales[0]).toMatchObject({ status: "预售待履约", included: false, cost: null, profit: null });
+  expect(report.sales[0].note).toContain("暂不计入");
+});

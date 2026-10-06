@@ -37,6 +37,7 @@ function feeRatePercent(value: string) {
 }
 
 interface QuickSellButtonProps {
+  isPresale?: boolean;
   listingId: string;
   listingType: "SKU" | "ITEM_UNIT";
   status: string;
@@ -54,6 +55,7 @@ interface QuickSellButtonProps {
 }
 
 export function QuickSellButton({
+  isPresale = false,
   listingId,
   listingType,
   status,
@@ -69,6 +71,8 @@ export function QuickSellButton({
   sellableLocations = [],
 }: QuickSellButtonProps) {
   const router = useRouter();
+  const [presaleEnabled, setPresaleEnabled] = useState(isPresale);
+  const [requestId, setRequestId] = useState("");
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -122,7 +126,8 @@ export function QuickSellButton({
     if (!open || listingType !== "SKU") return;
 
     let cancelled = false;
-    void getListingFifoShipFromLocation(listingId).then(({ locationId }) => {
+    void getListingFifoShipFromLocation(listingId).then(({ locationId, isPresale }) => {
+      if (!cancelled) setPresaleEnabled(Boolean(isPresale));
       if (cancelled || !locationId) return;
       setFifoDefaultLocationId(locationId);
       setFormData((prev) =>
@@ -149,6 +154,7 @@ export function QuickSellButton({
   if (status !== "ACTIVE") return null;
 
   const handleOpen = () => {
+    setRequestId(crypto.randomUUID());
     setFifoDefaultLocationId(null);
     setCustomFeeRate(false);
     setFeeAmountMode(formData.platformFeeAmount ? "AMOUNT" : "RATE");
@@ -169,6 +175,7 @@ export function QuickSellButton({
 
     try {
       const result = await quickSellListing({
+        requestId,
         listingId,
         quantity: listingType === "ITEM_UNIT" ? "1" : formData.quantity,
         unitPrice: formData.unitPrice || undefined,
@@ -499,7 +506,7 @@ export function QuickSellButton({
                                 })
                               }
                               disabled={loading || eligibleLocations.length === 0}
-                              required
+                              required={!presaleEnabled}
                             >
                               {eligibleLocations.length === 0 ? (
                                 <option value="">暂无可履约仓位</option>
@@ -525,7 +532,9 @@ export function QuickSellButton({
                       <div className="flex items-start gap-2 rounded-md bg-blue-50 px-3 py-2.5 text-xs leading-5 text-blue-900">
                         <BellRing className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
                         <p>
-                          确认登记后会创建仓库发货任务，并通知所选仓库中具备发货权限的账号；库存将在确认发货时扣减。
+                          {presaleEnabled
+                            ? "库存不足时创建预售待补货订单，到货分配后再确认发货。上架保持在售，不设预售数量上限。"
+                            : "确认登记后会创建仓库发货任务，并通知所选仓库中具备发货权限的账号；库存将在确认发货时扣减。"}
                         </p>
                       </div>
                     </section>
@@ -669,10 +678,17 @@ export function QuickSellButton({
                       <Button
                         type="submit"
                         disabled={
-                          loading || (listingType === "SKU" && eligibleLocations.length === 0)
+                          loading ||
+                          (!presaleEnabled &&
+                            listingType === "SKU" &&
+                            eligibleLocations.length === 0)
                         }
                       >
-                        {loading ? "处理中..." : "确认登记并创建发货任务"}
+                        {loading
+                          ? "处理中..."
+                          : presaleEnabled
+                            ? "确认登记预售订单"
+                            : "确认登记并创建发货任务"}
                       </Button>
                     </div>
                   </div>

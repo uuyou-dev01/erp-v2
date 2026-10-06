@@ -27,3 +27,15 @@ describe("sales page metrics", () => {
 function order(orderStatus: string, totalPaid: string, platformId: string) {
   return { orderStatus, totalPaid, platformId };
 }
+
+ it("separates presales from confirmed revenue and drops cancelled demand", () => {
+  const result = summarizeSalesOrders([
+    { orderStatus: "DRAFT", isPresale: true, totalPaid: "300" },
+    { orderStatus: "DRAFT", isPresale: false, totalPaid: "400" },
+    { orderStatus: "CANCELLED", isPresale: true, totalPaid: "500" },
+    { orderStatus: "CONFIRMED", isPresale: true, totalPaid: "100" },
+  ]);
+  expect(result.totalRevenue.toString()).toBe("100");
+  expect(result.pendingPresaleAmount.toString()).toBe("300");
+  expect(result.pendingPresaleCount).toBe(1);
+});

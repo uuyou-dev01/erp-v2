@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
+  consolidationBatch: { findMany: vi.fn() },
   platform: { findMany: vi.fn() },
   listing: { findMany: vi.fn() },
   sKU: { findMany: vi.fn() },
@@ -127,6 +128,7 @@ function purchases(
     skuId: "sku",
     quantity,
     purchaseOrder: {
+      inboundShipments: [],
       destinationLocation: destination,
       etaDate: etaDate ? new Date(etaDate) : null,
     },
@@ -172,7 +174,7 @@ describe("SKU replenishment data and scoping", () => {
           sku: { storeId: "store" },
           order: {
             storeId: "store",
-            orderStatus: { in: ["CONFIRMED", "SHIPPED", "DELIVERED"] },
+            OR: [{ orderStatus: { in: ["CONFIRMED", "SHIPPED", "DELIVERED"] } }, { isPresale: true, orderStatus: "DRAFT" }],
             orderDate: { gte: new Date("2026-06-22T12:00:00.000Z"), lte: now },
           },
         }),
@@ -185,7 +187,6 @@ describe("SKU replenishment data and scoping", () => {
     expect(db.purchaseLine.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          forOrderLineId: null,
           purchaseOrder: { storeId: "store", status: { in: ["ORDERED", "SHIPPED"] } },
         },
       })
@@ -200,7 +201,7 @@ describe("SKU replenishment data and scoping", () => {
     );
     expect(db.inboundShipmentInventoryLine.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { status: "IN_TRANSIT", shipment: { storeId: "store" } },
+        where: { status: "IN_TRANSIT", shipment: { storeId: "store", receivedAt: null, status: { in: ["IN_TRANSIT", "EXCEPTION"] } } },
       })
     );
     expect(db.fulfillmentInventoryAllocation.findMany).toHaveBeenCalledWith(
@@ -608,4 +609,28 @@ describe("SKU replenishment data and scoping", () => {
     });
     expect(japan.stockingDecision?.oldestStockAgeDays).toBeNull();
   });
+});
+
+it("classifies dispatched purchases as transit once and excludes order-specific purchases from general supply", async () => {
+  const dispatched = purchases("moving", 8, jp, "2026-09-24");
+  db.purchaseLine.findMany.mockResolvedValue([
+    { ...dispatched, purchaseOrder: { ...dispatched.purchaseOrder, inboundShipments: [{ id: "shipment", status: "IN_TRANSIT", receivedAt: null, toLocation: jp, etaDate: new Date("2026-09-24") }] } },
+    { ...purchases("reserved", 20, jp, "2026-09-24"), forOrderLineId: "customer-line" },
+  ]);
+  const [product] = await getListingCoverageProducts("store");
+  expect(product.variantRows[0].incomingSignals).toHaveLength(1);
+  expect(product.variantRows[0].incomingSignals?.[0]).toMatchObject({ kind: "transit", qty: 8 });
+  expect(product.variantRows[0].replenishment?.onOrderQty).toBe(0);
+});
+
+it("retains old outstanding presales in their market without inventing warehouse demand", async () => {
+  db.orderLine.findMany.mockImplementation(({ where }) => Promise.resolve(where.order.isPresale ? [{
+    skuId: "sku", quantity: 10, allocations: [{ quantity: 2 }],
+    order: { isPresale: true, shippingCountry: "JP", platform: null },
+  }] : []));
+  const [product] = await getListingCoverageProducts("store");
+  const scoped = buildScopedListingCoverageProduct(product, { market: "JP", includeDemandOnly: true });
+  expect(scoped?.variantRows[0].replenishment).toMatchObject({ pendingPresaleQty: 8, suggestedQty: 8 });
+  expect(buildScopedListingCoverageProduct(product, { market: "CN", includeDemandOnly: true })).toBeNull();
+  expect(buildScopedListingCoverageProduct(product, { locationId: "jp", includeDemandOnly: true })).toBeNull();
 });

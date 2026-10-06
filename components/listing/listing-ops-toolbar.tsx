@@ -283,6 +283,8 @@ export function ListingOpsToolbar({
               <option value="">全部风险</option>
               <option value="lowStock">库存不足</option>
               <option value="unpriced">未定价</option>
+              <option value="currency">币种待核实</option>
+              <option value="amount">金额待核实</option>
               <option value="stale">长期未售</option>
             </Select>
           ) : null}

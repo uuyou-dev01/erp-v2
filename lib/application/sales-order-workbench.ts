@@ -1,5 +1,8 @@
+import { isPendingPresale } from "./sales-metrics";
+import { presaleDateExpired } from "./presale";
 export type SalesWorkbenchView =
   | "all"
+  | "presale"
   | "todo"
   | "shipment"
   | "collaboration"
@@ -16,6 +19,12 @@ type RelatedStatus = {
 export type SalesWorkbenchOrder = {
   id: string;
   orderStatus: string;
+  isPresale?: boolean;
+  expectedShipDate?: Date | string | null;
+  lines?: Array<{
+    quantity: { toString(): string } | string | number;
+    allocations?: Array<{ quantity: { toString(): string } | string | number; status: string }>;
+  }>;
   settledAt?: Date | string | null;
   resaleListing?: {
     fulfillmentMode?: string | null;
@@ -29,6 +38,7 @@ export type SalesWorkbenchOrder = {
 };
 
 export type SalesOrderWorkbenchState = {
+  presaleReadyToConfirm: boolean;
   businessMode: SalesBusinessMode;
   fulfillmentMode: string;
   fulfillmentStatus: string | null;
@@ -63,6 +73,15 @@ function activeSettlementStatus(order: SalesWorkbenchOrder) {
 export function deriveSalesOrderWorkbenchState(
   order: SalesWorkbenchOrder
 ): SalesOrderWorkbenchState {
+  const presaleReadyToConfirm =
+    isPendingPresale(order) &&
+    Boolean(order.lines?.length) &&
+    order.lines!.every(
+      (line) =>
+        (line.allocations ?? [])
+          .filter((a) => ["PENDING", "ALLOCATED"].includes(a.status))
+          .reduce((sum, a) => sum + Number(a.quantity), 0) >= Number(line.quantity)
+    );
   const businessMode: SalesBusinessMode = order.resaleListing ? "RESALE" : "DIRECT";
   const fulfillmentRequest = order.fulfillmentRequests?.[0];
   const fulfillmentStatus = fulfillmentRequest?.status ?? null;
@@ -73,6 +92,10 @@ export function deriveSalesOrderWorkbenchState(
     )
   );
   const isException =
+    (order.isPresale &&
+      ["DRAFT", "CONFIRMED"].includes(order.orderStatus) &&
+      Boolean(order.expectedShipDate) &&
+      presaleDateExpired(new Date(order.expectedShipDate!))) ||
     hasOpenAfterSales ||
     Boolean(fulfillmentStatus && EXCEPTION_FULFILLMENT_STATUSES.has(fulfillmentStatus));
   const isCollaboration =
@@ -115,6 +138,12 @@ export function deriveSalesOrderWorkbenchState(
         : `/fulfillment/requests/${fulfillmentRequest.id}`,
       emphasis: fulfillmentStatus === "ACCEPTED" || isPendingSettlement ? "primary" : "secondary",
     };
+  } else if (isPendingPresale(order)) {
+    nextAction = {
+      label: presaleReadyToConfirm ? "确认预售订单" : "补货 / 分配库存",
+      href: `/workbench?open=customerOrder:${order.id}`,
+      emphasis: "primary",
+    };
   } else if (isTodo) {
     nextAction = { label: "继续处理", href: `/sales/${order.id}`, emphasis: "primary" };
   } else if (isPendingShipment) {
@@ -128,6 +157,7 @@ export function deriveSalesOrderWorkbenchState(
   }
 
   return {
+    presaleReadyToConfirm,
     businessMode,
     fulfillmentMode:
       order.resaleListing?.fulfillmentMode ??
@@ -148,6 +178,7 @@ export function orderMatchesSalesWorkbenchView(
   view: SalesWorkbenchView
 ) {
   if (view === "all") return true;
+  if (view === "presale") return isPendingPresale(order);
   const state = deriveSalesOrderWorkbenchState(order);
   if (view === "todo") return state.isTodo;
   if (view === "shipment") return state.isPendingShipment;
@@ -157,7 +188,9 @@ export function orderMatchesSalesWorkbenchView(
 }
 
 export function parseSalesWorkbenchView(value?: string): SalesWorkbenchView {
-  return ["todo", "shipment", "collaboration", "exception", "settlement"].includes(value ?? "")
+  return ["presale", "todo", "shipment", "collaboration", "exception", "settlement"].includes(
+    value ?? ""
+  )
     ? (value as SalesWorkbenchView)
     : "all";
 }

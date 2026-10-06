@@ -50,8 +50,8 @@ const statusLabels: Record<string, string> = {
   PLACED: "已下单",
   PAID: "已付款",
   CONFIRMED: "已成交 · 待发货",
-  SHIPPED: "已发货",
-  DELIVERED: "已送达",
+  SHIPPED: "仓库已发出",
+  DELIVERED: "买家已收货",
   RETURNED: "已退货",
   CANCELLED: "已取消",
 };
@@ -216,6 +216,14 @@ export default async function CustomerOrderDetailPage({
             <p className="mt-1 break-all text-xs text-muted-foreground">
               订单号：{order.orderNumber}
             </p>
+            {order.isPresale ? (
+              <p className="mt-2 text-sm text-amber-700">
+                预售订单 · 原承诺发货日期 {order.expectedShipDate?.toISOString().slice(0, 10)}。
+                {order.orderStatus === "DRAFT"
+                  ? "请优先分配补货库存，全部分配后确认订单，再执行发货。"
+                  : "库存仅在实际确认发货时扣减。"}
+              </p>
+            ) : null}
             {order.externalOrderNo && (
               <p className="mt-1 break-all text-xs text-muted-foreground">
                 外部订单号：{order.externalOrderNo}
@@ -225,7 +233,11 @@ export default async function CustomerOrderDetailPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={statusColors[order.orderStatus as keyof typeof statusColors]}>
-            {statusLabels[order.orderStatus] || order.orderStatus}
+            {order.isPresale && order.orderStatus === "DRAFT"
+              ? canConfirm
+                ? "预售待确认"
+                : "预售待补货"
+              : statusLabels[order.orderStatus] || order.orderStatus}
           </Badge>
           {["CONFIRMED", "SHIPPED", "DELIVERED"].includes(order.orderStatus) && (
             <Button asChild variant="outline">
@@ -480,6 +492,15 @@ export default async function CustomerOrderDetailPage({
                           storeId={storeId}
                           shippingCountry={order.shippingCountry}
                         />
+                        {order.isPresale ? (
+                          <Button asChild variant="outline" className="mt-3">
+                            <Link
+                              href={`/procurement/new?skuId=${encodeURIComponent(line.skuId)}&quantity=${requiredQty - allocatedQty}`}
+                            >
+                              登记补货采购
+                            </Link>
+                          </Button>
+                        ) : null}
                       </div>
                     )}
                   </div>

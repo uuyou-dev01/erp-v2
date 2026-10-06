@@ -31,6 +31,7 @@ interface NotificationRow {
   orderNumber: string | null;
   externalOrderNo: string | null;
   platformName: string | null;
+  productSummary: string | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -112,6 +113,7 @@ export function NotificationList({ notifications }: { notifications: Notificatio
       notification.externalOrderNo,
       notification.organizationName,
       notification.platformName,
+      notification.productSummary,
       TYPE_LABELS[notification.type],
     ].some((value) => value?.toLocaleLowerCase().includes(search))
   );
@@ -275,6 +277,11 @@ export function NotificationList({ notifications }: { notifications: Notificatio
                         : "待处理"}
                     </Badge>
                   </div>
+                  {notification.productSummary ? (
+                    <p className="mt-2 break-words text-sm font-medium text-foreground">
+                      {notification.productSummary}
+                    </p>
+                  ) : null}
                   {body ? (
                     <p
                       className={`mt-2 break-words text-sm ${unread ? "text-foreground/80" : "text-muted-foreground"}`}

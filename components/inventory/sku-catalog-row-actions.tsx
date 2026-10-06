@@ -17,9 +17,13 @@ import type { CatalogStatus, SkuCatalogListItem } from "@/lib/application/sku-ca
 
 interface SkuCatalogRowActionsProps {
   item: SkuCatalogListItem;
+  returnHref?: string;
 }
 
-export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
+export function SkuCatalogRowActions({
+  item,
+  returnHref = "/inventory/skus",
+}: SkuCatalogRowActionsProps) {
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -111,10 +115,16 @@ export function SkuCatalogRowActions({ item }: SkuCatalogRowActionsProps) {
       <div className="space-y-1 text-right">
         <div className="flex items-center justify-end gap-1 whitespace-nowrap">
           <Button asChild variant="ghost" size="sm">
-            <Link href={`/inventory/skus/${item.id}`}>详情</Link>
+            <Link href={`/inventory/skus/${item.id}?returnTo=${encodeURIComponent(returnHref)}`}>
+              详情
+            </Link>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link href={`/inventory/skus/${item.id}?edit=1`}>编辑</Link>
+            <Link
+              href={`/inventory/skus/${item.id}?edit=1&returnTo=${encodeURIComponent(returnHref)}`}
+            >
+              编辑
+            </Link>
           </Button>
           <Button
             variant="ghost"

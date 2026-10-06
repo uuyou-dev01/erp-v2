@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import Decimal from "decimal.js";
 import { createStoreMoneyConverter } from "@/lib/fx";
 import { computeDashboardProfitMetrics } from "@/lib/application/report-metrics";
-import { isValidSalesStatus, VALID_SALES_STATUSES } from "@/lib/application/sales-metrics";
+import { isPendingPresale, isValidSalesStatus, VALID_SALES_STATUSES } from "@/lib/application/sales-metrics";
 
 export interface DateRange {
   dateFrom?: Date;
@@ -183,7 +183,7 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
       storeId,
       ...(dateFilter ? { orderDate: dateFilter } : {}),
     },
-    select: { totalPaid: true, orderStatus: true, currency: true, orderDate: true },
+    select: { totalPaid: true, orderStatus: true, isPresale: true, currency: true, orderDate: true },
   });
 
   const validSalesOrders = customerOrders.filter((order) => isValidSalesStatus(order.orderStatus));
@@ -196,6 +196,10 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
   );
   const totalSalesAmount = salesAmounts.reduce((sum, amount) => sum.plus(amount), new Decimal(0));
 
+  const pendingPresales = customerOrders.filter(isPendingPresale);
+  const pendingAmounts = await Promise.all(pendingPresales.map((order) =>
+    converter.convertToBase(order.totalPaid.toString(), order.currency, { effectiveAt: order.orderDate })
+  ));
   const confirmedOrders = validSalesOrders.length;
 
   const listings = await prisma.listing.findMany({
@@ -221,6 +225,8 @@ export async function getBusinessOverview(storeId: string, range?: DateRange) {
       totalAmount: totalSalesAmount.toFixed(2),
       orderCount: customerOrders.length,
       confirmedCount: confirmedOrders,
+      pendingPresaleCount: pendingPresales.length,
+      pendingPresaleAmount: pendingAmounts.reduce((sum, amount) => sum.plus(amount), new Decimal(0)).toFixed(2),
     },
     listing: {
       activeCount: activeListings,

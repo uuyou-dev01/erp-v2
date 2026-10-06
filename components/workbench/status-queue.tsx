@@ -49,7 +49,7 @@ const TASK_GROUPS: Array<{
   {
     label: "出售",
     description: "售出后的发货与结算",
-    queues: ["pendingShipment", "shipped", "pendingSettlement"],
+    queues: ["presaleWaiting", "pendingShipment", "shipped", "pendingSettlement"],
     mark: "💸",
     color: "text-emerald-600",
   },
@@ -98,8 +98,7 @@ export function StatusQueue({
             : "text-muted-foreground hover:bg-muted/60"
         )}
       >
-        <span>全部</span>
-        <span className="text-xs tabular-nums text-muted-foreground">{counts.total}</span>
+        <span>当前优先级全部任务</span>
       </button>
 
       {TASK_GROUPS.map((group) => (

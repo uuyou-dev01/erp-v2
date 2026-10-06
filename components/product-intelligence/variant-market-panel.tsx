@@ -2,23 +2,36 @@
 
 import { useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { ConfidenceBadge, VisibilityBadge } from "@/components/product-intelligence/product-intelligence-status";
-import { DeleteObservationButton, ObservationForm } from "@/components/product-intelligence/observation-form";
+import {
+  ConfidenceBadge,
+  VisibilityBadge,
+} from "@/components/product-intelligence/product-intelligence-status";
+import {
+  DeleteObservationButton,
+  ObservationForm,
+} from "@/components/product-intelligence/observation-form";
 import {
   ProductIntelligencePriceChart,
   type ProductIntelligencePricePoint,
 } from "@/components/product-intelligence/price-chart";
 import { VariantForm } from "@/components/product-intelligence/variant-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatQuantity } from "@/lib/decimal";
 
 const priceTypeLabels: Record<string, string> = {
   PURCHASE: "参考进货价",
-  SALE: "参考售价",
+  SALE: "售价观察（成交未确认）",
   WHOLESALE: "批发/收货价",
-  RESALE: "代卖价",
+  RESALE: "代卖挂牌价",
   OFFER: "报价",
 };
 
@@ -37,6 +50,8 @@ type ObservationRow = {
   currency: string;
   priceType: string;
   sourceType: string;
+  sourceUrl?: string | null;
+  pageStatus?: string | null;
   sourceName: string | null;
   platformName: string | null;
   quantity: string | null;
@@ -74,7 +89,7 @@ function buildChartData(groups: MarketGroup[]): ProductIntelligencePricePoint[] 
         condition: observation.conditionGrade?.trim() || "未标注",
         currency: observation.currency,
         price: Number(observation.amount),
-      })),
+      }))
   );
 }
 
@@ -101,20 +116,25 @@ export function VariantMarketPanel({
     const selected = allGroups.find((group) => group.id === selectedId);
     return selected ? [selected] : allGroups;
   }, [allGroups, selectedId]);
-  const allObservationCount = allGroups.reduce((total, group) => total + group.observations.length, 0);
+  const allObservationCount = allGroups.reduce(
+    (total, group) => total + group.observations.length,
+    0
+  );
   const chartData = buildChartData(selectedGroups);
   const conditionOptions = useMemo(
     () => Array.from(new Set(chartData.map((point) => point.condition || "未标注"))).sort(),
-    [chartData],
+    [chartData]
   );
-  const activeConditions = selectedConditions.filter((condition) => conditionOptions.includes(condition));
+  const activeConditions = selectedConditions.filter((condition) =>
+    conditionOptions.includes(condition)
+  );
   const selectedObservationRows = selectedGroups.flatMap((group) =>
     group.observations
       .filter((observation) => {
         if (activeConditions.length === 0) return true;
         return activeConditions.includes(observation.conditionGrade?.trim() || "未标注");
       })
-      .map((observation) => ({ group, observation })),
+      .map((observation) => ({ group, observation }))
   );
   const selectedTargetItemId = selectedId !== "all" ? selectedId : variants[0]?.id;
   const toggleCondition = (condition: string) => {
@@ -171,7 +191,7 @@ export function VariantMarketPanel({
                       "rounded-md border px-2.5 py-1 text-left text-xs transition-colors",
                       selectedId === "all"
                         ? "border-primary bg-primary/5 text-primary"
-                        : "border-input bg-white hover:border-primary/70",
+                        : "border-input bg-white hover:border-primary/70"
                     )}
                   >
                     全部 SKU
@@ -186,12 +206,14 @@ export function VariantMarketPanel({
                         "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors",
                         selectedId === variant.id
                           ? "border-primary bg-primary/5 text-primary"
-                          : "border-input bg-white hover:border-primary/70",
+                          : "border-input bg-white hover:border-primary/70"
                       )}
                     >
                       <span className="font-medium">{variant.title}</span>
                       <VisibilityBadge visibility={variant.visibility} />
-                      <span className="text-muted-foreground">{variant.observations.length} 条</span>
+                      <span className="text-muted-foreground">
+                        {variant.observations.length} 条
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -206,7 +228,7 @@ export function VariantMarketPanel({
                       "rounded-md border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                       activeConditions.length === 0
                         ? "border-primary bg-primary/5 text-primary"
-                        : "border-input bg-white hover:border-primary/70",
+                        : "border-input bg-white hover:border-primary/70"
                     )}
                   >
                     全部成色
@@ -222,7 +244,7 @@ export function VariantMarketPanel({
                           "rounded-md border px-2.5 py-1 text-xs transition-colors",
                           active
                             ? "border-primary bg-primary/5 text-primary"
-                            : "border-input bg-white hover:border-primary/70",
+                            : "border-input bg-white hover:border-primary/70"
                         )}
                       >
                         {condition}
@@ -242,13 +264,20 @@ export function VariantMarketPanel({
 
               <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <div className="flex flex-row items-center justify-between gap-3 border-b bg-slate-50/70 px-4 py-3">
-                  <h3 className="text-sm font-semibold text-slate-950">观察记录</h3>
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">观察记录</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      按原币记录；挂牌、报价与成交含义不同，最低观察价不代表建议售价。
+                    </p>
+                  </div>
                   <span className="rounded-md bg-white px-2 py-1 text-xs text-muted-foreground">
                     {selectedObservationRows.length} 条
                   </span>
                 </div>
                 {selectedObservationRows.length === 0 ? (
-                  <p className="px-4 py-6 text-sm text-muted-foreground">当前筛选下暂无观察记录。</p>
+                  <p className="px-4 py-6 text-sm text-muted-foreground">
+                    当前筛选下暂无观察记录。
+                  </p>
                 ) : (
                   <div className="overflow-x-auto">
                     <Table className="min-w-[1080px]">
@@ -272,16 +301,25 @@ export function VariantMarketPanel({
                             <TableCell>
                               <div className="font-medium">{group.title}</div>
                               {group.subtitle ? (
-                                <div className="text-xs text-muted-foreground">{group.subtitle}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {group.subtitle}
+                                </div>
                               ) : null}
                             </TableCell>
                             <TableCell className="whitespace-nowrap font-semibold">
                               {formatCurrency(observation.amount, observation.currency)}
                             </TableCell>
                             <TableCell className="whitespace-nowrap">
-                              {priceTypeLabels[observation.priceType] ?? observation.priceType}
+                              {observation.sourceType === "REAL_SALE"
+                                ? "真实成交"
+                                : observation.pageStatus === "SOLD_OUT"
+                                  ? "公开已售记录"
+                                  : (priceTypeLabels[observation.priceType] ??
+                                    observation.priceType)}
                             </TableCell>
-                            <TableCell className="whitespace-nowrap">{observation.conditionGrade || "未标注"}</TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              {observation.conditionGrade || "未标注"}
+                            </TableCell>
                             <TableCell>
                               <div className="font-medium">
                                 {observation.platformName || observation.sourceName || "未填写"}
@@ -289,8 +327,19 @@ export function VariantMarketPanel({
                               <div className="text-xs text-muted-foreground">
                                 {sourceTypeLabels[observation.sourceType] ?? observation.sourceType}
                               </div>
+                              {observation.sourceUrl &&
+                              /^https?:\/\//i.test(observation.sourceUrl) ? (
+                                <a
+                                  href={observation.sourceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-primary underline"
+                                >
+                                  查看原始来源
+                                </a>
+                              ) : null}
                               {observation.note ? (
-                                <div className="mt-1 max-w-[220px] truncate text-xs text-muted-foreground">
+                                <div className="mt-1 max-w-[260px] whitespace-normal text-xs text-muted-foreground">
                                   备注：{observation.note}
                                 </div>
                               ) : null}
@@ -298,8 +347,12 @@ export function VariantMarketPanel({
                             <TableCell className="whitespace-nowrap">
                               {observation.quantity ? formatQuantity(observation.quantity) : "未填"}
                             </TableCell>
-                            <TableCell className="whitespace-nowrap">{observation.store.name}</TableCell>
-                            <TableCell className="whitespace-nowrap">{observationDate(observation.observedAt)}</TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              {observation.store.name}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              {observationDate(observation.observedAt)}
+                            </TableCell>
                             <TableCell>
                               <div className="flex flex-wrap gap-1.5">
                                 <ConfidenceBadge confidence={observation.confidence} />
@@ -326,7 +379,10 @@ export function VariantMarketPanel({
 
       {showObservationForm && selectedTargetItemId ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowObservationForm(false)} />
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowObservationForm(false)}
+          />
           <Card className="relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto">
             <CardHeader className="flex flex-row items-start justify-between gap-4 border-b">
               <div>
@@ -348,7 +404,10 @@ export function VariantMarketPanel({
               <ObservationForm
                 key={selectedTargetItemId}
                 itemId={parentItemId}
-                variantOptions={variants.map((variant) => ({ id: variant.id, title: variant.title }))}
+                variantOptions={variants.map((variant) => ({
+                  id: variant.id,
+                  title: variant.title,
+                }))}
                 defaultTargetItemId={selectedTargetItemId}
                 baseItemLabel={null}
                 onCancel={() => setShowObservationForm(false)}

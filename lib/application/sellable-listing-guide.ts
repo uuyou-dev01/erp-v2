@@ -54,7 +54,9 @@ export function getMissingPlatforms(
         )
         .map((record) => record.platformId)
     );
-    return product.platforms.filter((platform) => !activePlatformIds.has(platform.id));
+    return (product.sellableQty <= 0 ? product.allPlatforms : product.platforms).filter(
+      (platform) => !activePlatformIds.has(platform.id)
+    );
   }
 
   return product.platforms.filter((platform) => platform.state === "missing");

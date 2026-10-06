@@ -18,34 +18,34 @@ describe("navigation structure", () => {
   it("groups routes around the current operating model", () => {
     expect(operationsNavigation.map((group) => group.title)).toEqual([
       "今日工作",
-      "商品与采购",
-      "库存与仓配",
-      "销售与履约",
-      "货盘协作",
+      "商品",
+      "采购",
+      "库存与物流",
+      "销售",
       "财务与分析",
     ]);
   });
 
   it("groups product, inventory, and fulfillment entries by business workflow", () => {
-    const productGroup = operationsNavigation.find((group) => group.title === "商品与采购");
-    expect(productGroup?.items.map((item) => item.name)).toEqual(["商品资料", "采购订单"]);
+    const productGroup = operationsNavigation.find((group) => group.title === "商品");
+    expect(productGroup?.items.map((item) => item.name)).toEqual(["商品资料"]);
 
-    const inventoryGroup = operationsNavigation.find((group) => group.title === "库存与仓配");
+    const inventoryGroup = operationsNavigation.find((group) => group.title === "库存与物流");
     expect(inventoryGroup?.items.map((item) => item.name)).toEqual([
       "库存看板",
       "库存明细",
-      "盘点调整",
+      "盘点与纠错",
       "转运包裹",
       "集运批次",
       "仓库与位置",
     ]);
 
-    const fulfillmentGroup = operationsNavigation.find((group) => group.title === "销售与履约");
+    const fulfillmentGroup = operationsNavigation.find((group) => group.title === "销售");
     expect(fulfillmentGroup?.items.map((item) => item.name)).toEqual([
       "上架运营",
       "销售订单",
       "售后处理",
-      "代发履约",
+      "协作业务",
     ]);
   });
 
@@ -70,7 +70,7 @@ describe("navigation structure", () => {
     const hrefs = allNavigationItems.flatMap((item) => [item.href, ...(item.matches ?? [])]);
 
     expect(hrefs).toContain("/workbench");
-    expect(hrefs).toContain("/notifications");
+    expect(commandQuickActions.some((action) => action.href === "/notifications")).toBe(true);
     expect(hrefs).toContain("/procurement");
     expect(hrefs).toContain("/logistics/consolidations");
     expect(hrefs).toContain("/fulfillment/requests");

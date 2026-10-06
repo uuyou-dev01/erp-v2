@@ -8,14 +8,26 @@
     "productKind": "NEW",
     "description": "请用已核实的商品说明替换，不确定的信息省略。",
     "series": "示例系列",
-    "tags": ["示例"],
+    "tags": [
+      "示例"
+    ],
     "images": [],
     "sourceUrls": [],
-    "notes": "此文件仅演示结构，不是真实调查资料。"
+    "notes": "此文件仅演示结构，不是真实调查资料。product.images 首张应填写已核实的系列合照或系列主视觉；其余可放附加图片。"
   },
   "variantAxis": "款式",
   "variants": [
-    { "label": "款式 A", "images": [], "observations": [] },
-    { "label": "款式 B", "images": [], "observations": [] }
+    {
+      "label": "款式 A",
+      "images": [],
+      "observations": [],
+      "notes": "请为款式 A核实并填写对应款式单图，variants[].images 首张为封面；找不到时保留空数组并在此说明缺图。空数组会在导入时暂用商品组封面，后续不自动联动。"
+    },
+    {
+      "label": "款式 B",
+      "images": [],
+      "observations": [],
+      "notes": "请为款式 B核实并填写对应款式单图，variants[].images 首张为封面；找不到时保留空数组并在此说明缺图。空数组会在导入时暂用商品组封面，后续不自动联动。"
+    }
   ]
 }

@@ -36,6 +36,10 @@ import {
   marketLabel,
 } from "@/lib/application/sellable-market";
 
+import { validatePresale, presaleDateExpired, type PresaleInput } from "@/lib/application/presale";
+import { parseSkuCatalogMeta } from "@/lib/application/sku-catalog";
+import { pendingPresaleDemand } from "@/lib/application/presale-demand";
+
 const CONFIRMED_SALES_STATUSES = ["CONFIRMED", "SHIPPED", "DELIVERED"];
 
 function revalidateListingSurfaces(listingId?: string) {
@@ -209,6 +213,7 @@ async function assertListingHasSellableStock(input: {
   listingType: "SKU" | "ITEM_UNIT";
   skuId?: string;
   itemUnitId?: string;
+  isPresale?: boolean;
 }) {
   if (input.listingType === "SKU") {
     if (!input.skuId) throw new Error("请选择要上架的 SKU");
@@ -217,7 +222,16 @@ async function assertListingHasSellableStock(input: {
       skuId: input.skuId,
       actionLabel: "上架",
     });
-    if (!requiresSellableStockForListing(input.platformCode)) return;
+    if (input.isPresale) {
+      const sku = await prisma.sKU.findUnique({
+        where: { id: input.skuId },
+        select: { attributes: true },
+      });
+      const meta = parseSkuCatalogMeta(sku?.attributes);
+      if (!sku || meta.productKind === "USED" || meta.catalogStatus === "disabled")
+        throw new Error("仅启用的非中古 SKU 可开启缺货预售");
+      return;
+    }
     const breakdown = await getSkuStockBreakdown(input.storeId, input.skuId);
     const platform = { code: input.platformCode, country: input.platformCountry ?? null };
     const regionalSellableQty = breakdown.sellableLocations
@@ -226,7 +240,7 @@ async function assertListingHasSellableStock(input: {
     if (regionalSellableQty <= 0) {
       const market = marketLabel(inferMarketFromPlatform(platform));
       throw new Error(
-        `${input.platformName} 上架需要可履约${market}的可售库存，请为库存节点配置订单发货能力和有效配送线路`
+        `${input.platformName} 当前可履约${market}的可售库存为 0；可开启缺货预售并确认交期，或补充可售库存及配送线路`
       );
     }
     return;
@@ -313,19 +327,21 @@ export async function getListingById(id: string) {
   return listing;
 }
 
-export async function createListing(data: {
-  storeId: string;
-  platformId: string;
-  listingType: "SKU" | "ITEM_UNIT";
-  skuId?: string;
-  itemUnitId?: string;
-  listedPrice?: string;
-  listedAt?: string;
-  currency?: string;
-  feeRateOverride?: string;
-  shippingFeeOverride?: string;
-  estimatedNet?: string;
-}) {
+export async function createListing(
+  data: {
+    storeId: string;
+    platformId: string;
+    listingType: "SKU" | "ITEM_UNIT";
+    skuId?: string;
+    itemUnitId?: string;
+    listedPrice?: string;
+    listedAt?: string;
+    currency?: string;
+    feeRateOverride?: string;
+    shippingFeeOverride?: string;
+    estimatedNet?: string;
+  } & PresaleInput
+) {
   try {
     const context = await requireUserContext({ storeId: data.storeId });
     const platform = await prisma.platform.findFirst({
@@ -372,12 +388,14 @@ export async function createListing(data: {
       return actionFailure(estimatedNetInput.error);
     }
 
+    const expectedShipDate = validatePresale(data, data.listingType);
     await assertListingHasSellableStock({
       storeId: context.activeStoreId,
       platformCode: platform.code,
       platformCountry: platform.country,
       platformName: platform.name,
       listingType: data.listingType,
+      isPresale: data.isPresale,
       skuId: data.skuId,
       itemUnitId: data.itemUnitId,
     });
@@ -446,6 +464,10 @@ export async function createListing(data: {
         feeRateOverride: feeRateInput.value,
         shippingFeeOverride: shippingFeeInput.value,
         estimatedNet: estimatedNetDecimal,
+        isPresale: Boolean(data.isPresale),
+        expectedShipDate,
+        presaleConfirmedAt: data.isPresale ? new Date() : null,
+        presaleConfirmedById: data.isPresale ? context.userId : null,
         status: "ACTIVE",
         listedAt: listedAtInput.value ?? new Date(),
       },
@@ -475,15 +497,31 @@ export async function getListingFifoShipFromLocation(listingId: string) {
     return { locationId: null as string | null };
   }
 
+  await requireUserContext({ storeId: listing.storeId });
+
   const locationId = await resolveFifoShipFromLocation(
     listing.storeId,
     listing.sku.id,
     inferMarketFromPlatform(listing.platform)
   );
-  return { locationId };
+  return { locationId, isPresale: listing.isPresale };
+}
+
+export async function getPresaleStockCount(storeId: string, skuId: string, platformId: string) {
+  const context = await requireUserContext({ storeId });
+  await assertOperationalSku(prisma, { storeId: context.activeStoreId, skuId });
+  const platform = await prisma.platform.findFirst({
+    where: { id: platformId, storeId: context.activeStoreId },
+  });
+  if (!platform) throw new Error("平台不存在或无权操作");
+  const stock = await getSkuStockBreakdown(context.activeStoreId, skuId);
+  return stock.sellableLocations
+    .filter((location) => locationMatchesPlatformMarket(location, platform))
+    .reduce((sum, location) => sum + location.qty, 0);
 }
 
 export async function quickSellListing(data: {
+  requestId?: string;
   listingId: string;
   quantity?: string;
   unitPrice?: string;
@@ -581,6 +619,34 @@ export async function quickSellListing(data: {
       if (!sku) {
         throw new Error("上架记录没有关联 SKU");
       }
+      const requestHash = listing.isPresale
+        ? createHash("sha256").update(JSON.stringify(data)).digest("hex")
+        : null;
+      if (listing.isPresale) {
+        if (!data.requestId || !/^[a-zA-Z0-9-]{16,80}$/.test(data.requestId))
+          throw new Error("请刷新页面后重新登记预售订单");
+        const previous = await tx.customerOrder.findUnique({
+          where: { orderNumber: `PRE-${data.requestId}` },
+        });
+        if (previous) {
+          if (
+            previous.storeId !== listing.storeId ||
+            previous.sourceListingId !== listing.id ||
+            previous.requestPayloadHash !== requestHash
+          ) {
+            throw new Error("本次提交已经处理且内容发生变化，请关闭弹窗后重新登记");
+          }
+          return {
+            orderId: previous.id,
+            orderNumber: previous.orderNumber,
+            storeId: previous.storeId,
+            waitingForStock: previous.orderStatus === "DRAFT",
+            expectedShipDate: previous.expectedShipDate,
+            productName: sku.name,
+            replay: true,
+          };
+        }
+      }
       const platformMarket = inferMarketFromPlatform(listing.platform);
       const requestedDestination = data.shippingCountry?.trim().toUpperCase();
       const destinationMarket =
@@ -653,7 +719,20 @@ export async function quickSellListing(data: {
         sku.id,
         destinationMarket
       );
-      if (quantity.gt(effectiveSellable)) {
+      const earlierPresales = await pendingPresaleDemand(tx, {
+        storeId: listing.storeId,
+        skuId: sku.id,
+        market: destinationMarket,
+      });
+      const waitingForStock = quantity.gt(Decimal.max(0, effectiveSellable.minus(earlierPresales)));
+      const presale =
+        listing.isPresale &&
+        listing.listingType === "SKU" &&
+        parseSkuCatalogMeta(sku.attributes).productKind !== "USED";
+      if (presale && presaleDateExpired(listing.expectedShipDate)) {
+        throw new Error("预售交期已过，请先修改上架信息中的预计发货日期并重新确认买家告知");
+      }
+      if (waitingForStock && !presale) {
         throw new Error("可售库存不足（部分库存可能已被货盘保证配额保护）");
       }
 
@@ -661,7 +740,10 @@ export async function quickSellListing(data: {
         data: {
           storeId: listing.storeId,
           salesChannelAccountId: listing.salesChannelAccountId,
-          orderNumber: `SALE-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          orderNumber: presale
+            ? `PRE-${data.requestId}`
+            : `SALE-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          requestPayloadHash: requestHash,
           platformId: listing.platformId,
           externalOrderNo: data.externalOrderNo || undefined,
           customerName: data.customerName || "散客",
@@ -676,8 +758,11 @@ export async function quickSellListing(data: {
           platformFee: (platformFeeAmount ?? subtotal.mul(effectiveFeeRate)).toFixed(4),
           shippingFee: shippingFee.toFixed(4),
           shippingFeeStatus,
-          orderStatus: "CONFIRMED",
-          confirmedAt: new Date(),
+          orderStatus: waitingForStock ? "DRAFT" : "CONFIRMED",
+          confirmedAt: waitingForStock ? null : new Date(),
+          isPresale: presale,
+          expectedShipDate: presale ? listing.expectedShipDate : null,
+          sourceListingId: listing.id,
         },
       });
 
@@ -689,7 +774,7 @@ export async function quickSellListing(data: {
           unitPrice: unitPrice.toFixed(4),
           lineAmount: subtotal.toFixed(4),
           supplyType: "FROM_STOCK",
-          supplyStatus: "READY_TO_SHIP",
+          supplyStatus: waitingForStock ? "UNFULFILLED" : "READY_TO_SHIP",
         },
       });
 
@@ -743,9 +828,12 @@ export async function quickSellListing(data: {
 
         await tx.listing.update({
           where: { id: listing.id },
-          data: { status: "SOLD_OUT", delistedAt: new Date() },
+          data: {
+            status: presale ? "ACTIVE" : "SOLD_OUT",
+            delistedAt: presale ? null : new Date(),
+          },
         });
-      } else {
+      } else if (!waitingForStock) {
         let remainingToAllocate = quantity;
         const lotCandidates = await tx.inventoryLot.findMany({
           where: {
@@ -915,7 +1003,10 @@ export async function quickSellListing(data: {
 
         await tx.listing.update({
           where: { id: listing.id },
-          data: { status: "SOLD_OUT", delistedAt: new Date() },
+          data: {
+            status: presale ? "ACTIVE" : "SOLD_OUT",
+            delistedAt: presale ? null : new Date(),
+          },
         });
       }
 
@@ -937,38 +1028,60 @@ export async function quickSellListing(data: {
         orderId: customerOrder.id,
         orderNumber: customerOrder.orderNumber,
         storeId: customerOrder.storeId,
+        waitingForStock,
+        expectedShipDate: customerOrder.expectedShipDate,
+        productName: sku.name,
+        replay: false,
       };
     });
 
-    const fulfillmentLocationIds = await getOrderFulfillmentLocationIds(saleResult.orderId);
-    const fulfillmentLocationId =
-      fulfillmentLocationIds.length === 1 ? fulfillmentLocationIds[0] : null;
-    if (fulfillmentLocationId) {
-      await ensureShipOrderTaskDispatch({
-        organizationId: context.organizationId,
-        storeId: saleResult.storeId,
-        orderId: saleResult.orderId,
-        orderNumber: saleResult.orderNumber,
-        createdById: context.userId,
-        locationId: fulfillmentLocationId,
-        description: "Listing 快速售出后自动生成的打包/发货任务。",
-      });
-    } else {
+    if (saleResult.waitingForStock) {
       await createTaskIfMissing({
         organizationId: context.organizationId,
         storeId: saleResult.storeId,
-        type: TASK_TYPE.SHIP_ORDER,
-        title: `发货订单 ${saleResult.orderNumber}`,
-        description: "订单包含多个来源仓库，需要先拆分或重新分配库存。",
+        type: TASK_TYPE.CONFIRM_ORDER,
+        title: `预售待补货 · ${saleResult.productName}`,
+        description:
+          "补货入库后，优先为预售订单分配库存；完整分配并确认订单后再发货。交期将到或已延期时请联系买家。",
         refType: "CUSTOMER_ORDER",
         refId: saleResult.orderId,
         createdById: context.userId,
-        fulfillmentLocationId: null,
-        metadata: { fulfillmentLocationIds, assignmentMode: "MULTI_LOCATION_MANUAL" },
+        assignedToId: context.userId,
+        dueAt: saleResult.expectedShipDate
+          ? new Date(saleResult.expectedShipDate.getTime() + 16 * 60 * 60 * 1000 - 1)
+          : null,
       });
+    } else if (!saleResult.replay) {
+      const fulfillmentLocationIds = await getOrderFulfillmentLocationIds(saleResult.orderId);
+      const fulfillmentLocationId =
+        fulfillmentLocationIds.length === 1 ? fulfillmentLocationIds[0] : null;
+      if (fulfillmentLocationId) {
+        await ensureShipOrderTaskDispatch({
+          organizationId: context.organizationId,
+          storeId: saleResult.storeId,
+          orderId: saleResult.orderId,
+          orderNumber: saleResult.orderNumber,
+          createdById: context.userId,
+          locationId: fulfillmentLocationId,
+          description: "Listing 快速售出后自动生成的打包/发货任务。",
+        });
+      } else {
+        await createTaskIfMissing({
+          organizationId: context.organizationId,
+          storeId: saleResult.storeId,
+          type: TASK_TYPE.SHIP_ORDER,
+          title: `发货订单 ${saleResult.orderNumber}`,
+          description: "订单包含多个来源仓库，需要先拆分或重新分配库存。",
+          refType: "CUSTOMER_ORDER",
+          refId: saleResult.orderId,
+          createdById: context.userId,
+          fulfillmentLocationId: null,
+          metadata: { fulfillmentLocationIds, assignmentMode: "MULTI_LOCATION_MANUAL" },
+        });
+      }
     }
-
     revalidateListingSurfaces();
+    revalidatePath("/workbench");
     revalidatePath("/sales");
     revalidatePath(`/sales/${saleResult.orderId}`);
     revalidatePath("/inventory/lots");
@@ -1179,6 +1292,9 @@ export async function bundleSellListings(data: {
       }
       if (listings.some((listing) => listing.status !== "ACTIVE")) {
         throw new Error("只有在售 Listing 可以加入打包订单");
+      }
+      if (listings.some((listing) => listing.isPresale)) {
+        throw new Error("预售商品请单独登记售出，以保留各自的发货承诺和补货流程");
       }
       if (listings.some((listing) => listing.resaleListings.length > 0)) {
         throw new Error("所选商品包含代卖来源，当前打包流程尚不能生成逐项预留与结算");
@@ -1419,7 +1535,12 @@ export async function bundleSellListings(data: {
           sku.id,
           destinationMarket
         );
-        if (quantity.gt(effectiveSellable)) {
+        const earlierPresales = await pendingPresaleDemand(tx, {
+          storeId: listing.storeId,
+          skuId: sku.id,
+          market: destinationMarket,
+        });
+        if (quantity.gt(Decimal.max(0, effectiveSellable.minus(earlierPresales)))) {
           throw new Error(`${sku.name} 可售库存不足（部分库存可能已被预留）`);
         }
 
@@ -1880,7 +2001,7 @@ export async function updateListing(
     currency?: string;
     listedAt?: string;
     status?: string;
-  }
+  } & PresaleInput
 ) {
   const existing = await prisma.listing.findUnique({
     where: { id },
@@ -1888,14 +2009,25 @@ export async function updateListing(
       storeId: true,
       status: true,
       updatedAt: true,
+      listingType: true,
+      skuId: true,
+      itemUnitId: true,
       listedPrice: true,
       feeRateOverride: true,
       shippingFeeOverride: true,
-      platform: { select: { defaultFeeRate: true, defaultShippingFee: true } },
+      platform: {
+        select: {
+          code: true,
+          name: true,
+          country: true,
+          defaultFeeRate: true,
+          defaultShippingFee: true,
+        },
+      },
     },
   });
   if (!existing) throw new Error("上架记录不存在或无权修改");
-  await requireUserContext({ storeId: existing.storeId });
+  const context = await requireUserContext({ storeId: existing.storeId });
 
   const listedPriceInput = parseOptionalDecimalInput(data.listedPrice, "Listing 价格", {
     requiredPositive: true,
@@ -1919,6 +2051,25 @@ export async function updateListing(
   }
 
   const updateData: Record<string, unknown> = {};
+  if (data.isPresale !== undefined) {
+    const expectedShipDate = validatePresale(data, existing.listingType);
+    await assertListingHasSellableStock({
+      storeId: existing.storeId,
+      platformCode: existing.platform.code,
+      platformName: existing.platform.name,
+      platformCountry: existing.platform.country,
+      listingType: existing.listingType as "SKU" | "ITEM_UNIT",
+      skuId: existing.skuId ?? undefined,
+      itemUnitId: existing.itemUnitId ?? undefined,
+      isPresale: data.isPresale,
+    });
+    Object.assign(updateData, {
+      isPresale: data.isPresale,
+      expectedShipDate,
+      presaleConfirmedAt: data.isPresale ? new Date() : null,
+      presaleConfirmedById: data.isPresale ? context.userId : null,
+    });
+  }
   if (data.status) updateData.status = data.status;
   if (data.currency) updateData.currency = data.currency;
   if (listedAtInput.value) updateData.listedAt = listedAtInput.value;
@@ -1963,7 +2114,7 @@ export async function updateListingAction(
     currency?: string;
     listedAt?: string;
     status?: string;
-  }
+  } & PresaleInput
 ) {
   try {
     const listing = await updateListing(id, data);

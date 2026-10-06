@@ -8,7 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { listingPriceRisks } from "@/lib/application/listing-price-risk";
 import { createListing } from "@/app/actions/listings";
+import { PresaleFields } from "./presale-fields";
+import { usePresaleConfirmation } from "./presale-confirmation";
+import type { PresaleInput } from "@/lib/application/presale";
 import { getPlatforms } from "@/app/actions/platforms";
 import { getSKUs } from "@/app/actions/skus";
 import { getItemUnits } from "@/app/actions/item-units";
@@ -70,6 +74,8 @@ export function ListingForm({
   targetMarket,
 }: ListingFormProps) {
   const router = useRouter();
+  const [presale, setPresale] = useState<PresaleInput>({});
+  const { confirmPresaleListing, presaleConfirmation } = usePresaleConfirmation();
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [platforms, setPlatforms] = useState<PlatformData[]>([]);
@@ -128,10 +134,21 @@ export function ListingForm({
     [platforms, targetMarket]
   );
 
+  useEffect(() => {
+    setPresale({});
+  }, [formData.skuId, formData.platformId, formData.listingType]);
+
   const selectedPlatform = useMemo(
     () => platforms.find((p) => p.id === formData.platformId),
     [platforms, formData.platformId]
   );
+
+  const priceRisks = listingPriceRisks({
+    currency: formData.currency,
+    listedPrice: formData.listedPrice || null,
+    defaultShippingFee: formData.shippingFeeOverride || null,
+    platform: selectedPlatform,
+  });
 
   const estimatedNet = useMemo(() => {
     const price = parseFloat(formData.listedPrice);
@@ -172,7 +189,13 @@ export function ListingForm({
     setSubmitError(null);
 
     try {
+      if (
+        formData.listingType === "SKU" &&
+        !(await confirmPresaleListing(presale, storeId, formData.skuId, formData.platformId))
+      )
+        return;
       const result = await createListing({
+        ...(formData.listingType === "SKU" ? presale : {}),
         storeId,
         platformId: formData.platformId,
         listingType: formData.listingType,
@@ -217,6 +240,17 @@ export function ListingForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {selectedPlatform && priceRisks.length > 0 && (
+        <div
+          role="status"
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
+        >
+          {priceRisks.map((risk) => (
+            <p key={risk.key}>{risk.label}</p>
+          ))}
+          <p className="mt-1 text-xs">请核对平台原币金额；更换币种不会自动换算数值。</p>
+        </div>
+      )}
       <div className="space-y-2">
         <Label htmlFor="platformId">销售平台</Label>
         <Select
@@ -470,6 +504,10 @@ export function ListingForm({
         </Card>
       )}
 
+      {presaleConfirmation}
+      {formData.listingType === "SKU" ? (
+        <PresaleFields value={presale} onChange={setPresale} />
+      ) : null}
       {submitError ? (
         <div
           role="alert"
@@ -507,7 +545,8 @@ function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
       <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
         <p className="text-muted-foreground">
-          该 SKU 暂无任何库存。Listing 仍可创建（仅做平台占位/提醒），登记售出前请确保到货。
+          该 SKU 当前可售库存为
+          0。可在下方开启缺货预售，填写预计发货日期并确认已告知买家；也可先补货再上架。
         </p>
       </div>
     );
@@ -536,7 +575,7 @@ function SkuStockHint({ breakdown }: { breakdown?: SkuStockBreakdown }) {
           <p className="text-amber-700 font-medium">暂无可发货库存，仅有 {inTransit} 件在转运中</p>
           <p className="text-muted-foreground">
             {breakdown!.inTransitLocations.map((loc) => `${loc.code} ${loc.qty}`).join(" · ")}
-            。建议先调拨到本土仓 / 代发仓后再上架。
+            。可先开启缺货预售，或待到达可发货仓后按现货上架。
           </p>
         </div>
       </div>

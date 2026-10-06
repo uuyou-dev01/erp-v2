@@ -45,7 +45,7 @@ export function ListingOpsGrid({
       setSelectedIds((current) => current.filter((id) => id !== listing.id));
       return;
     }
-    if (listing.status !== "ACTIVE" || listing.sellableQty <= 0) {
+    if (listing.status !== "ACTIVE" || listing.sellableQty <= 0 || listing.isPresale) {
       setSelectionError("只有存在可发库存的在售 Listing 可以打包出售");
       return;
     }

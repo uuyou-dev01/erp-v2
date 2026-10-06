@@ -1595,6 +1595,9 @@ model CustomerOrder {
   id                       String    @id @default(cuid())
   storeId                  String
   salesChannelAccountId    String?
+  isPresale                Boolean   @default(false)
+  expectedShipDate          DateTime? @db.Date
+  sourceListingId           String?
   requestPayloadHash       String? // Canonical hash used to reject idempotency-key payload drift
   orderNumber              String    @unique
   platformId               String?
@@ -1644,6 +1647,7 @@ model CustomerOrder {
   @@index([orderStatus])
   @@index([platformId])
   @@index([resaleListingId])
+  @@index([storeId, isPresale, orderStatus, createdAt])
   @@map("customer_orders")
 }
 
@@ -1753,6 +1757,10 @@ model Listing {
   platformId            String
   skuId                 String?
   itemUnitId            String?
+  isPresale             Boolean   @default(false)
+  expectedShipDate       DateTime? @db.Date
+  presaleConfirmedAt     DateTime?
+  presaleConfirmedById   String?
   listingType           String // SKU, ITEM_UNIT
   listedPrice           Decimal?  @db.Decimal(19, 4)
   currency              String?

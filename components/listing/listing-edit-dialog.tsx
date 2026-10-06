@@ -10,8 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { CURRENCIES } from "@/lib/i18n";
+import { PresaleFields } from "./presale-fields";
+import type { PresaleInput } from "@/lib/application/presale";
 
 interface ListingEditDialogProps {
+  listingType?: string;
+  isPresale?: boolean;
+  expectedShipDate?: string | null;
   open: boolean;
   onClose: () => void;
   listingId: string;
@@ -28,6 +33,9 @@ function listingDateValue(value: string) {
 }
 
 export function ListingEditDialog({
+  listingType,
+  isPresale,
+  expectedShipDate,
   open,
   onClose,
   listingId,
@@ -39,6 +47,8 @@ export function ListingEditDialog({
   status,
 }: ListingEditDialogProps) {
   const router = useRouter();
+  const [presale, setPresale] = useState<PresaleInput>({});
+  const [presaleChanged, setPresaleChanged] = useState(false);
   const formId = useId();
   const [mounted, setMounted] = useState(false);
   const [price, setPrice] = useState(listedPrice);
@@ -55,7 +65,13 @@ export function ListingEditDialog({
     setSelectedCurrency(currency);
     setDate(listingDateValue(listedAt));
     setError(null);
-  }, [open, listedPrice, currency, listedAt]);
+    setPresale({
+      isPresale,
+      expectedShipDate: expectedShipDate ?? undefined,
+      buyerNoticeConfirmed: Boolean(isPresale),
+    });
+    setPresaleChanged(false);
+  }, [open, listedPrice, currency, listedAt, isPresale, expectedShipDate]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,6 +93,7 @@ export function ListingEditDialog({
     setError(null);
     try {
       const result = await updateListingAction(listingId, {
+        ...(presaleChanged ? presale : {}),
         listedPrice: price || undefined,
         currency: selectedCurrency,
         listedAt: date === listingDateValue(listedAt) ? undefined : date,
@@ -134,6 +151,20 @@ export function ListingEditDialog({
         </div>
 
         <form onSubmit={handleSubmit}>
+          {listingType === "SKU" ? (
+            <div className="px-5 pt-4">
+              <PresaleFields
+                value={presale}
+                onChange={(value) => {
+                  setPresale(value);
+                  setPresaleChanged(true);
+                }}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                修改交期仅影响后续成交，已有预售订单保留原承诺日期。
+              </p>
+            </div>
+          ) : null}
           <div className="grid gap-4 px-5 py-5 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor={`${formId}-price`}>平台售价</Label>

@@ -48,6 +48,8 @@ function flattenListingRecords(products: ListingCoverageProduct[]): ListingOpsIt
       platformFeeRate: record.platformFeeRate,
       defaultShippingFee: record.defaultShippingFee,
       estimatedNet: record.estimatedNet,
+      isPresale: record.isPresale,
+      expectedShipDate: record.expectedShipDate,
       listedAt: record.listedAt,
       updatedAt: record.updatedAt,
       sellableQty: record.sellableQty,
@@ -202,7 +204,7 @@ export default async function ListingPage({
     <div className="space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Listing 分类</h1>
+          <h1 className="text-3xl font-bold">上架运营</h1>
           <p className="text-muted-foreground">
             按平台查看已经上架过的商品，并在对应 Listing 上登记售出。
           </p>

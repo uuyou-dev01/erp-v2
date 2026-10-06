@@ -32,6 +32,8 @@ export interface ListingOpsItem {
   platformFeeRate: string | null;
   defaultShippingFee: string | null;
   estimatedNet: string | null;
+  isPresale?: boolean;
+  expectedShipDate?: string | null;
   listedAt: string;
   updatedAt: string;
   sellableQty: number;

@@ -82,10 +82,13 @@ export function SellableStockBreakdown({
             <ul className="mt-1 space-y-0.5">
               {inTransitLocs.map((loc) => (
                 <li
-                  key={loc.locationId}
+                  key={`${loc.locationId}:${loc.logisticsHref ?? loc.code}`}
                   className="flex justify-between text-[10px] text-muted-foreground"
                 >
-                  <span>{loc.code}</span>
+                  <span className="min-w-0">
+                    {loc.logisticsHref ? <Link href={loc.logisticsHref} className="text-primary underline">{loc.code}</Link> : loc.code}
+                    <span className="ml-2">{loc.name}</span>
+                  </span>
                   <span className="tabular-nums">{loc.qty}</span>
                 </li>
               ))}

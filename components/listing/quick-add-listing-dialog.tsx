@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { createListing } from "@/app/actions/listings";
+import { PresaleFields } from "./presale-fields";
+import { usePresaleConfirmation } from "./presale-confirmation";
+import type { PresaleInput } from "@/lib/application/presale";
 import { getPlatforms } from "@/app/actions/platforms";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +47,8 @@ export function QuickAddListingDialog({
   storeId,
 }: QuickAddListingDialogProps) {
   const router = useRouter();
+  const [presale, setPresale] = useState<PresaleInput>({});
+  const { confirmPresaleListing, presaleConfirmation } = usePresaleConfirmation();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [platformId, setPlatformId] = useState(initialPlatformId ?? "");
@@ -111,6 +116,7 @@ export function QuickAddListingDialog({
     setListingScope(nextScope);
     setItemUnitId(nextItemUnitId);
     setCurrency(product.referenceCurrency ?? "CNY");
+    setPresale({});
     setSubmitError(null);
   }, [
     open,
@@ -164,6 +170,7 @@ export function QuickAddListingDialog({
   const selectedPlatform = availablePlatforms.find((p) => p.id === platformId);
 
   const handlePlatformChange = (id: string) => {
+    setPresale({});
     setPlatformId(id);
     setSubmitError(null);
     const meta = platformMeta[id];
@@ -176,7 +183,13 @@ export function QuickAddListingDialog({
     setLoading(true);
     setSubmitError(null);
     try {
+      if (
+        listingScope === "SKU" &&
+        !(await confirmPresaleListing(presale, storeId, product.skuId, platformId))
+      )
+        return;
       const result = await createListing({
+        ...(listingScope === "SKU" ? presale : {}),
         storeId,
         platformId,
         listingType: listingScope,
@@ -204,7 +217,7 @@ export function QuickAddListingDialog({
   return createPortal(
     <div className="fixed inset-0 z-[1000] flex items-end justify-center p-4 sm:items-center">
       <div className="absolute inset-0 bg-black/40" onClick={() => !loading && onClose()} />
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border bg-card p-4 shadow-xl">
+      <div className="relative z-10 max-h-[90dvh] w-full max-w-sm overflow-y-auto rounded-2xl border bg-card p-4 shadow-xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="font-semibold">添加上架记录</p>
@@ -354,6 +367,8 @@ export function QuickAddListingDialog({
             </p>
           ) : null}
 
+          {presaleConfirmation}
+          {listingScope === "SKU" ? <PresaleFields value={presale} onChange={setPresale} /> : null}
           {submitError ? (
             <div
               role="alert"

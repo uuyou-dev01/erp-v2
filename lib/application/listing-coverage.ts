@@ -1,3 +1,6 @@
+import { getConsolidationTransitLines } from "./consolidation-transit";
+import { getPurchaseIncoming } from "./purchase-incoming";
+import { listingPriceRisks } from "./listing-price-risk";
 import { prisma } from "@/lib/prisma";
 import { sortSellingPlatforms } from "@/lib/core-platforms";
 import { getStoreStockBreakdown, type StockLocationBreakdown } from "@/lib/application/inventory";
@@ -20,7 +23,7 @@ import {
   type ProductKind,
 } from "@/lib/application/sku-catalog";
 import { familyKey, familyNameFromSkuLike } from "@/lib/application/catalog-display-groups";
-import { VALID_SALES_STATUSES } from "@/lib/application/sales-metrics";
+import { ACCEPTED_SALES_WHERE } from "@/lib/application/sales-metrics";
 import { buildStockingDecision, type StockingDecision } from "@/lib/application/stocking-decision";
 import { RESERVING_ALLOCATION_STATUSES } from "@/lib/application/order-allocation";
 
@@ -107,6 +110,8 @@ export interface ListingRecord {
   platformFeeRate: string | null;
   defaultShippingFee: string | null;
   estimatedNet: string | null;
+  isPresale?: boolean;
+  expectedShipDate?: string | null;
   listedAt: string;
   updatedAt: string;
   risks: ListingCoverageRisk[];
@@ -171,6 +176,7 @@ export interface ListingCoverageVariantRow {
   replenishment?: ReplenishmentDecision;
   stockingDecision?: StockingDecision;
   demandSignals?: VariantDemandSignal[];
+  presaleDemandSignals?: Array<{ market: SellableMarketCode; locationId: null; qty: number }>;
   stockAgeSignals?: VariantStockAgeSignal[];
   incomingSignals?: VariantIncomingSignal[];
   incomingSummary?: {
@@ -311,13 +317,13 @@ function mergeStockLocationBreakdowns(
   existing: StockLocationBreakdown[],
   next: StockLocationBreakdown[]
 ) {
-  const byLocation = new Map(existing.map((location) => [location.locationId, { ...location }]));
+  const byLocation = new Map(existing.map((location) => [location.logisticsHref ?? location.locationId, { ...location }]));
   for (const location of next) {
-    const current = byLocation.get(location.locationId);
+    const current = byLocation.get(location.logisticsHref ?? location.locationId);
     if (current) {
       current.qty += location.qty;
     } else {
-      byLocation.set(location.locationId, { ...location });
+      byLocation.set(location.logisticsHref ?? location.locationId, { ...location });
     }
   }
   return [...byLocation.values()].sort((a, b) => b.qty - a.qty);
@@ -405,6 +411,9 @@ function scopedVariantDecisions(
   const policy = scope.policy ?? variant.replenishmentPolicy ?? DEFAULT_REPLENISHMENT_POLICY;
   const input = {
     ...sales,
+    pendingPresaleQty: (variant.presaleDemandSignals ?? []).filter((signal) =>
+      signalMatchesScope(signal, scope.market, scope.locationId)
+    ).reduce((sum, signal) => sum + signal.qty, 0),
     sellableQty,
     inTransitQty,
     onOrderQty,
@@ -558,7 +567,7 @@ export function buildScopedListingCoverageProduct(
       (variant) =>
         variant.scopedSellableQty > 0 ||
         variant.scopedInTransitQty > 0 ||
-        (scope.includeDemandOnly && (variant.replenishment?.sales90Qty ?? 0) > 0)
+        (scope.includeDemandOnly && ((variant.replenishment?.sales90Qty ?? 0) > 0 || (variant.replenishment?.pendingPresaleQty ?? 0) > 0))
     );
 
   if (variantViews.length === 0) return null;
@@ -712,12 +721,22 @@ function buildRisks(
     listingType: string;
     listedPrice: { toString(): string } | null;
     listedAt: Date;
+    currency?: string | null;
+    platform?: {
+      code: string;
+      country?: string | null;
+      defaultCurrency?: string | null;
+      defaultShippingFee?: { toString(): string } | null;
+    };
+    shippingFeeOverride?: { toString(): string } | null;
   },
   sellableQty: number
 ): ListingCoverageRisk[] {
-  if (listing.status !== "ACTIVE") return [];
-
-  const risks: ListingCoverageRisk[] = [];
+  const risks: ListingCoverageRisk[] = listingPriceRisks({
+    ...listing,
+    defaultShippingFee: listing.shippingFeeOverride ?? listing.platform?.defaultShippingFee,
+  });
+  if (listing.status !== "ACTIVE") return risks;
   if (sellableQty === 0) {
     risks.push({ key: "lowStock", label: "库存不足", tone: "amber" });
   }
@@ -741,6 +760,7 @@ async function getListingRows(storeId: string) {
           name: true,
           code: true,
           country: true,
+          defaultCurrency: true,
           defaultFeeRate: true,
           defaultShippingFee: true,
         },
@@ -820,6 +840,8 @@ function listingRowToRecord(
       listing.platform.defaultShippingFee?.toString() ??
       null,
     estimatedNet: listing.estimatedNet?.toString() ?? null,
+    isPresale: listing.isPresale,
+    expectedShipDate: listing.expectedShipDate?.toISOString().slice(0, 10) ?? null,
     listedAt: listing.listedAt.toISOString(),
     updatedAt: listing.updatedAt.toISOString(),
     risks: buildRisks(listing, stockScope.sellableQty),
@@ -906,9 +928,10 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
     activeFulfillmentItemAllocations,
     lotBalances,
     lotReservations,
-    transferLines,
-    openPurchaseLines,
-    purchaseReceipts,
+    ordinaryTransferLines,
+    consolidationLines,
+    purchaseIncoming,
+    pendingPresaleLines,
   ] = await Promise.all([
     prisma.platform.findMany({
       where: { storeId },
@@ -965,7 +988,7 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
         sku: { storeId },
         order: {
           storeId,
-          orderStatus: { in: [...VALID_SALES_STATUSES] },
+          ...ACCEPTED_SALES_WHERE,
           orderDate: { gte: ninetyDaysAgo, lte: now },
         },
       },
@@ -1050,7 +1073,7 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
       select: { lotId: true, quantity: true },
     }),
     prisma.inboundShipmentInventoryLine.findMany({
-      where: { status: "IN_TRANSIT", shipment: { storeId } },
+      where: { status: "IN_TRANSIT", shipment: { storeId, receivedAt: null, status: { in: ["IN_TRANSIT", "EXCEPTION"] } } },
       select: {
         entityType: true,
         entityId: true,
@@ -1073,31 +1096,19 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
         },
       },
     }),
-    prisma.purchaseLine.findMany({
-      where: {
-        forOrderLineId: null,
-        purchaseOrder: { storeId, status: { in: ["ORDERED", "SHIPPED"] } },
-      },
+    getConsolidationTransitLines(storeId),
+    getPurchaseIncoming(storeId),
+    prisma.orderLine.findMany({
+      where: { order: { storeId, isPresale: true, orderStatus: "DRAFT" } },
       select: {
-        id: true,
-        skuId: true,
-        quantity: true,
-        purchaseOrder: {
-          select: {
-            etaDate: true,
-            destinationLocation: {
-              select: { id: true, code: true, name: true, region: true, isSellableDefault: true },
-            },
-          },
-        },
+        skuId: true, quantity: true,
+        order: { select: { isPresale: true, shippingCountry: true, platform: { select: { country: true, code: true } } } },
+        allocations: { where: { status: { in: [...RESERVING_ALLOCATION_STATUSES] } }, select: { quantity: true } },
       },
-    }),
-    prisma.stockLedger.groupBy({
-      by: ["refId"],
-      where: { storeId, reason: "INBOUND_PURCHASE", refType: "PURCHASE_LINE", deltaQty: { gt: 0 } },
-      _sum: { deltaQty: true },
     }),
   ]);
+
+  const transferLines = [...ordinaryTransferLines, ...consolidationLines];
 
   // A lot can move after a sale. Prefer the immutable outbound ledger location over
   // the lot's current location, while still taking demand quantity from valid orders.
@@ -1296,20 +1307,16 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
     signals.push(signal);
     incomingSignalsBySku.set(skuId, signals);
   };
-  const receivedPurchaseQty = new Map(
-    purchaseReceipts.map((receipt) => [
-      receipt.refId,
-      Number(receipt._sum.deltaQty?.toString() ?? 0),
-    ])
-  );
-  for (const line of openPurchaseLines) {
-    const destination = line.purchaseOrder.destinationLocation;
+  for (const line of purchaseIncoming) {
+    // Purchases committed to an individual order cannot cover general replenishment.
+    if (line.forOrderLineId) continue;
+    const destination = line.destination;
     addIncoming(line.skuId, {
-      kind: "purchase",
+      kind: line.inTransit ? "transit" : "purchase",
       market: destination ? inferMarketFromLocation(destination) : "UNKNOWN",
       locationId: destination?.id ?? null,
-      qty: Math.max(0, Number(line.quantity.toString()) - (receivedPurchaseQty.get(line.id) ?? 0)),
-      etaDate: line.purchaseOrder.etaDate?.toISOString() ?? null,
+      qty: line.quantity,
+      etaDate: line.etaDate?.toISOString() ?? null,
       sellableDestination: Boolean(destination?.isSellableDefault),
     });
   }
@@ -1346,6 +1353,11 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
   const transferDestinationByShipment = new Map(
     transferLines.map((line) => [`shipment:${line.shipmentId}`, line.shipment.toLocation])
   );
+  for (const line of purchaseIncoming) {
+    if (line.inTransit && line.shipmentId) {
+      transferDestinationByShipment.set(`shipment:${line.shipmentId}`, line.destination);
+    }
+  }
   const mapTransitLocations = (locations: StockLocationBreakdown[]) =>
     locations.map((location) => {
       const destination = transferDestinationByShipment.get(location.locationId);
@@ -1353,9 +1365,9 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
         ? {
             ...location,
             locationId: destination.id,
-            code: destination.code,
+            code: location.code,
             region: destination.region,
-            name: `${destination.name}（在途）`,
+            name: location.name,
           }
         : location;
     });
@@ -1453,13 +1465,13 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
     existing: StockLocationBreakdown[],
     next: StockLocationBreakdown[]
   ) {
-    const byLocation = new Map(existing.map((location) => [location.locationId, { ...location }]));
+    const byLocation = new Map(existing.map((location) => [location.logisticsHref ?? location.locationId, { ...location }]));
     for (const location of next) {
-      const current = byLocation.get(location.locationId);
+      const current = byLocation.get(location.logisticsHref ?? location.locationId);
       if (current) {
         current.qty += location.qty;
       } else {
-        byLocation.set(location.locationId, { ...location });
+        byLocation.set(location.logisticsHref ?? location.locationId, { ...location });
       }
     }
     return [...byLocation.values()];
@@ -1474,6 +1486,11 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
         ...emptyVariantRow(sku),
         ...catalogFieldsForSku(skuId),
         demandSignals: demandSignalsBySku.get(skuId) ?? [],
+        presaleDemandSignals: pendingPresaleLines.filter((line) => line.order.isPresale && line.skuId === skuId).map((line) => ({
+          market: inferMarketFromPlatform({ country: line.order.shippingCountry ?? line.order.platform?.country ?? null, code: line.order.platform?.code ?? "" }),
+          locationId: null,
+          qty: Math.max(0, Number(line.quantity) - line.allocations.reduce((sum, a) => sum + Number(a.quantity), 0)),
+        })),
         stockAgeSignals: stockAgeSignalsBySku.get(skuId) ?? [],
         incomingSignals: incomingSignalsBySku.get(skuId) ?? [],
         replenishmentPolicy: policy,
@@ -1638,7 +1655,7 @@ export async function getListingCoverageProducts(storeId: string, policy?: Reple
   }
 
   // Sold-out demand must survive even if there is no stock or listing left.
-  for (const skuId of demandSignalsBySku.keys()) {
+  for (const skuId of new Set([...demandSignalsBySku.keys(), ...pendingPresaleLines.map((line) => line.skuId)])) {
     const draft = ensureSkuDraft(skuId);
     if (draft) ensureVariantStats(draft, skuId);
   }

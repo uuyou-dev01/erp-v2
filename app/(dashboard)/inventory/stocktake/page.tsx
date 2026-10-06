@@ -5,7 +5,6 @@ import {
 } from "@/app/actions/stocktake";
 import { StocktakeGrid } from "@/components/inventory/stocktake-grid";
 import { StocktakeToolbar } from "@/components/inventory/stocktake-toolbar";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -79,37 +78,24 @@ export default async function InventoryStocktakePage({
   const totalTransferableQty = transferRows.reduce((sum, row) => sum + row.bookQty, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-3xl font-bold">库存维护</h1>
+        <h1 className="text-3xl font-bold">盘点与纠错</h1>
         <p className="text-muted-foreground">
           修正现有账面数量，也可为 SKU 录入其他仓库库存或发起仓间调拨。
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">可调整的批量库存</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{rows.length}</div>
-            <p className="text-xs text-muted-foreground">
-              按 SKU 与仓位汇总；单件商品不在此直接改数量
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">可发起转仓件数</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalTransferableQty}</div>
-            <p className="text-xs text-muted-foreground">
-              包括批量库存和未被订单占用的一物一单商品
-            </p>
-          </CardContent>
-        </Card>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg border bg-muted/20 px-4 py-2 text-sm">
+        <span>
+          可盘点 <strong className="tabular-nums">{rows.length}</strong> 个 SKU / 仓位
+        </span>
+        <span>
+          可转仓 <strong className="tabular-nums">{totalTransferableQty}</strong> 件
+        </span>
+        <span className="text-xs text-muted-foreground">
+          单件商品不在此直接改数量；表格可横向滚动
+        </span>
       </div>
 
       <StocktakeToolbar

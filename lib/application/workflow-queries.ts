@@ -1,3 +1,5 @@
+import { presaleDateExpired } from "./presale";
+import { getStoreStockBreakdown, type SkuStockBreakdown } from "./inventory";
 import { prisma } from "@/lib/prisma";
 import Decimal from "decimal.js";
 import {
@@ -30,6 +32,7 @@ const ACTIVE_QUEUES: WorkQueue[] = [
   "pendingArrival",
   "pendingDisposition",
   "inspectionException",
+  "presaleWaiting",
   "pendingShipment",
   "shipped",
   "pendingSettlement",
@@ -214,7 +217,9 @@ interface ConsolidationSignal {
   updatedAt: Date;
 }
 
-function deriveCustomerOrderItem(order: {
+export function deriveCustomerOrderItem(order: {
+  isPresale?: boolean;
+  expectedShipDate?: Date | null;
   id: string;
   orderNumber: string;
   orderStatus: string;
@@ -234,6 +239,7 @@ function deriveCustomerOrderItem(order: {
     }>;
   }>;
 }): WorkItem | null {
+  const presaleOverdue = Boolean(order.isPresale && order.expectedShipDate && presaleDateExpired(order.expectedShipDate));
   const sku = order.lines[0]?.sku;
   const lineItems: WorkItemLine[] = order.lines.map((line) => ({
     id: line.id,
@@ -274,12 +280,42 @@ function deriveCustomerOrderItem(order: {
     return {
       ...base,
       id: `co-${order.id}-confirm`,
-      queue: "pendingShipment",
+      queue: presaleOverdue ? "exception" : "pendingShipment",
       currentStatus: order.orderStatus,
-      currentStatusLabel: "待确认",
+      currentStatusLabel: presaleOverdue ? "预售交期已过 · 待确认" : "待确认",
       primaryAction: "confirmOrder",
       primaryActionLabel: ACTION_LABELS.confirmOrder,
-      priority: "normal",
+      priority: presaleOverdue ? "critical" : "normal",
+    };
+  }
+
+  if (order.isPresale && order.orderStatus === "DRAFT") {
+    const date = order.expectedShipDate?.toISOString().slice(0, 10);
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const overdue = Boolean(date && date < today);
+    return {
+      ...base,
+      id: `co-${order.id}-presale`,
+      queue: overdue ? "exception" : "presaleWaiting",
+      subtitle: `${base.subtitle} · 预计发货 ${date ?? "待确认"}`,
+      currentStatus: order.orderStatus,
+      currentStatusLabel: overdue ? "预售交期已过" : "预售待补货",
+      primaryAction: "viewDetails",
+      primaryActionLabel: "补货 / 分配库存",
+      priority: overdue ? "critical" : "normal",
+      metadata: {
+        isPresale: true,
+        expectedShipDate: date ?? null,
+        pendingQuantity: order.lines.reduce((sum, line) => sum + Math.max(0,
+          Number(line.quantity) - line.allocations.filter((a) =>
+            RESERVING_ALLOCATION_STATUSES.includes(a.status as (typeof RESERVING_ALLOCATION_STATUSES)[number])
+          ).reduce((qty, a) => qty + Number(a.quantity), 0)), 0),
+      },
     };
   }
 
@@ -287,12 +323,12 @@ function deriveCustomerOrderItem(order: {
     return {
       ...base,
       id: `co-${order.id}-ship`,
-      queue: "pendingShipment",
+      queue: presaleOverdue ? "exception" : "pendingShipment",
       currentStatus: order.orderStatus,
-      currentStatusLabel: "待发货",
+      currentStatusLabel: presaleOverdue ? "预售交期已过 · 待发货" : "待发货",
       primaryAction: "shipOrder",
       primaryActionLabel: ACTION_LABELS.shipOrder,
-      priority: "warning",
+      priority: presaleOverdue ? "critical" : "warning",
       metadata: { trackingNo: order.trackingNo },
     };
   }
@@ -303,7 +339,7 @@ function deriveCustomerOrderItem(order: {
       id: `co-${order.id}-shipped`,
       queue: "shipped",
       currentStatus: order.orderStatus,
-      currentStatusLabel: "已发货",
+      currentStatusLabel: "仓库已发出",
       primaryAction: "confirmDelivery",
       primaryActionLabel: ACTION_LABELS.confirmDelivery,
       priority: "normal",
@@ -330,7 +366,7 @@ function deriveCustomerOrderItem(order: {
       id: `co-${order.id}-done`,
       queue: "completed",
       currentStatus: "SETTLED",
-      currentStatusLabel: "已完成",
+      currentStatusLabel: "已结算",
       primaryAction: "settleOrder",
       primaryActionLabel: "查看详情",
       priority: "normal",
@@ -991,8 +1027,22 @@ export async function collectWorkItems(
     });
     if (item) items.push(withRiskSignals(item));
   }
+  const presaleStock = customerOrders.some((order) => order.isPresale && order.orderStatus === "DRAFT")
+    ? await getStoreStockBreakdown(storeId) : new Map<string, SkuStockBreakdown>();
   for (const order of customerOrders) {
     const item = deriveCustomerOrderItem(order);
+    if (item?.metadata?.isPresale) {
+      const available = [...new Set(order.lines.map((line) => line.skuId))].reduce((sum, skuId) =>
+        sum + (presaleStock.get(skuId)?.sellableLocations ?? []).filter((location) =>
+          !order.shippingCountry || location.fulfillableMarkets?.some((market) => market === order.shippingCountry)
+        ).reduce((qty, location) => qty + location.qty, 0), 0);
+      item.metadata.availableQuantity = available;
+      item.subtitle += ` · 待分配 ${item.metadata.pendingQuantity} 件 · 现货 ${available} 件`;
+      if (available > 0 && item.queue === "presaleWaiting") {
+        item.currentStatusLabel = "预售有现货待核配";
+        item.priority = "warning";
+      }
+    }
     if (item) items.push(withRiskSignals(item));
   }
   for (const shipment of shipments) {
@@ -1447,6 +1497,18 @@ export async function getWorkItemDetail(
       actionContext: {
         trackingNo: order.trackingNo,
         orderNumber: order.orderNumber,
+        presaleLinesJson: order.isPresale && order.orderStatus === "DRAFT" ? JSON.stringify(
+          order.lines.map((line) => ({
+            orderLineId: line.id, skuId: line.skuId, skuCode: line.sku.code,
+            requiredQty: Decimal.max(0, new Decimal(line.quantity.toString()).minus(
+              line.allocations.filter((a) => RESERVING_ALLOCATION_STATUSES.includes(
+                a.status as (typeof RESERVING_ALLOCATION_STATUSES)[number]
+              )).reduce((qty, a) => qty.plus(a.quantity.toString()), new Decimal(0))
+            )).toString(),
+          })).filter((line) => Number(line.requiredQty) > 0)
+        ) : null,
+        storeId: order.storeId,
+        expectedShipDate: order.expectedShipDate?.toISOString().slice(0, 10) ?? null,
         externalOrderNo: order.externalOrderNo,
         platformName: order.platform?.name ?? null,
         customerName: order.customerName,

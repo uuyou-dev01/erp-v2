@@ -1,6 +1,5 @@
 import {
   ArrowRightLeft,
-  Bell,
   Box,
   Building2,
   ClipboardList,
@@ -44,7 +43,7 @@ export const operationsNavigation: NavGroup[] = [
   {
     title: "今日工作",
     items: [
-      { name: "工作台", href: "/workbench", icon: ClipboardList, badgeKey: "total" },
+      { name: "今日工作", href: "/workbench", icon: ClipboardList },
       {
         name: "异常中心",
         href: "/workbench?queue=exception",
@@ -52,18 +51,18 @@ export const operationsNavigation: NavGroup[] = [
         queue: "exception",
         badgeKey: "exception",
       },
-      { name: "通知", href: "/notifications", icon: Bell },
     ],
   },
   {
-    title: "商品与采购",
-    items: [
-      { name: "商品资料", href: "/inventory/skus", icon: Store },
-      { name: "采购订单", href: "/procurement", icon: ShoppingCart },
-    ],
+    title: "商品",
+    items: [{ name: "商品资料", href: "/inventory/skus", icon: Store }],
   },
   {
-    title: "库存与仓配",
+    title: "采购",
+    items: [{ name: "采购订单", href: "/procurement", icon: ShoppingCart }],
+  },
+  {
+    title: "库存与物流",
     items: [
       {
         name: "库存看板",
@@ -76,7 +75,7 @@ export const operationsNavigation: NavGroup[] = [
         icon: PackageOpen,
         matches: ["/inventory/items"],
       },
-      { name: "盘点调整", href: "/inventory/stocktake", icon: Box },
+      { name: "盘点与纠错", href: "/inventory/stocktake", icon: Box },
       { name: "转运包裹", href: "/logistics/transfers", icon: ArrowRightLeft },
       { name: "集运批次", href: "/logistics/consolidations", icon: Truck },
       {
@@ -88,22 +87,25 @@ export const operationsNavigation: NavGroup[] = [
     ],
   },
   {
-    title: "销售与履约",
+    title: "销售",
     items: [
       { name: "上架运营", href: "/listing", icon: Globe },
       { name: "销售订单", href: "/sales", icon: Package },
       { name: "售后处理", href: "/sales/after-sales", icon: RotateCcw },
-      { name: "代发履约", href: "/fulfillment/requests", icon: Truck },
+      {
+        name: "协作业务",
+        href: "/marketplace",
+        icon: Users,
+        submenu: [
+          { name: "货盘市场", href: "/marketplace", icon: PackageSearch },
+          { name: "我的供给", href: "/marketplace/my-offers", icon: PackageCheck },
+          { name: "代卖上架", href: "/resale", icon: Store },
+          { name: "代发履约", href: "/fulfillment/requests", icon: Truck },
+        ],
+      },
     ],
   },
-  {
-    title: "货盘协作",
-    items: [
-      { name: "货盘市场", href: "/marketplace", icon: PackageSearch },
-      { name: "我的供给", href: "/marketplace/my-offers", icon: PackageCheck },
-      { name: "代卖上架", href: "/resale", icon: Store },
-    ],
-  },
+
   {
     title: "财务与分析",
     items: [

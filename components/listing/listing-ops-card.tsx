@@ -99,7 +99,7 @@ export function ListingOpsCard({
 
   const productLabel = `${listing.skuCode} · ${listing.skuName}`;
   const priceLabel = listing.listedPrice
-    ? `${listing.currency ?? ""} ${listing.listedPrice}`
+    ? `${listing.currency ?? "币种待确认"} ${listing.listedPrice}`
     : "未定价";
   const stockLabel =
     listing.listingType === "ITEM_UNIT" ? "单品 1 件" : `可发 ${listing.sellableQty}`;
@@ -121,6 +121,7 @@ export function ListingOpsCard({
                 checked={selected}
                 disabled={
                   listing.status !== "ACTIVE" ||
+                  listing.isPresale ||
                   listing.sellableQty <= 0 ||
                   listing.hasResaleSource ||
                   !listing.salesChannelAccountId ||
@@ -161,7 +162,16 @@ export function ListingOpsCard({
           </p>
         </TableCell>
         <TableCell>
-          <Badge variant={statusVariant(listing.status)}>{statusLabel(listing.status)}</Badge>
+          <Badge variant={statusVariant(listing.status)}>
+            {listing.isPresale && listing.status === "ACTIVE"
+              ? "预售中"
+              : statusLabel(listing.status)}
+          </Badge>
+          {listing.isPresale ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              预计发货 {listing.expectedShipDate}
+            </p>
+          ) : null}
         </TableCell>
         <TableCell className="whitespace-nowrap">
           <p className="font-medium">{priceLabel}</p>
@@ -189,7 +199,7 @@ export function ListingOpsCard({
               ))}
             </div>
           ) : (
-            <span className="text-xs text-emerald-700">暂无运营风险</span>
+            <span className="text-xs text-emerald-700">当前检查未发现异常</span>
           )}
         </TableCell>
         <TableCell>
@@ -197,6 +207,7 @@ export function ListingOpsCard({
             <div className="flex justify-end gap-1.5">
               {!selectionMode ? (
                 <QuickSellButton
+                  isPresale={listing.isPresale}
                   listingId={listing.id}
                   listingType={listing.listingType}
                   status={listing.status}
@@ -239,17 +250,27 @@ export function ListingOpsCard({
                 </>
               ) : null}
               {["DELISTED", "SOLD_OUT"].includes(listing.status) && !selectionMode ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  disabled={relisting}
-                  onClick={() => void handleRelist()}
-                >
-                  <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                  {relisting ? "记录中..." : "已在平台重新上架"}
-                </Button>
+                listing.listingType === "SKU" && listing.sellableQty <= 0 ? (
+                  <Button asChild variant="outline" size="sm" className="h-8">
+                    <Link
+                      href={`/listing/new?listingType=SKU&skuId=${encodeURIComponent(listing.skuId ?? "")}&platformId=${encodeURIComponent(listing.platform.id)}`}
+                    >
+                      预售上架
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    disabled={relisting}
+                    onClick={() => void handleRelist()}
+                  >
+                    <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                    {relisting ? "记录中..." : "已在平台重新上架"}
+                  </Button>
+                )
               ) : null}
             </div>
             {actionError ? (
@@ -265,6 +286,9 @@ export function ListingOpsCard({
         </TableCell>
       </TableRow>
       <ListingEditDialog
+        listingType={listing.listingType}
+        isPresale={listing.isPresale}
+        expectedShipDate={listing.expectedShipDate}
         open={editOpen}
         onClose={() => setEditOpen(false)}
         listingId={listing.id}

@@ -23,7 +23,7 @@ import {
   normalizeVariantLabel,
 } from "@/lib/application/sku-identity";
 
-export type { CreateSKUInput } from "@/lib/application/sku-create-service";
+export type CreateSKUInput = import("@/lib/application/sku-create-service").CreateSKUInput;
 import {
   createSkuRecord,
   assertParentSkuInStore,
@@ -34,7 +34,6 @@ import {
   nextStoreSkuSequence,
   ensureUniqueSkuCode,
   validateSkuCatalogMeta,
-  type CreateSKUInput,
 } from "@/lib/application/sku-create-service";
 
 export interface UpdateSKUInput extends CreateSKUInput {

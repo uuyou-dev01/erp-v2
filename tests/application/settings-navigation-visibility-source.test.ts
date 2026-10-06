@@ -8,9 +8,7 @@ function source(path: string) {
 
 describe("settings navigation visibility source", () => {
   it("passes the active role through the dashboard shell and settings layout", () => {
-    expect(source("components/layout/dashboard-shell.tsx")).toContain(
-      "<Header\n          role={role}"
-    );
+    expect(source("components/layout/dashboard-shell.tsx")).toMatch(/<Header\s+role=\{role\}/);
     expect(source("app/(dashboard)/settings/layout.tsx")).toContain(
       "<SettingsNav role={context.role} />"
     );

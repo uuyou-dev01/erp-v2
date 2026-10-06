@@ -1,4 +1,5 @@
 "use server";
+import { pendingPresaleDemand } from "@/lib/application/presale-demand";
 import { getOrderShippingProgress } from "@/lib/application/order-shipping-progress";
 import { notifyShippingParticipants } from "@/lib/application/shipping-notifications";
 import {
@@ -173,6 +174,7 @@ export async function getCustomerOrders(storeId: string, platformId?: string) {
       lines: {
         include: {
           sku: true,
+          allocations: { select: { quantity: true, status: true } },
         },
       },
       ...salesOrderBusinessInclude,
@@ -479,6 +481,15 @@ export async function allocateInventory(data: AllocateInventoryInput) {
     if (!canReserveQuantity({ onHand, reserved, requested: quantity })) {
       throw new Error("可用库存不足，无法分配");
     }
+    const earlierPresales = await pendingPresaleDemand(tx, {
+      storeId: context.activeStoreId,
+      skuId: freshOrderLine.skuId,
+      market: destination,
+      beforeOrderId: freshOrderLine.orderId,
+    });
+    if (earlierPresales.gt(0)) {
+      throw new Error("该商品还有更早的预售订单待补货，请先为这些订单分配库存");
+    }
 
     const unitCost = new Decimal(lot.unitCost.toString());
     const costAmount = quantity.times(unitCost);
@@ -508,7 +519,9 @@ export async function allocateInventory(data: AllocateInventoryInput) {
     return created;
   });
 
-  revalidatePath(`/sales/${data.orderLineId}`);
+  revalidatePath(`/sales/${orderLine.orderId}`);
+  revalidatePath("/sales");
+  revalidatePath("/workbench");
   return allocation;
 }
 
@@ -601,6 +614,9 @@ export async function confirmOrder(data: ConfirmOrderInput) {
     const fees = computeOrderFees({
       subtotal,
       platformFeeRate: feeRate,
+      ...(freshOrder.isPresale
+        ? { platformFeeAmount: new Decimal(freshOrder.platformFee.toString()) }
+        : {}),
       shippingFee: new Decimal(freshOrder.shippingFee.toString()),
       inventoryCost,
     });
@@ -621,6 +637,16 @@ export async function confirmOrder(data: ConfirmOrderInput) {
       await tx.orderLine.update({
         where: { id: line.id },
         data: { supplyStatus: "READY_TO_SHIP" },
+      });
+    }
+    if (freshOrder.isPresale) {
+      await completeTasksForRefInTransaction(tx, {
+        organizationId: context.organizationId,
+        storeId: context.activeStoreId,
+        type: TASK_TYPE.CONFIRM_ORDER,
+        refType: "CUSTOMER_ORDER",
+        refId: freshOrder.id,
+        completedById: context.userId,
       });
     }
     return freshOrder;
@@ -1135,6 +1161,16 @@ export async function cancelCustomerOrder(orderId: string, reason?: string) {
       orderId,
       actorUserId: context.userId,
       reason: cancelReason,
+    });
+    await tx.task.updateMany({
+      where: {
+        storeId: context.activeStoreId,
+        refType: "CUSTOMER_ORDER",
+        refId: orderId,
+        type: TASK_TYPE.CONFIRM_ORDER,
+        status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS", "OVERDUE"] },
+      },
+      data: { status: "CANCELLED", cancelledAt: new Date() },
     });
   });
 

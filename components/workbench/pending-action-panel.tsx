@@ -1,5 +1,7 @@
 "use client";
 
+import { AllocateInventoryForm } from "@/components/sales/allocate-inventory-form";
+import Link from "next/link";
 import { showActionSuccess } from "@/components/feedback/action-feedback";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -173,6 +175,35 @@ export function PendingActionPanel({
   };
 
   const renderActionForm = () => {
+    if (detail.primaryAction === "viewDetails" && detail.actionContext.presaleLinesJson) {
+      const lines = JSON.parse(detail.actionContext.presaleLinesJson) as Array<{
+        orderLineId: string;
+        skuId: string;
+        skuCode: string;
+        requiredQty: string;
+      }>;
+      return (
+        <div className="space-y-5">
+          <p className="text-sm">
+            预计发货：{detail.actionContext.expectedShipDate ?? "待确认"}
+            。到货入库后按下单顺序分配；分配完成后确认订单，再安排发货。
+          </p>
+          <Link href="/procurement" className="text-sm text-primary underline">
+            查看采购与补货
+          </Link>
+          {lines.map((line) => (
+            <AllocateInventoryForm
+              key={line.orderLineId}
+              {...line}
+              storeId={detail.actionContext.storeId!}
+              shippingCountry={detail.actionContext.shippingCountry}
+              onAllocated={refresh}
+            />
+          ))}
+          <OpenDetailLink detail={detail} />
+        </div>
+      );
+    }
     if (detail.primaryAction === "fillLogistics") {
       return (
         <FillLogisticsForm detail={detail} locations={locations} pending={pending} run={run} />
@@ -332,9 +363,11 @@ export function PendingActionPanel({
           detail={detail}
           title={actionTitle}
           description={
-            isQuickEntryException
-              ? "补齐阻塞处理的字段，保存后系统会自动继续生成采购、库存和后续待办。"
-              : actionSpec.description
+            detail.actionContext.presaleLinesJson && detail.primaryAction === "viewDetails"
+              ? "先核对补货与承诺发货日，到货后在下方分配库存。"
+              : isQuickEntryException
+                ? "补齐阻塞处理的字段，保存后系统会自动继续生成采购、库存和后续待办。"
+                : actionSpec.description
           }
           onClose={onClose}
         />

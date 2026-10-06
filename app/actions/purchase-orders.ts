@@ -389,6 +389,9 @@ export async function markPurchaseAsShipped(data: MarkPurchaseShippedInput) {
     revalidatePath("/procurement");
     revalidatePath(`/procurement/${data.purchaseOrderId}`);
     revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
     return;
   }
 
@@ -436,6 +439,9 @@ export async function markPurchaseAsShipped(data: MarkPurchaseShippedInput) {
   revalidatePath("/procurement");
   revalidatePath(`/procurement/${data.purchaseOrderId}`);
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
 }
 
 export async function markPurchaseAsShippedAction(data: MarkPurchaseShippedInput) {
@@ -868,6 +874,9 @@ export async function updatePurchaseOrderBusinessDateAction(id: string, dateInpu
     revalidatePath("/procurement");
     revalidatePath(`/procurement/${id}`);
     revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
     revalidatePath("/inventory");
     revalidatePath("/reports");
     return actionSuccess({
@@ -905,6 +914,9 @@ export async function cancelPurchaseOrder(id: string) {
   revalidatePath("/procurement");
   revalidatePath(`/procurement/${id}`);
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   return { id: updated.id, status: updated.status };
 }
 
@@ -971,6 +983,9 @@ export async function markPurchaseOrderArrived(data: MarkPurchaseArrivedInput) {
   revalidatePath("/procurement");
   revalidatePath(`/procurement/${data.purchaseOrderId}`);
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   return { id: updated.id, status: updated.status };
 }
 
@@ -1986,6 +2001,9 @@ export async function returnPurchaseOrder(data: ReturnPurchaseOrderInput) {
   });
 
   revalidatePath("/workbench");
+  revalidatePath("/listing");
+  revalidatePath("/inventory/sellable");
+  revalidatePath("/sales");
   revalidatePath("/procurement");
   revalidatePath(`/procurement/${data.purchaseOrderId}`);
   revalidatePath("/inventory/lots");

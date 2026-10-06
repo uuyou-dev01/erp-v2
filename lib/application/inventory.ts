@@ -1,3 +1,5 @@
+import { getConsolidationTransitLines } from "./consolidation-transit";
+import { getPurchaseIncoming } from "./purchase-incoming";
 import type { Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
@@ -81,6 +83,7 @@ export async function createInboundItemUnit(
 /** 单个仓位的库存细分（可发货 / 真实在途 / 到仓暂存） */
 export interface StockLocationBreakdown {
   locationId: string;
+  logisticsHref?: string;
   code: string;
   name: string;
   region: string | null;
@@ -186,6 +189,7 @@ function pushLocationQty(
       destinationCountry: string | null;
       active: boolean;
     }>;
+    logisticsHref?: string;
     fulfillableMarkets?: string[];
   },
   qty: number
@@ -197,6 +201,7 @@ function pushLocationQty(
   }
   locations.set(location.id, {
     locationId: location.id,
+    logisticsHref: location.logisticsHref,
     code: location.code,
     name: location.name,
     region: location.region,
@@ -234,6 +239,7 @@ function pushQty(
       destinationCountry: string | null;
       active: boolean;
     }>;
+    logisticsHref?: string;
     fulfillableMarkets?: string[];
   },
   source: "LOT" | "ITEM_UNIT"
@@ -270,7 +276,7 @@ function pushQty(
 export async function getStoreStockBreakdown(
   storeId: string
 ): Promise<Map<string, SkuStockBreakdown>> {
-  const [lotAggregates, lots, itemUnits, transferLines, guaranteedChannels] = await Promise.all([
+  const [lotAggregates, lots, itemUnits, ordinaryTransferLines, guaranteedChannels, purchaseIncoming, consolidationLines] = await Promise.all([
     prisma.stockLedger.groupBy({
       by: ["entityId"],
       where: { storeId, entityType: "LOT" },
@@ -299,7 +305,7 @@ export async function getStoreStockBreakdown(
       },
     }),
     prisma.inboundShipmentInventoryLine.findMany({
-      where: { status: "IN_TRANSIT", shipment: { storeId } },
+      where: { status: "IN_TRANSIT", shipment: { storeId, receivedAt: null, status: { in: ["IN_TRANSIT", "EXCEPTION"] } } },
       include: {
         shipment: {
           include: {
@@ -326,7 +332,10 @@ export async function getStoreStockBreakdown(
         offer: { select: { items: { select: { skuId: true } } } },
       },
     }),
+    getPurchaseIncoming(storeId),
+    getConsolidationTransitLines(storeId),
   ]);
+  const transferLines = [...ordinaryTransferLines, ...consolidationLines];
 
   const [reservations, fulfillmentReservations] = await Promise.all([
     prisma.orderAllocation.findMany({
@@ -384,6 +393,9 @@ export async function getStoreStockBreakdown(
         `${line.entityType}:${line.entityId}`,
         {
           id: `shipment:${line.shipmentId}`,
+          logisticsHref: line.shipmentId.startsWith("consolidation:")
+            ? `/logistics/consolidations/${line.shipmentId.slice(14)}`
+            : `/workbench?open=shipment:${line.shipmentId}`,
           code: line.shipment.trackingNo || "IN-TRANSIT",
           name: `${from?.name ?? "起运仓"} → ${to?.name ?? "目标仓"}（转运中）`,
           region: to?.region ?? from?.region ?? null,
@@ -394,6 +406,7 @@ export async function getStoreStockBreakdown(
     })
   );
 
+  const transitQuantityByEntity = new Map(transferLines.map((line) => [`${line.entityType}:${line.entityId}`, Number(line.quantity)]));
   for (const lot of lots) {
     const qty = Math.max((lotQtyMap.get(lot.id) ?? 0) - (reservedLotQtyMap.get(lot.id) ?? 0), 0);
     if (qty <= 0) continue;
@@ -401,7 +414,7 @@ export async function getStoreStockBreakdown(
     pushQty(
       acc,
       lot.skuId,
-      qty,
+      transferLocation ? Math.min(qty, transitQuantityByEntity.get(`LOT:${lot.id}`) ?? 0) : qty,
       transferLocation
         ? "IN_TRANSIT"
         : lot.status === "ACTIVE" && lot.location.isSellableDefault
@@ -410,6 +423,10 @@ export async function getStoreStockBreakdown(
       transferLocation ?? lot.location,
       "LOT"
     );
+    if (transferLocation) {
+      const remainder = qty - (transitQuantityByEntity.get(`LOT:${lot.id}`) ?? 0);
+      if (remainder > 0) pushQty(acc, lot.skuId, remainder, "HELD", lot.location, "LOT");
+    }
   }
 
   for (const item of itemUnits) {
@@ -427,6 +444,19 @@ export async function getStoreStockBreakdown(
       transferLocation ?? item.location,
       "ITEM_UNIT"
     );
+  }
+
+  for (const line of purchaseIncoming) {
+    if (!line.inTransit) continue;
+    pushQty(acc, line.skuId, line.quantity, "IN_TRANSIT", {
+      id: `shipment:${line.shipmentId}`,
+      logisticsHref: `/workbench?open=shipment:${line.shipmentId}`,
+      code: line.trackingNo ?? "IN-TRANSIT",
+      name: `采购 → ${line.destination?.name ?? "目标仓"}（在途）`,
+      region: line.destination?.region ?? null,
+      type: "TRANSIT",
+      fulfillableMarkets: [],
+    }, line.trackingMode === "ITEM_UNIT" ? "ITEM_UNIT" : "LOT");
   }
 
   const protectedBySku = new Map<string, number>();

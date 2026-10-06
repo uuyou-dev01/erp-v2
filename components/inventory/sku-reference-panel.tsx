@@ -31,7 +31,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
               库存看板
             </Button>
           </Link>
-          <Link href="/sales">
+          <Link href={`/sales?q=${encodeURIComponent(sku.code)}`}>
             <Button variant="outline" size="sm" className="h-8 w-full justify-start text-xs">
               <ShoppingCart className="mr-1 h-3.5 w-3.5" />
               销售订单
@@ -46,7 +46,7 @@ export function SKUReferencePanel({ sku, compact = false }: SKUReferencePanelPro
           <Link href={`/inventory/lots?skuId=${sku.id}`}>
             <Button variant="outline" size="sm" className="h-8 w-full justify-start text-xs">
               <Truck className="mr-1 h-3.5 w-3.5" />
-              采购入库
+              入库批次
             </Button>
           </Link>
         </div>

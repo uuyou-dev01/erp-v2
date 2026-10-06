@@ -21,6 +21,8 @@ import {
 } from "@/app/actions/listings";
 import { createPlatformAction, updatePlatformAction } from "@/app/actions/platforms";
 import {
+  allocateInventory,
+  confirmOrder,
   cancelCustomerOrder,
   markOrderReturned,
   markOrderShipped,
@@ -84,6 +86,22 @@ describe("listing quick sell reservations", () => {
       },
     });
 
+    const pool = await prisma.inventoryPool.upsert({
+      where: { legacyStoreId: store.id },
+      update: {},
+      create: {
+        organizationId: organization.id,
+        legacyStoreId: store.id,
+        code: `POOL_${runId}`,
+        name: "Reservation pool",
+      },
+    });
+    await prisma.inventoryPoolAccess.upsert({
+      where: { inventoryPoolId_userId: { inventoryPoolId: pool.id, userId: user.id } },
+      update: { role: "OWNER" },
+      create: { inventoryPoolId: pool.id, userId: user.id, role: "OWNER" },
+    });
+
     const location = await prisma.location.create({
       data: {
         storeId: store.id,
@@ -94,6 +112,11 @@ describe("listing quick sell reservations", () => {
       },
     });
     locationId = location.id;
+    await prisma.locationAccess.upsert({
+      where: { locationId_userId: { locationId, userId: user.id } },
+      update: { role: "MANAGER", permissions: { ship: true } },
+      create: { userId: user.id, locationId, role: "MANAGER", permissions: { ship: true } },
+    });
 
     const platform = await prisma.platform.create({
       data: {
@@ -125,8 +148,207 @@ describe("listing quick sell reservations", () => {
       });
     }
     await prisma.store.deleteMany({ where: { id: storeId } });
+    if (organization)
+      await prisma.inventoryPool.deleteMany({ where: { organizationId: organization.id } });
     await prisma.organization.deleteMany({ where: { code: organizationCode } });
     delete process.env.ERP_DEV_USER_EMAIL;
+  });
+
+  it("counts only dispatched consolidation quantity and keeps the remainder held", async () => {
+    const { sku, lotId } = await createSellableListing("consolidation", "10");
+    await prisma.inventoryLot.update({ where: { id: lotId }, data: { status: "CONSOLIDATING" } });
+    const batch = await prisma.consolidationBatch.create({ data: {
+      storeId, fromLocationId: locationId, toLocationId: locationId, status: "SEALED",
+      outboundTrackingNo: "TEST-CONSOLIDATED",
+      lines: { create: { sourceType: "LOT", sourceId: lotId, quantity: 4 } },
+    } });
+    expect((await getSkuStockBreakdown(storeId, sku.id)).inTransitQty).toBe(0);
+    await prisma.consolidationBatch.update({ where: { id: batch.id }, data: { status: "SHIPPED", shippedAt: new Date() } });
+    const stock = await getSkuStockBreakdown(storeId, sku.id);
+    expect(stock.inTransitQty).toBe(4);
+    expect(stock.heldQty).toBe(6);
+    expect(stock.sellableQty).toBe(0);
+    expect(stock.inTransitLocations[0].logisticsHref).toBe(`/logistics/consolidations/${batch.id}`);
+    await prisma.consolidationBatch.update({ where: { id: batch.id }, data: { status: "RECEIVED", receivedAt: new Date() } });
+    expect((await getSkuStockBreakdown(storeId, sku.id)).inTransitQty).toBe(0);
+  });
+
+  it("counts first-leg purchase logistics, subtracts receipts, and clears delivered transit", async () => {
+    const sku = await createSku("purchase-transit");
+    const purchase = await prisma.purchaseOrder.create({ data: {
+      storeId, orderNo: `${runId}-incoming`, currency: "CNY", subtotal: 100, totalAmount: 100,
+      status: "ORDERED", destinationLocationId: locationId,
+      lines: { create: { skuId: sku.id, quantity: 10, unitPrice: 10, lineAmount: 100 } },
+    }, include: { lines: true } });
+    expect((await getSkuStockBreakdown(storeId, sku.id)).inTransitQty).toBe(0);
+    const shipment = await prisma.inboundShipment.create({ data: {
+      storeId, purchaseOrderId: purchase.id, legIndex: 1, toLocationId: locationId,
+      status: "IN_TRANSIT", trackingNo: "TEST-LOGISTICS", shippedAt: new Date(),
+    } });
+    const moving = await getSkuStockBreakdown(storeId, sku.id);
+    expect(moving.inTransitQty).toBe(10);
+    expect(moving.sellableQty).toBe(0);
+    expect(moving.inTransitLocations[0].code).toBe("TEST-LOGISTICS");
+    // Subsequent route legs must never multiply the original purchase quantity.
+    await prisma.inboundShipment.create({ data: {
+      storeId, purchaseOrderId: purchase.id, legIndex: 2, toLocationId: locationId,
+      status: "IN_TRANSIT", shippedAt: new Date(),
+    } });
+    expect((await getSkuStockBreakdown(storeId, sku.id)).inTransitQty).toBe(10);
+    await prisma.stockLedger.create({ data: {
+      storeId, locationId, entityType: "LOT", entityId: "test-receipt-only", deltaQty: 4,
+      reason: "INBOUND_PURCHASE", refType: "PURCHASE_LINE", refId: purchase.lines[0].id,
+    } });
+    expect((await getSkuStockBreakdown(storeId, sku.id)).inTransitQty).toBe(6);
+    await prisma.inboundShipment.update({ where: { id: shipment.id }, data: {
+      status: "DELIVERED", receivedAt: new Date(),
+    } });
+    expect((await getSkuStockBreakdown(storeId, sku.id)).inTransitQty).toBe(0);
+  });
+
+  it("keeps zero-stock presales active and only deducts replenished stock on shipment", async () => {
+    const sku = await createSku("presale");
+    const input = {
+      storeId,
+      platformId,
+      listingType: "SKU" as const,
+      skuId: sku.id,
+      listedPrice: "180",
+      currency: "CNY",
+      isPresale: true,
+      expectedShipDate: "2099-10-10",
+    };
+    expect((await createListing(input)).success).toBe(false);
+    expect((await createListing({ ...input, isPresale: false })).success).toBe(false);
+    expect(
+      (
+        await createListing({
+          ...input,
+          expectedShipDate: "2020-01-01",
+          buyerNoticeConfirmed: true,
+        })
+      ).success
+    ).toBe(false);
+    const usedSku = await createSku("presale-used");
+    await prisma.sKU.update({
+      where: { id: usedSku.id },
+      data: { attributes: { productKind: "USED" } },
+    });
+    expect(
+      (await createListing({ ...input, skuId: usedSku.id, buyerNoticeConfirmed: true })).success
+    ).toBe(false);
+    expect(
+      (await createListing({ ...input, listingType: "ITEM_UNIT", buyerNoticeConfirmed: true }))
+        .success
+    ).toBe(false);
+    const listing = await createListing({ ...input, buyerNoticeConfirmed: true });
+    if (!listing.success) throw new Error(listing.error);
+    const saleInput = {
+      listingId: listing.id,
+      quantity: "3",
+      platformFeeAmount: "7",
+      requestId: `first-${runId.replaceAll("_", "-")}`,
+    };
+    const sale = await quickSellListing(saleInput);
+    if (!sale.success) throw new Error(sale.error);
+    const replay = await quickSellListing(saleInput);
+    expect(replay).toEqual(sale);
+    expect((await quickSellListing({ ...saleInput, quantity: "4" })).success).toBe(false);
+    const order = await prisma.customerOrder.findUniqueOrThrow({
+      where: { id: sale.orderId },
+      include: { lines: { include: { allocations: true } } },
+    });
+    expect(order.isPresale).toBe(true);
+    expect(order.orderStatus).toBe("DRAFT");
+    expect(order.lines[0].allocations).toHaveLength(0);
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe(
+      "ACTIVE"
+    );
+    expect(await prisma.task.count({ where: { refId: order.id, type: "SHIP_ORDER" } })).toBe(0);
+    expect(
+      (await collectWorkItems(storeId)).some(
+        (item) => item.entityId === order.id && item.currentStatusLabel === "预售待补货"
+      )
+    ).toBe(true);
+    await expect(confirmOrder({ orderId: order.id })).rejects.toThrow("尚未完整分配");
+
+    // A second sale is allowed without a presale quantity cap.
+    const second = await quickSellListing({
+      listingId: listing.id,
+      quantity: "20",
+      requestId: `second-${runId.replaceAll("_", "-")}`,
+    });
+    if (!second.success) throw new Error(second.error);
+
+    const changed = await updateListingAction(listing.id, {
+      isPresale: true,
+      expectedShipDate: "2099-10-20",
+      buyerNoticeConfirmed: true,
+    });
+    expect(changed.success).toBe(true);
+    expect(
+      (await prisma.customerOrder.findUniqueOrThrow({ where: { id: order.id } })).expectedShipDate
+        ?.toISOString()
+        .slice(0, 10)
+    ).toBe("2099-10-10");
+    const waiting = (await collectWorkItems(storeId)).find((item) => item.entityId === order.id);
+    expect(waiting?.queue).toBe("presaleWaiting");
+    expect(waiting?.metadata?.pendingQuantity).toBe(3);
+    const pool = await prisma.inventoryPool.findFirstOrThrow({ where: { legacyStoreId: storeId } });
+    const lot = await prisma.inventoryLot.create({
+      data: {
+        storeId,
+        skuId: sku.id,
+        locationId,
+        inventoryPoolId: pool.id,
+        unitCost: "100",
+        costCurrency: "CNY",
+        sourceType: "E2E",
+        sourceId: `${runId}_presale`,
+        receivedAt: new Date(),
+      },
+    });
+    await prisma.stockLedger.create({
+      data: {
+        storeId,
+        entityType: "LOT",
+        entityId: lot.id,
+        locationId,
+        deltaQty: "5",
+        reason: "INBOUND_PURCHASE",
+        refType: "E2E",
+        refId: `${runId}_presale`,
+      },
+    });
+    const arrived = (await collectWorkItems(storeId)).find((item) => item.entityId === order.id);
+    expect(arrived?.currentStatusLabel).toBe("预售有现货待核配");
+    expect(arrived?.metadata?.availableQuantity).toBe(5);
+    const laterLine = await prisma.orderLine.findFirstOrThrow({
+      where: { orderId: second.orderId },
+    });
+    await expect(
+      allocateInventory({ orderLineId: laterLine.id, lotId: lot.id, quantity: "1" })
+    ).rejects.toThrow("更早的预售订单");
+    await cancelCustomerOrder(second.orderId, "buyer cancelled");
+    expect(
+      await prisma.task.count({
+        where: { refId: second.orderId, type: "CONFIRM_ORDER", status: "CANCELLED" },
+      })
+    ).toBe(1);
+    await allocateInventory({ orderLineId: order.lines[0].id, lotId: lot.id, quantity: "3" });
+    await expectLotQuantity(lot.id, "5");
+    await confirmOrder({ orderId: order.id });
+    await expectLotQuantity(lot.id, "5");
+    expect(
+      (
+        await prisma.customerOrder.findUniqueOrThrow({ where: { id: order.id } })
+      ).platformFee.toString()
+    ).toBe("7");
+    expect(
+      await prisma.task.count({ where: { refId: order.id, type: "CONFIRM_ORDER", status: "DONE" } })
+    ).toBe(1);
+    await markOrderShipped(order.id, { trackingNo: `PRE_${runId}` });
+    await expectLotQuantity(lot.id, "2");
   });
 
   it("removes reserved stock from sellable quantity and sells out an exhausted SKU listing", async () => {
@@ -785,8 +1007,10 @@ async function createSku(suffix: string) {
 async function createSellableListing(suffix: string, quantity = "1") {
   const sku = await createSku(suffix);
 
+  const pool = await prisma.inventoryPool.findFirst({ where: { legacyStoreId: storeId } });
   const lot = await prisma.inventoryLot.create({
     data: {
+      inventoryPoolId: pool?.id,
       storeId,
       skuId: sku.id,
       locationId,

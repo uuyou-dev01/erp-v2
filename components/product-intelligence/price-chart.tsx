@@ -21,15 +21,7 @@ export interface ProductIntelligencePricePoint {
   price: number | null;
 }
 
-const SERIES_COLORS = [
-  "#2563eb",
-  "#06b6d4",
-  "#8b5cf6",
-  "#f59e0b",
-  "#10b981",
-  "#ef4444",
-  "#64748b",
-];
+const SERIES_COLORS = ["#2563eb", "#06b6d4", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#64748b"];
 
 function colorForSeries(seriesKey: string, seriesKeys: string[]) {
   const index = Math.max(0, seriesKeys.indexOf(seriesKey));
@@ -39,6 +31,13 @@ function colorForSeries(seriesKey: string, seriesKeys: string[]) {
 function average(values: number[]) {
   if (values.length === 0) return 0;
   return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 function dateDistanceInDays(start: string, end: string) {
@@ -149,15 +148,19 @@ export function ProductIntelligencePriceChart({
   activeConditions?: string[];
 }) {
   const variants = useMemo(
-    () => Array.from(new Set(data.map((point) => point.variant || "未命名 SKU"))).sort((a, b) => a.localeCompare(b, "zh-CN")),
-    [data],
+    () =>
+      Array.from(new Set(data.map((point) => point.variant || "未命名 SKU"))).sort((a, b) =>
+        a.localeCompare(b, "zh-CN")
+      ),
+    [data]
   );
   const conditions = useMemo(
     () => Array.from(new Set(data.map((point) => point.condition || "未标注"))).sort(),
-    [data],
+    [data]
   );
   const activeVariantList = activeVariants && activeVariants.length > 0 ? activeVariants : variants;
-  const activeConditionList = activeConditions && activeConditions.length > 0 ? activeConditions : conditions;
+  const activeConditionList =
+    activeConditions && activeConditions.length > 0 ? activeConditions : conditions;
   const currencies = Array.from(new Set(data.map((point) => point.currency))).sort();
 
   if (data.length === 0) {
@@ -176,27 +179,30 @@ export function ProductIntelligencePriceChart({
             (point) =>
               point.currency === currency &&
               activeVariantList.includes(point.variant || "未命名 SKU") &&
-              activeConditionList.includes(point.condition || "未标注"),
+              activeConditionList.includes(point.condition || "未标注")
           )
           .map(toNumericPoint)
           .filter((point): point is NumericPricePoint => Boolean(point))
           .sort((a, b) => a.date.localeCompare(b.date));
         const rows = buildSeriesRows(currencyPoints);
-        const chartSeriesKeys = Array.from(new Set(currencyPoints.map(seriesKey))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+        const chartSeriesKeys = Array.from(new Set(currencyPoints.map(seriesKey))).sort((a, b) =>
+          a.localeCompare(b, "zh-CN")
+        );
         const prices = currencyPoints.map((point) => point.price);
         const minPoint = currencyPoints.reduce<NumericPricePoint | null>(
           (min, point) => (!min || point.price < min.price ? point : min),
-          null,
+          null
         );
         const maxPoint = currencyPoints.reduce<NumericPricePoint | null>(
           (max, point) => (!max || point.price > max.price ? point : max),
-          null,
+          null
         );
         const dailyAverages = buildDailyAverages(currencyPoints);
         const firstDay = dailyAverages[0];
         const latestDay = dailyAverages[dailyAverages.length - 1];
         const trendDelta = firstDay && latestDay ? latestDay.average - firstDay.average : 0;
-        const trendPercent = firstDay && latestDay ? percentageChange(latestDay.average, firstDay.average) : null;
+        const trendPercent =
+          firstDay && latestDay ? percentageChange(latestDay.average, firstDay.average) : null;
         const startDate = firstDay?.date ?? "";
         const endDate = latestDay?.date ?? "";
         const spanDays = startDate && endDate ? dateDistanceInDays(startDate, endDate) : 0;
@@ -207,7 +213,9 @@ export function ProductIntelligencePriceChart({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-slate-900">{currency} 价格走势</p>
-                <p className="text-xs text-slate-500">多条统计用不同颜色表示，横轴为看到价格的日期。</p>
+                <p className="text-xs text-slate-500">
+                  按原币与成色分组；样本可能含挂牌和报价，中位数仅供参考。
+                </p>
               </div>
               <span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">
                 {currencyPoints.length} 条
@@ -222,13 +230,13 @@ export function ProductIntelligencePriceChart({
                 <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-2">
                   <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
                     <div className="rounded-md bg-white px-2.5 py-1.5">
-                      <p className="text-[11px] text-slate-500">当前均价</p>
+                      <p className="text-[11px] text-slate-500">观察中位数</p>
                       <p className="text-sm font-semibold text-slate-950">
-                        {formatCurrency(average(prices), currency)}
+                        {formatCurrency(median(prices), currency)}
                       </p>
                     </div>
                     <div className="rounded-md bg-white px-2.5 py-1.5">
-                      <p className="text-[11px] text-emerald-700">最低价</p>
+                      <p className="text-[11px] text-emerald-700">最低观察价</p>
                       <p className="text-sm font-semibold text-emerald-900">
                         {minPoint ? formatCurrency(minPoint.price, currency) : "-"}
                         <span className="ml-1 text-[11px] font-normal text-emerald-700">
@@ -257,17 +265,27 @@ export function ProductIntelligencePriceChart({
                     <div className="rounded-md bg-white px-2.5 py-1.5">
                       <p
                         className={`text-[11px] ${
-                          trendDelta > 0 ? "text-rose-700" : trendDelta < 0 ? "text-cyan-700" : "text-slate-500"
+                          trendDelta > 0
+                            ? "text-rose-700"
+                            : trendDelta < 0
+                              ? "text-cyan-700"
+                              : "text-slate-500"
                         }`}
                       >
                         首末日均价变化
                       </p>
                       <p
                         className={`text-sm font-semibold ${
-                          trendDelta > 0 ? "text-rose-900" : trendDelta < 0 ? "text-cyan-900" : "text-slate-950"
+                          trendDelta > 0
+                            ? "text-rose-900"
+                            : trendDelta < 0
+                              ? "text-cyan-900"
+                              : "text-slate-950"
                         }`}
                       >
-                        {dailyAverages.length > 1 ? signedCurrency(trendDelta, currency) : "样本不足"}
+                        {dailyAverages.length > 1
+                          ? signedCurrency(trendDelta, currency)
+                          : "样本不足"}
                         <span className="ml-1 text-[11px] font-normal text-slate-500">
                           {dailyAverages.length > 1 ? formatPercentage(trendPercent) : "跨日期"}
                         </span>
@@ -286,21 +304,26 @@ export function ProductIntelligencePriceChart({
                       {spanDays === 0 ? "同日样本" : `${spanDays + 1} 天`}
                     </span>
                     <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5">
-                      价差 {minPoint && maxPoint ? formatCurrency(maxPoint.price - minPoint.price, currency) : "-"}
+                      价差{" "}
+                      {minPoint && maxPoint
+                        ? formatCurrency(maxPoint.price - minPoint.price, currency)
+                        : "-"}
                     </span>
-                        {seriesSummaries.map((summary) => (
-                          <span
-                            key={summary.key}
-                            className="rounded-md border border-slate-200 bg-white px-2 py-0.5"
-                          >
-                            <span
-                              className="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
-                              style={{ backgroundColor: colorForSeries(summary.key, chartSeriesKeys) }}
-                            />
-                            {summary.key} {summary.count} 条 · 低 {formatCurrency(summary.min, currency)} · 均{" "}
-                            {formatCurrency(summary.average, currency)} · 高 {formatCurrency(summary.max, currency)}
-                          </span>
-                        ))}
+                    {seriesSummaries.map((summary) => (
+                      <span
+                        key={summary.key}
+                        className="rounded-md border border-slate-200 bg-white px-2 py-0.5"
+                      >
+                        <span
+                          className="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
+                          style={{ backgroundColor: colorForSeries(summary.key, chartSeriesKeys) }}
+                        />
+                        {summary.key} {summary.count} 条 · 低{" "}
+                        {formatCurrency(summary.min, currency)} · 均{" "}
+                        {formatCurrency(summary.average, currency)} · 高{" "}
+                        {formatCurrency(summary.max, currency)}
+                      </span>
+                    ))}
                   </div>
                 </div>
 
@@ -315,25 +338,26 @@ export function ProductIntelligencePriceChart({
                         name,
                       ]}
                       labelFormatter={(_, payload) => {
-                        const point = payload?.[0]?.payload as { date?: string; variant?: string } | undefined;
+                        const point = payload?.[0]?.payload as
+                          | { date?: string; variant?: string }
+                          | undefined;
                         return point ? `${point.date ?? ""} · ${point.variant ?? ""}` : "";
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    {chartSeriesKeys
-                      .map((key) => (
-                        <Line
-                          key={key}
-                          type="monotone"
-                          dataKey={key}
-                          name={key}
-                          stroke={colorForSeries(key, chartSeriesKeys)}
-                          strokeWidth={2.5}
-                          dot={{ r: 3, strokeWidth: 2 }}
-                          activeDot={{ r: 5 }}
-                          connectNulls
-                        />
-                      ))}
+                    {chartSeriesKeys.map((key) => (
+                      <Line
+                        key={key}
+                        type="monotone"
+                        dataKey={key}
+                        name={key}
+                        stroke={colorForSeries(key, chartSeriesKeys)}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, strokeWidth: 2 }}
+                        activeDot={{ r: 5 }}
+                        connectNulls
+                      />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>

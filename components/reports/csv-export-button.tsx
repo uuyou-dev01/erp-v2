@@ -6,7 +6,7 @@ import { Download } from "lucide-react";
 interface OverviewData {
   inventory: { totalValue: string; lotCount: number; itemCount: number };
   procurement: { totalAmount: string; orderCount: number; receivedCount: number };
-  sales: { totalAmount: string; orderCount: number; confirmedCount: number };
+  sales: { totalAmount: string; orderCount: number; confirmedCount: number; pendingPresaleCount?: number; pendingPresaleAmount?: string };
   listing: { activeCount: number; totalCount: number };
 }
 
@@ -40,6 +40,8 @@ export function CsvExportButton({ overview, pnl }: CsvExportButtonProps) {
     lines.push(`业务概览,销售总额,${overview.sales.totalAmount}`);
     lines.push(`业务概览,销售订单数,${overview.sales.orderCount}`);
     lines.push(`业务概览,已确认订单,${overview.sales.confirmedCount}`);
+    lines.push(`业务概览,预售待履约订单,${overview.sales.pendingPresaleCount ?? 0}`);
+    lines.push(`业务概览,预售待履约金额（未计入销售总额）,${overview.sales.pendingPresaleAmount ?? "0"}`);
     lines.push(`业务概览,活跃上架,${overview.listing.activeCount}`);
     lines.push(`业务概览,上架总数,${overview.listing.totalCount}`);
     lines.push("");

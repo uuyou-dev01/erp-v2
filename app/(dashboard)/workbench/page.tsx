@@ -1,3 +1,4 @@
+import { workQueueFocus } from "@/lib/application/workbench-focus";
 import { Suspense } from "react";
 import Link from "next/link";
 import {
@@ -242,11 +243,11 @@ export default async function WorkbenchPage({
       ) : null}
       <PageHeader
         title="工作台"
-        description="按商品生命周期查看待办，在列表中直接完成下一步动作。"
+        description="先处理履约与异常，等待跟进和经营机会分开查看。"
         badge={
           counts.total > 0 ? (
             <Badge variant="secondary" className="font-normal">
-              {counts.total} 项待办
+              {items.filter((item) => workQueueFocus(item.queue) === "now").length} 项现在要做
             </Badge>
           ) : undefined
         }

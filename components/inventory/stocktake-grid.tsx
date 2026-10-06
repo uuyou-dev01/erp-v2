@@ -219,6 +219,14 @@ export function StocktakeGrid({
         </div>
       </div>
 
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+        <p className="font-medium">盘点只纠正数量，不迁移 SKU 成本与采购来源</p>
+        <p className="mt-1 text-xs leading-5">
+          SKU
+          归属错误需要专项复核批次成本、采购来源、销售占用及上架关联。请勿通过一减一增代替归并；本页不支持单独调价或完整
+          SKU 归并。
+        </p>
+      </div>
       {message ? <p className="text-sm text-green-600">{message}</p> : null}
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
@@ -269,16 +277,16 @@ export function StocktakeGrid({
             : "当前没有尚未保存的库存差异。"}
         </div>
       ) : (
-        <Table>
+        <Table className="min-w-[1050px] [&_th]:whitespace-nowrap">
           <TableHeader>
             <TableRow>
-              <TableHead>SKU</TableHead>
-              <TableHead>仓位</TableHead>
+              <TableHead className="sticky left-0 z-10 min-w-48 bg-card">商品 / SKU</TableHead>
+
               <TableHead>账面数量</TableHead>
               <TableHead>调整后数量</TableHead>
               <TableHead>差异</TableHead>
               <TableHead>账面单价</TableHead>
-              <TableHead>调整单价</TableHead>
+              <TableHead>仓位</TableHead>
               <TableHead>备注</TableHead>
             </TableRow>
           </TableHeader>
@@ -291,24 +299,23 @@ export function StocktakeGrid({
               const diff = countedQty - row.bookQty;
               return (
                 <TableRow key={key}>
-                  <TableCell>
+                  <TableCell className="sticky left-0 z-10 min-w-48 max-w-72 bg-card">
                     <p className="font-mono text-sm">{row.skuCode}</p>
                     <p className="text-xs text-muted-foreground">{row.skuName}</p>
                     {row.lotIds.length > 1 ? (
                       <p className="text-xs text-muted-foreground">含 {row.lotIds.length} 个批次</p>
                     ) : null}
                   </TableCell>
-                  <TableCell>
-                    <p className="text-sm font-medium">{row.locationCode}</p>
-                    <p className="text-xs text-muted-foreground">{row.locationName}</p>
-                  </TableCell>
-                  <TableCell>{row.bookQty}</TableCell>
+
+                  <TableCell className="min-w-24 tabular-nums">{row.bookQty}</TableCell>
                   <TableCell>
                     <Input
                       type="number"
                       min={0}
                       step={1}
                       inputMode="numeric"
+                      className="min-w-28"
+                      aria-label={`${row.skuName} 调整后数量`}
                       value={draft.countedQty}
                       onChange={(event) => {
                         const value = event.target.value;
@@ -322,18 +329,16 @@ export function StocktakeGrid({
                   >
                     {formatIntegerDiff(diff)}
                   </TableCell>
-                  <TableCell>{formatCurrency(row.bookUnitCost, row.currency)}</TableCell>
-                  <TableCell>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={draft.countedUnitCost}
-                      onChange={(event) => setDraft(key, { countedUnitCost: event.target.value })}
-                    />
+                  <TableCell className="min-w-36 whitespace-nowrap tabular-nums">
+                    {formatCurrency(row.bookUnitCost, row.currency)}
+                  </TableCell>
+                  <TableCell className="min-w-36">
+                    <p className="text-sm font-medium">{row.locationCode}</p>
+                    <p className="text-xs text-muted-foreground">{row.locationName}</p>
                   </TableCell>
                   <TableCell className="min-w-48">
                     <Textarea
+                      aria-label={`${row.skuName} 调整原因`}
                       value={draft.notes}
                       onChange={(event) => setDraft(key, { notes: event.target.value })}
                       rows={2}

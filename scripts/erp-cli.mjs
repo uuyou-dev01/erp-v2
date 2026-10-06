@@ -157,6 +157,9 @@ help                                     显示本帮助
 先 login → context → use，再导入。所有业务命令输出 JSON。
 密码不会保存；会话保存在 ~/.config/erp-cli/config.json（0600），7 天过期。
 ERP_CLI_CONFIG 可指定独立配置文件。重复导入需保留 externalId 和原始内容。
+封面：product.images 首张用于商品组；variants[].images 首张用于对应子 SKU。
+商品组优先用系列合照/主视觉，子 SKU 用对应款式单图；缺图应备注说明。
+子 SKU 无图时仅在导入时写入商品组封面，后续不自动联动；改图请使用网页编辑。
 详细字段、AI 工作流程及错误说明：docs/agent-catalog-cli.md
 `;
 
