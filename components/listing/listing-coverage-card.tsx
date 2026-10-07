@@ -1154,8 +1154,7 @@ export function ListingCoverageCard({
                           </ul>
                         ) : null}
 
-                        {detailProduct.sellableLotQty > 0 &&
-                        detailNewStockSummary.pendingListingCount > 0 ? (
+                        {canAddSkuListing ? (
                           <Button
                             variant="outline"
                             size="sm"
@@ -1163,9 +1162,11 @@ export function ListingCoverageCard({
                             onClick={() => openAdd(undefined, { listingScope: "SKU" })}
                           >
                             <Plus className="mr-1 h-3.5 w-3.5" />
-                            {detailNewStockSummary.activeListingCount > 0
-                              ? "补充新品平台"
-                              : "添加新品上架"}
+                            {detailProduct.sellableQty <= 0
+                              ? "预售上架"
+                              : detailNewStockSummary.activeListingCount > 0
+                                ? "补充新品平台"
+                                : "添加新品上架"}
                           </Button>
                         ) : null}
                       </div>

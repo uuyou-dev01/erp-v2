@@ -1032,9 +1032,13 @@ export async function collectWorkItems(
   for (const order of customerOrders) {
     const item = deriveCustomerOrderItem(order);
     if (item?.metadata?.isPresale) {
-      const available = [...new Set(order.lines.map((line) => line.skuId))].reduce((sum, skuId) =>
+      const missingSkuIds = order.lines.filter((line) =>
+        line.allocations.filter((allocation) => RESERVING_ALLOCATION_STATUSES.includes(allocation.status as (typeof RESERVING_ALLOCATION_STATUSES)[number]))
+          .reduce((qty, allocation) => qty + Number(allocation.quantity), 0) < Number(line.quantity)
+      ).map((line) => line.skuId);
+      const available = [...new Set(missingSkuIds)].reduce((sum, skuId) =>
         sum + (presaleStock.get(skuId)?.sellableLocations ?? []).filter((location) =>
-          !order.shippingCountry || location.fulfillableMarkets?.some((market) => market === order.shippingCountry)
+          (!order.shipTogetherLocationId || location.locationId === order.shipTogetherLocationId) && (!order.shippingCountry || location.fulfillableMarkets?.some((market) => market === order.shippingCountry))
         ).reduce((qty, location) => qty + location.qty, 0), 0);
       item.metadata.availableQuantity = available;
       item.subtitle += ` · 待分配 ${item.metadata.pendingQuantity} 件 · 现货 ${available} 件`;
@@ -1448,6 +1452,9 @@ export async function getWorkItemDetail(
       },
     });
     if (!order) return null;
+    const togetherWarehouse = order.shipTogetherLocationId
+      ? await prisma.location.findUnique({ where: { id: order.shipTogetherLocationId }, select: { code: true, name: true } })
+      : null;
     const item = deriveCustomerOrderItem(order);
     if (!item) return null;
     const allocationSources = order.lines.flatMap((line) =>
@@ -1515,6 +1522,8 @@ export async function getWorkItemDetail(
         customerPhone: order.customerPhone,
         shippingAddress: order.shippingAddress,
         shippingCountry: order.shippingCountry,
+        shipTogetherLocationId: order.shipTogetherLocationId,
+        shipTogetherLocationName: togetherWarehouse ? `${togetherWarehouse.code} · ${togetherWarehouse.name}` : null,
         currency: order.currency,
         subtotal: order.subtotal.toString(),
         totalPaid: order.totalPaid.toString(),

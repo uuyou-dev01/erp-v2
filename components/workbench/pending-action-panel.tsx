@@ -188,6 +188,7 @@ export function PendingActionPanel({
             预计发货：{detail.actionContext.expectedShipDate ?? "待确认"}
             。到货入库后按下单顺序分配；分配完成后确认订单，再安排发货。
           </p>
+          {detail.actionContext.shipTogetherLocationName ? <p className="text-sm">合包发货仓：{detail.actionContext.shipTogetherLocationName}；现货先预留，补货到齐后一起发出。</p> : null}
           <Link href="/procurement" className="text-sm text-primary underline">
             查看采购与补货
           </Link>
@@ -197,9 +198,11 @@ export function PendingActionPanel({
               {...line}
               storeId={detail.actionContext.storeId!}
               shippingCountry={detail.actionContext.shippingCountry}
+              shipTogetherLocationId={detail.actionContext.shipTogetherLocationId}
               onAllocated={refresh}
             />
           ))}
+          <CancelOrderSection detail={detail} pending={pending} run={run} />
           <OpenDetailLink detail={detail} />
         </div>
       );

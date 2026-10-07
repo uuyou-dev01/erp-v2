@@ -20,6 +20,7 @@ interface AllocateInventoryFormProps {
   requiredQty: string;
   storeId: string;
   shippingCountry?: string | null;
+  shipTogetherLocationId?: string | null;
   onAllocated?: () => void;
 }
 
@@ -30,6 +31,7 @@ export function AllocateInventoryForm({
   requiredQty,
   storeId,
   shippingCountry,
+  shipTogetherLocationId,
   onAllocated,
 }: AllocateInventoryFormProps) {
   const router = useRouter();
@@ -67,6 +69,7 @@ export function AllocateInventoryForm({
         (lot) =>
           lot.skuId === skuId &&
           lot.status === "ACTIVE" &&
+          (!shipTogetherLocationId || lot.locationId === shipTogetherLocationId) &&
           (!shippingCountry ||
             locationMatchesMarket(lot.location, shippingCountry as SellableMarketCode))
       );
@@ -78,7 +81,7 @@ export function AllocateInventoryForm({
         });
       });
     });
-  }, [storeId, skuId, shippingCountry]);
+  }, [storeId, skuId, shippingCountry, shipTogetherLocationId]);
 
   const updateFormData = (updates: Partial<typeof formData>) => {
     setErrors((prev) => {

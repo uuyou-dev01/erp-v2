@@ -45,8 +45,8 @@ export function ListingOpsGrid({
       setSelectedIds((current) => current.filter((id) => id !== listing.id));
       return;
     }
-    if (listing.status !== "ACTIVE" || listing.sellableQty <= 0 || listing.isPresale) {
-      setSelectionError("只有存在可发库存的在售 Listing 可以打包出售");
+    if (listing.status !== "ACTIVE" || (listing.sellableQty <= 0 && !listing.isPresale)) {
+      setSelectionError("请选择有可发库存或已开启预售的在售 Listing");
       return;
     }
     if (listing.hasResaleSource) {
@@ -74,8 +74,8 @@ export function ListingOpsGrid({
       setSelectionError("同一个打包订单只能选择相同币种的商品");
       return;
     }
-    const candidates = [...selectedListings, listing];
-    const hasCommonLocation = candidates[0].sellableLocations.some((location) =>
+    const candidates = [...selectedListings, listing].filter((candidate) => !candidate.isPresale);
+    const hasCommonLocation = candidates.length === 0 || candidates[0].sellableLocations.some((location) =>
       candidates.every((candidate) =>
         candidate.sellableLocations.some(
           (candidateLocation) => candidateLocation.locationId === location.locationId

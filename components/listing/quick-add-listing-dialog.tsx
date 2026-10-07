@@ -116,7 +116,9 @@ export function QuickAddListingDialog({
     setListingScope(nextScope);
     setItemUnitId(nextItemUnitId);
     setCurrency(product.referenceCurrency ?? "CNY");
-    setPresale({});
+    setPresale({
+      isPresale: nextScope === "SKU" && product.sellableQty <= 0 && product.productKind !== "USED",
+    });
     setSubmitError(null);
   }, [
     open,
@@ -170,7 +172,7 @@ export function QuickAddListingDialog({
   const selectedPlatform = availablePlatforms.find((p) => p.id === platformId);
 
   const handlePlatformChange = (id: string) => {
-    setPresale({});
+    setPresale((current) => ({ ...current, buyerNoticeConfirmed: false }));
     setPlatformId(id);
     setSubmitError(null);
     const meta = platformMeta[id];

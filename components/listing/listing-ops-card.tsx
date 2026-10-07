@@ -121,8 +121,7 @@ export function ListingOpsCard({
                 checked={selected}
                 disabled={
                   listing.status !== "ACTIVE" ||
-                  listing.isPresale ||
-                  listing.sellableQty <= 0 ||
+                  (listing.sellableQty <= 0 && !listing.isPresale) ||
                   listing.hasResaleSource ||
                   !listing.salesChannelAccountId ||
                   !listing.currency

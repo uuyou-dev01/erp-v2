@@ -1124,6 +1124,7 @@ export async function previewBundleSellEligibility(data: {
 
 export async function bundleSellListings(data: {
   requestId: string;
+  buyerWaitConfirmed?: boolean;
   lines: Array<{
     listingId: string;
     quantity?: string;
@@ -1224,6 +1225,7 @@ export async function bundleSellListings(data: {
               allocatedAmount: line.allocatedAmount.toFixed(4),
             }))
             .sort((a, b) => a.listingId.localeCompare(b.listingId)),
+          buyerWaitConfirmed: Boolean(data.buyerWaitConfirmed),
           totalPrice: totalPrice.toFixed(4),
           platformFeeAmount: platformFeeAmountInput.value?.toString() ?? null,
           platformFeeRate: platformFeeRateInput.value?.toString() ?? null,
@@ -1293,9 +1295,23 @@ export async function bundleSellListings(data: {
       if (listings.some((listing) => listing.status !== "ACTIVE")) {
         throw new Error("只有在售 Listing 可以加入打包订单");
       }
-      if (listings.some((listing) => listing.isPresale)) {
-        throw new Error("预售商品请单独登记售出，以保留各自的发货承诺和补货流程");
+      const presaleListings = listings.filter((listing) => listing.isPresale);
+      const isPresaleBundle = presaleListings.length > 0;
+      if (isPresaleBundle && !data.buyerWaitConfirmed) {
+        throw new Error("请确认买家同意全部商品到齐后一起发货");
       }
+      for (const listing of presaleListings) {
+        if (listing.listingType !== "SKU" || !listing.sku || parseSkuCatalogMeta(listing.sku.attributes).productKind === "USED") {
+          throw new Error("只有新品 SKU 可以预售");
+        }
+        if (!listing.presaleConfirmedAt || presaleDateExpired(listing.expectedShipDate)) {
+          throw new Error("预售交期无效或已过，请先更新预计发货日期并确认买家告知");
+        }
+      }
+      const expectedShipDate = isPresaleBundle
+        ? new Date(Math.max(...presaleListings.map((listing) => listing.expectedShipDate!.getTime())))
+        : null;
+      let waitingForStock = false;
       if (listings.some((listing) => listing.resaleListings.length > 0)) {
         throw new Error("所选商品包含代卖来源，当前打包流程尚不能生成逐项预留与结算");
       }
@@ -1511,8 +1527,11 @@ export async function bundleSellListings(data: {
           platformFee: (platformFeeAmount ?? totalPrice.mul(effectiveFeeRate)).toFixed(4),
           shippingFee: shippingFee.toFixed(4),
           shippingFeeStatus: shippingFeeInput.value === null ? "PENDING" : "ESTIMATED",
-          orderStatus: "CONFIRMED",
-          confirmedAt: new Date(),
+          isPresale: isPresaleBundle,
+          expectedShipDate,
+          shipTogetherLocationId: isPresaleBundle ? shipFromLocation.id : null,
+          orderStatus: "DRAFT",
+          confirmedAt: null,
         },
       });
 
@@ -1522,7 +1541,7 @@ export async function bundleSellListings(data: {
           listing.listingType === "ITEM_UNIT" && listing.itemUnitId ? [listing.itemUnitId] : []
         )
       );
-      for (const listingId of listingIds) {
+      for (const listingId of [...listingIds].sort((a, b) => Number(listings.find((row) => row.id === a)!.isPresale) - Number(listings.find((row) => row.id === b)!.isPresale))) {
         const listing = listings.find((candidate) => candidate.id === listingId)!;
         const input = inputByListingId.get(listingId)!;
         const sku = listing.sku || listing.itemUnit?.sku;
@@ -1539,8 +1558,10 @@ export async function bundleSellListings(data: {
           storeId: listing.storeId,
           skuId: sku.id,
           market: destinationMarket,
+          beforeOrderId: customerOrder.id,
         });
-        if (quantity.gt(Decimal.max(0, effectiveSellable.minus(earlierPresales)))) {
+        const allowedStock = Decimal.max(0, effectiveSellable.minus(earlierPresales));
+        if (!listing.isPresale && quantity.gt(allowedStock)) {
           throw new Error(`${sku.name} 可售库存不足（部分库存可能已被预留）`);
         }
 
@@ -1613,7 +1634,8 @@ export async function bundleSellListings(data: {
           continue;
         }
 
-        let remainingToAllocate = quantity;
+        const deferredQuantity = listing.isPresale ? Decimal.max(0, quantity.minus(allowedStock)) : new Decimal(0);
+        let remainingToAllocate = quantity.minus(deferredQuantity);
         const lotCandidates = await tx.inventoryLot.findMany({
           where: {
             storeId: listing.storeId,
@@ -1785,14 +1807,18 @@ export async function bundleSellListings(data: {
             remainingToAllocate = remainingToAllocate.minus(1);
           }
         }
-        if (remainingToAllocate.gt(0)) {
-          throw new Error(`${sku.name} 在所选发货仓没有足量的销售组织自有且已授权库存`);
+        const missingQuantity = remainingToAllocate.plus(deferredQuantity);
+        if (missingQuantity.gt(0)) {
+          if (!listing.isPresale) throw new Error(`${sku.name} 在所选发货仓没有足量的销售组织自有且已授权库存`);
+          waitingForStock = true;
+          await tx.orderLine.update({ where: { id: orderLine.id }, data: { supplyStatus: "UNFULFILLED" } });
         }
-
-        await tx.listing.update({
-          where: { id: listing.id },
-          data: { status: "SOLD_OUT", delistedAt: new Date() },
-        });
+        if (!listing.isPresale) {
+          await tx.listing.update({
+            where: { id: listing.id },
+            data: { status: "SOLD_OUT", delistedAt: new Date() },
+          });
+        }
       }
 
       const fees = computeOrderFees({
@@ -1804,9 +1830,27 @@ export async function bundleSellListings(data: {
       });
       await tx.customerOrder.update({
         where: { id: customerOrder.id },
-        data: { netRevenue: feeResultToStrings(fees).netRevenue },
+        data: {
+          netRevenue: waitingForStock ? null : feeResultToStrings(fees).netRevenue,
+          orderStatus: waitingForStock ? "DRAFT" : "CONFIRMED",
+          confirmedAt: waitingForStock ? null : new Date(),
+        },
       });
 
+      if (waitingForStock) {
+        await tx.task.create({ data: {
+          organizationId: context.organizationId, storeId: customerOrder.storeId,
+          type: TASK_TYPE.CONFIRM_ORDER, status: TASK_STATUS.OPEN,
+          title: `预售合包待补货 · ${customerOrder.orderNumber}`,
+          description: "现货已预留；补货须入所选共同发货仓，全部商品分配完成后确认并一起发货。买家已同意等待。",
+          refType: "CUSTOMER_ORDER", refId: customerOrder.id,
+          createdById: context.userId, assignedToId: context.userId,
+          dueAt: expectedShipDate ? new Date(expectedShipDate.getTime() + 16 * 60 * 60 * 1000 - 1) : null,
+        } });
+        return { orderId: customerOrder.id, orderNumber: customerOrder.orderNumber,
+          storeId: customerOrder.storeId, operatorOrganizationId,
+          fulfillmentLocationId: shipFromLocation.id, shippingTaskId: null };
+      }
       const shippingTask = await tx.task.create({
         data: {
           organizationId: operatorOrganizationId,
@@ -1847,7 +1891,7 @@ export async function bundleSellListings(data: {
     });
 
     try {
-      await notifyShipOrderQueue({
+      if (saleResult.shippingTaskId) await notifyShipOrderQueue({
         taskId: saleResult.shippingTaskId,
         organizationId: saleResult.operatorOrganizationId,
         storeId: saleResult.storeId,

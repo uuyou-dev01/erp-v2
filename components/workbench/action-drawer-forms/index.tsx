@@ -1854,7 +1854,7 @@ export function CancelOrderSection({ detail, pending, run }: ActionFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  if (detail.primaryAction !== "shipOrder" && detail.primaryAction !== "confirmOrder") {
+  if (detail.primaryAction !== "shipOrder" && detail.primaryAction !== "confirmOrder" && !detail.actionContext.presaleLinesJson) {
     return null;
   }
 

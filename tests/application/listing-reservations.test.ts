@@ -14,6 +14,8 @@ vi.mock("next/headers", () => ({
 
 import {
   batchCreateListings,
+  bundleSellListings,
+  previewBundleSellEligibility,
   createListing,
   quickSellListing,
   relistListing,
@@ -112,6 +114,8 @@ describe("listing quick sell reservations", () => {
       },
     });
     locationId = location.id;
+    await prisma.locationCapability.create({ data: { locationId, code: "DIRECT_FULFILLMENT" } });
+    await prisma.shippingLane.create({ data: { storeId, fromLocationId: locationId, destinationCountry: "CN", laneType: "CUSTOMER_DELIVERY" } });
     await prisma.locationAccess.upsert({
       where: { locationId_userId: { locationId, userId: user.id } },
       update: { role: "MANAGER", permissions: { ship: true } },
@@ -349,6 +353,90 @@ describe("listing quick sell reservations", () => {
     ).toBe(1);
     await markOrderShipped(order.id, { trackingNo: `PRE_${runId}` });
     await expectLotQuantity(lot.id, "2");
+  });
+
+  it("reserves mixed-bundle stock, waits for replenishment, and releases everything on cancellation", async () => {
+    const stocked = await createSellableListing("mixed-cancel");
+    const sku = await createSku("mixed-missing");
+    const presale = await createListing({ storeId, platformId, listingType: "SKU", skuId: sku.id,
+      listedPrice: "180", currency: "CNY", isPresale: true, expectedShipDate: "2099-10-12", buyerNoticeConfirmed: true });
+    if (!presale.success) throw new Error(presale.error);
+    const payload = { requestId: `${runId}_mixed_cancel`, lines: [
+      { listingId: stocked.listing.id, quantity: "1", allocatedAmount: "180" },
+      { listingId: presale.id, quantity: "2", allocatedAmount: "360" },
+    ], totalPrice: "540", shipFromLocationId: locationId, shippingCountry: "CN" };
+    expect((await bundleSellListings(payload)).success).toBe(false);
+    const preview = await previewBundleSellEligibility({ lines: payload.lines, shippingCountry: "CN" });
+    if (!preview.success) throw new Error(preview.error);
+    expect(preview.preview.eligible, JSON.stringify(preview)).toBe(true);
+    const sale = await bundleSellListings({ ...payload, buyerWaitConfirmed: true });
+    if (!sale.success) throw new Error(sale.error);
+    const replay = await bundleSellListings({ ...payload, buyerWaitConfirmed: true });
+    expect(replay).toMatchObject({ success: true, orderId: sale.orderId });
+    const order = await prisma.customerOrder.findUniqueOrThrow({ where: { id: sale.orderId }, include: { lines: { include: { allocations: true } } } });
+    expect(order.orderStatus).toBe("DRAFT");
+    expect(order.isPresale).toBe(true);
+    expect(order.shipTogetherLocationId).toBe(locationId);
+    expect(order.expectedShipDate?.toISOString().slice(0,10)).toBe("2099-10-12");
+    expect(order.lines.find((line) => line.skuId === stocked.sku.id)?.allocations).toHaveLength(1);
+    expect(order.lines.find((line) => line.skuId === sku.id)?.allocations).toHaveLength(0);
+    await expectLotQuantity(stocked.lotId, "1");
+    expect((await getSkuStockBreakdown(storeId, stocked.sku.id)).sellableQty).toBe(0);
+    await expect(confirmOrder({ orderId: order.id })).rejects.toThrow("尚未完整分配");
+    await expect(markOrderShipped(order.id, { trackingNo: "not-ready" })).rejects.toThrow();
+    expect(await prisma.task.count({ where: { refId: order.id, type: "SHIP_ORDER" } })).toBe(0);
+    await cancelCustomerOrder(order.id, "买家不再等待");
+    expect((await getSkuStockBreakdown(storeId, stocked.sku.id)).sellableQty).toBe(1);
+    await expectLotQuantity(stocked.lotId, "1");
+    expect(await prisma.task.count({ where: { refId: order.id, type: "CONFIRM_ORDER", status: "CANCELLED" } })).toBe(1);
+    expect((await collectWorkItems(storeId)).filter((item) => item.entityId === order.id && item.queue === "presaleWaiting")).toHaveLength(0);
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: presale.id } })).status).toBe("ACTIVE");
+    // Cancellation releases the reservation but does not pretend to relist the external sold item.
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: stocked.listing.id } })).status).toBe("SOLD_OUT");
+  });
+
+  it("ships a mixed presale parcel only after all goods arrive at the selected warehouse", async () => {
+    const stocked = await createSellableListing("mixed-ship");
+    const sku = await createSku("mixed-arrival");
+    const presale = await createListing({ storeId, platformId, listingType: "SKU", skuId: sku.id,
+      listedPrice: "180", currency: "CNY", isPresale: true, expectedShipDate: "2099-10-12", buyerNoticeConfirmed: true });
+    if (!presale.success) throw new Error(presale.error);
+    const sale = await bundleSellListings({ requestId: `${runId}_mixed_ship`, buyerWaitConfirmed: true,
+      lines: [{ listingId: stocked.listing.id, quantity: "1", allocatedAmount: "180" }, { listingId: presale.id, quantity: "1", allocatedAmount: "180" }],
+      totalPrice: "360", platformFeeAmount: "7", shipFromLocationId: locationId, shippingCountry: "CN" });
+    if (!sale.success) throw new Error(sale.error);
+    const pool = await prisma.inventoryPool.findFirstOrThrow({ where: { legacyStoreId: storeId } });
+    const wrong = await prisma.location.create({ data: { storeId, code: `${runId}_wrong`, name: "Other warehouse", type: "WAREHOUSE", region: "CN_SHANGHAI" } });
+    const lot = await prisma.inventoryLot.create({ data: { storeId, skuId: sku.id, locationId: wrong.id, inventoryPoolId: pool.id,
+      unitCost: "100", costCurrency: "CNY", sourceType: "E2E", sourceId: runId, receivedAt: new Date() } });
+    await prisma.stockLedger.create({ data: { storeId, entityType: "LOT", entityId: lot.id, locationId: wrong.id, deltaQty: "1", reason: "INBOUND_PURCHASE", refType: "E2E", refId: runId } });
+    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: sale.orderId, skuId: sku.id } });
+    await expect(allocateInventory({ orderLineId: line.id, lotId: lot.id, quantity: "1" })).rejects.toThrow("共同发货仓");
+    await prisma.inventoryLot.update({ where: { id: lot.id }, data: { locationId } });
+    await allocateInventory({ orderLineId: line.id, lotId: lot.id, quantity: "1" });
+    await confirmOrder({ orderId: sale.orderId });
+    expect((await prisma.customerOrder.findUniqueOrThrow({ where: { id: sale.orderId } })).platformFee.toString()).toBe("7");
+    await expectLotQuantity(stocked.lotId, "1");
+    await expectLotQuantity(lot.id, "1");
+    await markOrderShipped(sale.orderId, { trackingNo: `${runId}_mixed` });
+    await expectLotQuantity(stocked.lotId, "0");
+    await expectLotQuantity(lot.id, "0");
+    await expect(cancelCustomerOrder(sale.orderId, "too late")).rejects.toThrow("已发货");
+  });
+
+  it("can return one replenished presale listing to normal individual selling without changing old promises", async () => {
+    const stocked = await createSellableListing("presale-mode", "2");
+    expect((await updateListingAction(stocked.listing.id, { isPresale: true, expectedShipDate: "2099-10-15", buyerNoticeConfirmed: true })).success).toBe(true);
+    const first = await quickSellListing({ requestId: `${Date.now()}-mode-presale`, listingId: stocked.listing.id, quantity: "1", unitPrice: "180", shipFromLocationId: locationId, externalOrderNo: `${runId}_mode_1` });
+    if (!first.success) throw new Error(first.error);
+    expect((await updateListingAction(stocked.listing.id, { isPresale: false })).success).toBe(true);
+    const second = await quickSellListing({ listingId: stocked.listing.id, quantity: "1", unitPrice: "180", shipFromLocationId: locationId, externalOrderNo: `${runId}_mode_2` });
+    if (!second.success) throw new Error(second.error);
+    expect((await prisma.customerOrder.findUniqueOrThrow({ where: { id: second.orderId } })).isPresale).toBe(false);
+    expect((await prisma.customerOrder.findUniqueOrThrow({ where: { id: first.orderId } })).expectedShipDate?.toISOString().slice(0,10)).toBe("2099-10-15");
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: stocked.listing.id } })).status).toBe("SOLD_OUT");
+    await cancelCustomerOrder(first.orderId, "test cleanup");
+    await cancelCustomerOrder(second.orderId, "test cleanup");
   });
 
   it("removes reserved stock from sellable quantity and sells out an exhausted SKU listing", async () => {

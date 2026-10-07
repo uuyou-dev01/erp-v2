@@ -70,6 +70,9 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [buyerWaitConfirmed, setBuyerWaitConfirmed] = useState(false);
+  const hasPresale = listings.some((listing) => listing.isPresale);
+  const promisedShipDate = listings.filter((listing) => listing.isPresale).map((listing) => listing.expectedShipDate?.slice(0, 10) ?? "").sort().at(-1) ?? "";
   const [requestId, setRequestId] = useState("");
   const [allocationMode, setAllocationMode] = useState<"PROPORTIONAL" | "CUSTOM">("PROPORTIONAL");
   const [totalPrice, setTotalPrice] = useState("");
@@ -90,6 +93,7 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
     externalOrderNo: "",
   });
 
+  useEffect(() => { setBuyerWaitConfirmed(false); }, [open, listings, promisedShipDate]);
   const currency = listings[0]?.currency || "CNY";
   const allocationBasis = useMemo(
     () =>
@@ -301,6 +305,7 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
     try {
       const result = await bundleSellListings({
         requestId,
+        buyerWaitConfirmed,
         lines: listings.map((listing) => ({
           listingId: listing.id,
           quantity: quantities[listing.id],
@@ -530,7 +535,7 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
                       一次打包与发货
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      所有商品必须在同一实际仓位；合包后的尺寸可能变化，邮费可在打包后核算。
+                      {hasPresale ? "现货先预留，预售到齐后从所选仓库一起发货；预计日期按最晚的预售交期记录。" : "所有商品必须在同一实际仓位；合包后的尺寸可能变化，邮费可在打包后核算。"}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       提交时会再次核对实际库存池归属、合作协议有效期和仓库执行权限。
@@ -632,6 +637,12 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
                 ) : null}
               </section>
 
+              {hasPresale ? (
+                <label className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+                  <input type="checkbox" required checked={buyerWaitConfirmed} onChange={(event) => setBuyerWaitConfirmed(event.target.checked)} />
+                  <span>已与买家确认：全部商品到齐后一起发货，预计发货日期 {promisedShipDate || "待更新"}。现货会为此订单预留。</span>
+                </label>
+              ) : null}
               <section className="space-y-3 border-t pt-5" aria-labelledby="bundle-customer-title">
                 <h3 id="bundle-customer-title" className="text-sm font-semibold">
                   客户与平台订单
@@ -729,6 +740,7 @@ export function BundleSellDialog({ open, listings, onClose }: BundleSellDialogPr
                     disabled={
                       loading ||
                       !requestId ||
+                      (hasPresale && !buyerWaitConfirmed) ||
                       fulfillmentPreview.status !== "ready" ||
                       !fulfillmentPreview.eligible ||
                       !form.shipFromLocationId ||

@@ -1,5 +1,6 @@
 import { requireUserContext } from "@/lib/auth/user-context";
 import Link from "next/link";
+import { prisma } from "@/lib/prisma";
 import { getCustomerOrderById } from "@/app/actions/customer-orders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +77,9 @@ export default async function CustomerOrderDetailPage({
     notFound();
   }
 
+  const togetherWarehouse = order.shipTogetherLocationId
+    ? await prisma.location.findUnique({ where: { id: order.shipTogetherLocationId }, select: { name: true, code: true } })
+    : null;
   const stock =
     ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(order.orderStatus) && !order.resaleListing
       ? await getStoreStockBreakdown(order.storeId)
@@ -224,6 +228,7 @@ export default async function CustomerOrderDetailPage({
                   : "库存仅在实际确认发货时扣减。"}
               </p>
             ) : null}
+            {order.shipTogetherLocationId ? <p className="text-sm text-amber-700">合包发货仓：{togetherWarehouse ? `${togetherWarehouse.code} · ${togetherWarehouse.name}` : "待核实"}。现货先预留，全部到齐后一起发出。</p> : null}
             {order.externalOrderNo && (
               <p className="mt-1 break-all text-xs text-muted-foreground">
                 外部订单号：{order.externalOrderNo}
@@ -491,6 +496,7 @@ export default async function CustomerOrderDetailPage({
                           requiredQty={(requiredQty - allocatedQty).toString()}
                           storeId={storeId}
                           shippingCountry={order.shippingCountry}
+                          shipTogetherLocationId={order.shipTogetherLocationId}
                         />
                         {order.isPresale ? (
                           <Button asChild variant="outline" className="mt-3">

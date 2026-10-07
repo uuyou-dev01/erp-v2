@@ -384,6 +384,7 @@ export async function allocateInventory(data: AllocateInventoryInput) {
           select: {
             storeId: true,
             orderStatus: true,
+            shipTogetherLocationId: true,
             shippingCountry: true,
             platform: { select: { code: true, country: true } },
           },
@@ -424,6 +425,9 @@ export async function allocateInventory(data: AllocateInventoryInput) {
 
     if (!lot) {
       throw new Error("库存批次不存在");
+    }
+    if (freshOrderLine.order.shipTogetherLocationId && lot.locationId !== freshOrderLine.order.shipTogetherLocationId) {
+      throw new Error("预售合包订单须分配到约定的共同发货仓，请先将补货入该仓");
     }
     if (lot.status !== "ACTIVE") {
       throw new Error("库存批次当前不可分配");
@@ -590,6 +594,15 @@ export async function confirmOrder(data: ConfirmOrderInput) {
       );
       if (!allocatedQuantity.eq(new Decimal(line.quantity.toString()))) {
         throw new Error(`订单商品 ${line.id} 的库存尚未完整分配`);
+      }
+    }
+
+    if (freshOrder.shipTogetherLocationId) {
+      const allocationIds = freshOrder.lines.flatMap((line) => line.allocations.map((allocation) => allocation.id));
+      const allocations = await tx.orderAllocation.findMany({ where: { id: { in: allocationIds } },
+        include: { inventoryLot: true, itemUnit: true } });
+      if (allocations.some((allocation) => (allocation.inventoryLot?.locationId ?? allocation.itemUnit?.locationId) !== freshOrder.shipTogetherLocationId)) {
+        throw new Error("合包商品尚未全部到达约定的共同发货仓");
       }
     }
 
@@ -1517,6 +1530,15 @@ async function performOrderShipment(
         );
       if (!reservedQuantity.eq(new Decimal(line.quantity.toString()))) {
         throw new Error(`订单商品 ${line.id} 库存预留不完整，请先完成库存分配`);
+      }
+    }
+    if (lockedOrder.shipTogetherLocationId) {
+      const allocations = await tx.orderAllocation.findMany({
+        where: { orderLine: { orderId }, status: { in: [...RESERVING_ALLOCATION_STATUSES] } },
+        include: { inventoryLot: true, itemUnit: true },
+      });
+      if (allocations.some((allocation) => (allocation.inventoryLot?.locationId ?? allocation.itemUnit?.locationId) !== lockedOrder.shipTogetherLocationId)) {
+        throw new Error("合包商品尚未全部到达约定的共同发货仓，不能发货");
       }
     }
     const shipmentClaim = await tx.customerOrder.updateMany({

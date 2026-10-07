@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
+import { presaleDateExpired } from "./presale";
+import { parseSkuCatalogMeta } from "./sku-catalog";
 import { capabilitiesForLocationFulfillerRole } from "@/lib/application/collaboration-capabilities";
 import {
   resolveBundleFulfillmentEligibility,
@@ -10,6 +12,7 @@ import { prisma } from "@/lib/prisma";
 
 export type BundleFulfillmentPreviewClient = Pick<
   Prisma.TransactionClient,
+  | "location"
   | "listing"
   | "channelAccess"
   | "inventoryPool"
@@ -323,6 +326,10 @@ export async function previewBundleFulfillment(
       id: true,
       status: true,
       listingType: true,
+      isPresale: true,
+      expectedShipDate: true,
+      presaleConfirmedAt: true,
+      sku: { select: { attributes: true } },
       skuId: true,
       itemUnitId: true,
       salesChannelAccountId: true,
@@ -496,6 +503,12 @@ export async function previewBundleFulfillment(
     ]);
   }
 
+  const presaleIds = new Set(orderedRows.filter((row) => row.isPresale).map((row) => row.id));
+  if (orderedRows.some((row) => row.isPresale && (
+    row.listingType !== "SKU" || !row.sku || parseSkuCatalogMeta(row.sku.attributes).productKind === "USED" ||
+    !row.presaleConfirmedAt || presaleDateExpired(row.expectedShipDate, now)
+  ))) return emptyResult([{ code: "LISTING_NOT_ACTIVE", message: "预售交期无效或已过，请先更新预售及买家告知信息。", listingIds: [...presaleIds] }]);
+
   const previewLines: BundleFulfillmentPreviewResolvedLine[] = orderedRows.map((row) => ({
     id: row.id,
     listingType: row.listingType,
@@ -549,6 +562,12 @@ export async function previewBundleFulfillment(
   const locationById = new Map<string, PreviewLocation>();
   for (const inventory of [...lots, ...itemUnits]) {
     locationById.set(inventory.locationId, inventory.location as PreviewLocation);
+  }
+  if (presaleIds.size) {
+    const receivingLocations = await client.location.findMany({
+      where: { storeId: input.storeId, isSellableDefault: true }, select: locationSelect,
+    });
+    for (const location of receivingLocations) locationById.set(location.id, location as PreviewLocation);
   }
   const crossOrganizationPairs = [...locationById.values()].flatMap((location) => {
     const operatorOrganizationId =
@@ -736,13 +755,17 @@ export async function previewBundleFulfillment(
     snapshot.itemIdsByLocationSku.set(key, ids);
   }
 
+  // Presale candidates describe an authorized future receiving warehouse, not on-hand stock.
+  // Concrete stock is still required for every ordinary line; the committing transaction
+  // reserves only real stock and keeps shortages in DRAFT until replenishment arrives.
   const candidateLines = previewLines.map((line) => ({
     lineId: line.id,
     salesChannelAccountId: line.salesChannelAccountId,
     currency: line.currency,
     quantity: line.quantity.toString(),
-    candidatePhysicalLocations:
-      line.listingType === "ITEM_UNIT" && line.itemUnitId
+    candidatePhysicalLocations: presaleIds.has(line.id)
+      ? [...locationById.values()].filter((location) => [...authorizedPoolIds].some((inventoryPoolId) => inventoryIsAuthorizedAtLocation({ inventoryPoolId, location }))).map((location) => ({ locationId: location.id, availableQuantity: line.quantity.toString(), fulfillmentMarkets: [destinationMarket] }))
+      : line.listingType === "ITEM_UNIT" && line.itemUnitId
         ? snapshot.exactItemLocationById.has(line.itemUnitId)
           ? [
               {
@@ -775,7 +798,7 @@ export async function previewBundleFulfillment(
     lines: candidateLines,
   });
   const commonLocationIds = physicalEligibility.commonLocationIds.filter((locationId) =>
-    canAllocateBundleAtLocation(previewLines, snapshot, locationId)
+    canAllocateBundleAtLocation(previewLines.filter((line) => !presaleIds.has(line.id)), snapshot, locationId)
   );
   const mappedReasons: BundleFulfillmentPreviewReason[] = physicalEligibility.reasons.map(
     (reason) => ({
